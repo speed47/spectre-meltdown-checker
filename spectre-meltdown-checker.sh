@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.07
+VERSION=0.08
 
 pstatus()
 {
@@ -95,7 +95,6 @@ else
 			pstatus green YES "$nb_lfence opcodes found, which is >= 60"
 			status=2
 		fi
-		rm -f $vmlinux
 	fi
 fi
 
@@ -218,6 +217,14 @@ elif [ -e /boot/System.map-$(uname -r) ]; then
 	else
 		pstatus red NO
 	fi
+elif [ -n "$vmlinux" ]; then
+	# some backports don't have the option but still have the patch, try to find out
+	if strings "$vmlinux" | grep -qw nopti; then
+		pstatus green YES
+		kpti_support=1
+	else
+		pstatus red NO
+	fi
 else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
@@ -226,7 +233,7 @@ fi
 if grep ^flags /proc/cpuinfo | grep -qw pti; then
 	pstatus green YES
 	kpti_enabled=1
-elif dmesg | grep -q 'Kernel/User page tables isolation: enabled'; then
+elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
 	pstatus green YES
 	kpti_enabled=1
 else
@@ -248,4 +255,6 @@ if [ "$USER" != root ]; then
 	/bin/echo "Note that you should launch this script with root privileges to get accurate information"
 	/bin/echo "You can try the following command: sudo $0"
 fi
+
+[ -n "$vmlinux" ] && rm -f "$vmlinux"
 
