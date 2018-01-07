@@ -11,7 +11,7 @@ pstatus()
 		yellow) col="\033[103m\033[30m";;
 		*)      col="";;
 	esac
-	/bin/echo -ne "$col$2\033[0m"
+	/bin/echo -ne "$col $2 \033[0m"
 	[ -n "$3" ] && /bin/echo -n " ($3)"
 	/bin/echo
 }
