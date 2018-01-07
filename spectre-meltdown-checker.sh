@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.08
+VERSION=0.09
 
 pstatus()
 {
@@ -43,7 +43,7 @@ try_decompress()
         do
                 pos=${pos%%:*}
                 tail -c+$pos "$img" | $3 > $vmlinuxtmp 2> /dev/null
-                check_vmlinux $vmlinuxtmp && echo $vmlinuxtmp || rm -f $vmlinuxtmp
+                check_vmlinux $vmlinuxtmp && echo $vmlinuxtmp && return 0
         done
 }
 
@@ -55,7 +55,11 @@ extract_vmlinux()
 	vmlinuxtmp=$(mktemp /tmp/vmlinux-XXX)
 
 	# Initial attempt for uncompressed images or objects:
-	check_vmlinux $img
+	if check_vmlinux $img; then
+		cat $img > $vmlinuxtmp
+		echo $vmlinuxtmp
+		return 0
+	fi
 
 	# That didn't work, so retry after decompression.
 	try_decompress '\037\213\010' xy    gunzip     || \
@@ -77,6 +81,7 @@ status=0
 img=''
 [ -e /boot/vmlinuz-$(uname -r) ] && img=/boot/vmlinuz-$(uname -r)
 [ -e /boot/vmlinux-$(uname -r) ] && img=/boot/vmlinux-$(uname -r)
+[ -e /boot/kernel-$( uname -r) ] && img=/boot/kernel-$( uname -r)
 [ -e /boot/bzImage-$(uname -r) ] && img=/boot/bzImage-$(uname -r)
 if [ -z "$img" ]; then
 	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot"
@@ -256,5 +261,5 @@ if [ "$USER" != root ]; then
 	/bin/echo "You can try the following command: sudo $0"
 fi
 
-[ -n "$vmlinux" ] && rm -f "$vmlinux"
+[ -n "$vmlinux" -a -f "$vmlinux" ] && rm -f "$vmlinux"
 
