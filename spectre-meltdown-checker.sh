@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.03
+VERSION=0.04
 
 pstatus()
 {
@@ -164,15 +164,32 @@ fi
 
 /bin/echo "* Mitigation 2"
 /bin/echo -n "*   Kernel recompiled with retpolines: "
-pstatus yellow UNKNOWN "check not yet implemented"
+# XXX this doesn't mean the kernel has been compiled with a retpoline-aware gcc
+if [ -e /proc/config.gz ]; then
+	if zgrep -q '^CONFIG_RETPOLINE=y' /proc/config.gz; then
+		pstatus green YES
+		retpoline=1
+	else
+		pstatus red NO
+	fi
+elif [ -e /boot/config-$(uname -r) ]; then
+	if grep  -q '^CONFIG_RETPOLINE=y' /boot/config-$(uname -r); then
+		pstatus green YES
+		retpoline=1
+	else
+		pstatus red NO
+	fi
+fi
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
 if grep -q AMD /proc/cpuinfo; then
 	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
 elif [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
 	pstatus green "NOT VULNERABLE" "IBRS mitigates the vulnerability"
+elif [ "$retpoline" = 1 ]; then
+	pstatus green "NOT VULNERABLE" "retpolines mitigate the vulnerability"
 else
-	pstatus red VULNERABLE "IBRS hardware + kernel support OR retpolines-compiled kernel are needed to mitigate the vulnerability"
+	pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpolines kernel are needed to mitigate the vulnerability"
 fi
 
 # MELTDOWN
