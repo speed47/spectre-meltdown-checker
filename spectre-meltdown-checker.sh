@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.06
+VERSION=0.07
 
 pstatus()
 {
@@ -178,6 +178,8 @@ elif [ -e /boot/config-$(uname -r) ]; then
 	else
 		pstatus red NO
 	fi
+else
+	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
@@ -217,7 +219,7 @@ elif [ -e /boot/System.map-$(uname -r) ]; then
 		pstatus red NO
 	fi
 else
-	pstatus yellow UNKNOWN
+	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
 
 /bin/echo -n "* PTI enabled and active: "
