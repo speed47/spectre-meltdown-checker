@@ -189,7 +189,7 @@ elif [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
 elif [ "$retpoline" = 1 ]; then
 	pstatus green "NOT VULNERABLE" "retpolines mitigate the vulnerability"
 else
-	pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpolines kernel are needed to mitigate the vulnerability"
+	pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpolines are needed to mitigate the vulnerability"
 fi
 
 # MELTDOWN
