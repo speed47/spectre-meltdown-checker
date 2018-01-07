@@ -115,6 +115,13 @@ elif [ -e /boot/config-$(uname -r) ]; then
 	else
 		pstatus red NO
 	fi
+elif [ -e /boot/System.map-$(uname -r) ]; then
+	if grep -qw kpti_force_enabled /boot/System.map-$(uname -r)
+		pstatus green YES
+		kpti_support=1
+	else
+		pstatus red NO
+	fi
 else
 	pstatus yellow UNKNOWN
 fi
