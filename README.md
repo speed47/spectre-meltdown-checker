@@ -28,24 +28,24 @@ Example of the output of the script:
 
 ```
 $ sudo ./spectre-meltdown-checker.sh
-Spectre and Meltdown mitigation detection tool v0.02
+Spectre and Meltdown mitigation detection tool v0.07
 
 CVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'
-* Kernel compiled with LFENCE opcode inserted at the proper places: NO (only 38 opcodes found, should be >= 60)
-> STATUS: VULNERABLE
+* Kernel compiled with LFENCE opcode inserted at the proper places:  NO  (only 38 opcodes found, should be >= 60)
+> STATUS:  VULNERABLE
 
 CVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'
 * Mitigation 1
-*   Hardware (CPU microcode) support for mitigation: NO
-*   Kernel support for IBRS: NO
-*   IBRS enabled for Kernel space: NO
-*   IBRS enabled for User space: NO
+*   Hardware (CPU microcode) support for mitigation:  NO
+*   Kernel support for IBRS:  NO
+*   IBRS enabled for Kernel space:  NO
+*   IBRS enabled for User space:  NO
 * Mitigation 2
-*   Kernel recompiled with retpolines: UNKNOWN (check not yet implemented)
-> STATUS: VULNERABLE (IBRS hardware + kernel support OR retpolines-compiled kernel are needed to mitigate the vulnerability)
+*   Kernel compiled with retpolines:  NO
+> STATUS:  VULNERABLE  (IBRS hardware + kernel support OR kernel with retpolines are needed to mitigate the vulnerability)
 
 CVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'
-* Kernel supports Page Table Isolation (PTI): YES
-* PTI enabled and active: YES
-> STATUS: NOT VULNERABLE (PTI mitigates the vulnerability)
+* Kernel supports Page Table Isolation (PTI):  YES
+* PTI enabled and active:  YES
+> STATUS:  NOT VULNERABLE  (PTI mitigates the vulnerability)
 ```
