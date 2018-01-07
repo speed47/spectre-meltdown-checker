@@ -73,6 +73,7 @@ extract_vmlinux()
 /bin/echo -e "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
 /bin/echo -n "* Kernel compiled with LFENCE opcode inserted at the proper places: "
 
+status=0
 img=''
 [ -e /boot/vmlinuz-$(uname -r) ] && img=/boot/vmlinuz-$(uname -r)
 [ -e /boot/vmlinux-$(uname -r) ] && img=/boot/vmlinux-$(uname -r)
