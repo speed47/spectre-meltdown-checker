@@ -172,7 +172,7 @@ if [ "$mounted_debugfs" = 1 ]; then
 fi
 
 /bin/echo "* Mitigation 2"
-/bin/echo -n "*   Kernel recompiled with retpolines: "
+/bin/echo -n "*   Kernel compiled with retpolines: "
 # XXX this doesn't mean the kernel has been compiled with a retpoline-aware gcc
 if [ -e /proc/config.gz ]; then
 	if zgrep -q '^CONFIG_RETPOLINE=y' /proc/config.gz; then
