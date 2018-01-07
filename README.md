@@ -24,6 +24,7 @@ Example of the output of the script:
 
 Spectre and Meltdown mitigation detection tool v0.01
 
+```
 CVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'
 * Kernel recompiled with LFENCE opcode insertion: UNKNOWN (check not yet implemented)
 > STATUS: UNKNOWN (not implemented, but real answer is most probably VULNERABLE at this stage)
@@ -42,3 +43,4 @@ CVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'
 * Kernel supports Page Table Isolation (PTI): YES
 * PTI enabled and active: YES
 > STATUS: NOT VULNERABLE (PTI mitigates the vulnerability)
+```
