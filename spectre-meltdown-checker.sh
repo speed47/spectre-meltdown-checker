@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.02
+VERSION=0.03
 
 pstatus()
 {
@@ -73,22 +73,29 @@ extract_vmlinux()
 /bin/echo -e "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
 /bin/echo -n "* Kernel compiled with LFENCE opcode inserted at the proper places: "
 
-vmlinux=$(extract_vmlinux /boot/vmlinuz-4.4.110)
-status=0
-if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
-	pstatus yellow UNKNOWN "couldn't extract your kernel"
-elif ! which objdump >/dev/null 2>&1; then
-	pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+img=''
+[ -e /boot/vmlinuz-$(uname -r) ] && img=/boot/vmlinuz-$(uname -r)
+[ -e /boot/vmlinux-$(uname -r) ] && img=/boot/vmlinux-$(uname -r)
+[ -e /boot/bzImage-$(uname -r) ] && img=/boot/bzImage-$(uname -r)
+if [ -z "$img" ]; then
+	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot"
 else
-	nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
-	if [ "$nb_lfence" -lt 60 ]; then
-		pstatus red NO "only $nb_lfence opcodes found, should be >= 60"
-		status=1
+	vmlinux=$(extract_vmlinux $img)
+	if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
+		pstatus yellow UNKNOWN "couldn't extract your kernel"
+	elif ! which objdump >/dev/null 2>&1; then
+		pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
 	else
-		pstatus green YES "$nb_lfence opcodes found, which is >= 60"
-		status=2
+		nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
+		if [ "$nb_lfence" -lt 60 ]; then
+			pstatus red NO "only $nb_lfence opcodes found, should be >= 60"
+			status=1
+		else
+			pstatus green YES "$nb_lfence opcodes found, which is >= 60"
+			status=2
+		fi
+		rm -f $vmlinux
 	fi
-	rm -f $vmlinux
 fi
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
