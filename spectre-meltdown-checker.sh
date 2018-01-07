@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
-# Stephane Lesimple, v0.00.01
-VERSION=0.01
+# Stephane Lesimple
+VERSION=0.02
 
 pstatus()
 {
@@ -81,11 +81,11 @@ elif ! which objdump >/dev/null 2>&1; then
 	pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
 else
 	nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
-	if [ "$nb_lfence" -lt 50 ]; then
-		pstatus red NO "only $nb_lfence lfence opcodes found, should be >= 50"
+	if [ "$nb_lfence" -lt 60 ]; then
+		pstatus red NO "only $nb_lfence opcodes found, should be >= 60"
 		status=1
 	else
-		pstatus green YES "$nb_lfence opcodes found, which is >= 50"
+		pstatus green YES "$nb_lfence opcodes found, which is >= 60"
 		status=2
 	fi
 	rm -f $vmlinux
@@ -155,7 +155,7 @@ if [ "$mounted_debugfs" = 1 ]; then
 fi
 
 /bin/echo "* Mitigation 2"
-/bin/echo -n "*   Kernel recompiled with retpoline: "
+/bin/echo -n "*   Kernel recompiled with retpolines: "
 pstatus yellow UNKNOWN "check not yet implemented"
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
@@ -164,7 +164,7 @@ if grep -q AMD /proc/cpuinfo; then
 elif [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
 	pstatus green "NOT VULNERABLE" "IBRS mitigates the vulnerability"
 else
-	pstatus red VULNERABLE "IBRS hardware + kernel support OR retpoline-compiled kernel are needed to mitigate the vulnerability"
+	pstatus red VULNERABLE "IBRS hardware + kernel support OR retpolines-compiled kernel are needed to mitigate the vulnerability"
 fi
 
 # MELTDOWN
