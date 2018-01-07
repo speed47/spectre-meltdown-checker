@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.05
+VERSION=0.06
 
 pstatus()
 {
@@ -116,22 +116,12 @@ fi
 if [ ! -e /dev/cpu/0/msr ]; then
 	pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
 else
-	if which rdmsr >/dev/null 2>&1; then
-		rdmsr 0x48 >/dev/null 2>&1
-		if [ $? -eq 0 ]; then
-			pstatus green YES
-		else
-			pstatus red NO
-		fi
+	# same that rdmsr 0x48 but without needing the rdmsr tool
+	dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
+	if [ $? -eq 0 ]; then
+		pstatus green YES
 	else
-		pstatus yellow UNKNOWN "missing 'rdmsr' tool, please install it, usually it's in the msr-tools package"
-		# doesn't work:
-		#dd if=/dev/cpu/0/msr of=/dev/null bs=1 count=8 skip=72 2>/dev/null
-		#if [ $? -eq 0 ]; then
-		#	pstatus green YES
-		#else
-		#	pstatus red NO
-		#fi
+		pstatus red NO
 	fi
 fi
 
