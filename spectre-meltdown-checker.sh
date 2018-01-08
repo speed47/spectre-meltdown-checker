@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.13
+VERSION=0.14
 
 # print status function
 pstatus()
@@ -205,7 +205,7 @@ case "$ibrs_enabled" in
 esac
 
 /bin/echo "* Mitigation 2"
-/bin/echo -n "*   Kernel compiled with retpolines: "
+/bin/echo -n "*   Kernel compiled with retpoline option: "
 # We check the RETPOLINE kernel options
 if [ -e /proc/config.gz ]; then
 	# either the running kernel exports his own config
@@ -227,7 +227,7 @@ else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
 
-/bin/echo -n "*   Kernel compiled with a retpolines-aware compiler: "
+/bin/echo -n "*   Kernel compiled with a retpoline-aware compiler: "
 # Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
 # For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
 # See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
@@ -238,14 +238,14 @@ if [ -n "$vmlinux" ]; then
 		# the proper way: use nm and look for the symbol
 		if nm "$vmlinux" 2>/dev/null | grep -qw retpoline_call_target; then
 			retpoline_compiler=1
-			pstatus green YES
+			pstatus green YES "retpoline_call_target found"
 		fi
 	else
 		# if we don't have nm, nevermind, the symbol name is long enough to not have
 		# any false positive using good old grep directly on the binary
 		if grep -q retpoline_call_target "$vmlinux"; then
 			retpoline_compiler=1
-			pstatus green YES
+			pstatus green YES "retpoline_call_target found"
 		fi
 	fi
 	if [ "$retpoline_compiler" != 1 ]; then
@@ -261,13 +261,21 @@ if [ -n "$vmlinux" ]; then
 		# ffffffff8100035a:       48 8d 64 24 08          lea    0x8(%rsp),%rsp
 		# ffffffff8100035f:       c3                      retq   
 		#
-		if ! which objdump >/dev/null 2>&1; then
-			pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+		if ! which perl >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'perl', please install it"
 		else
+			# directly look for the opcode sequence in the binary
+			# 64 bits version
+			if perl -ne '/\xe8\x05\x00\x00\x00\x0f\xae\xe8\xeb\xfb\x48\x8d\x64\x24\x08\xc3/ and $found=1; END { exit($found ? 0 : 1) }' "$vmlinux"; then
+				retpoline_compiler=1
+				pstatus green YES "retpoline 64 bits asm sequence found"
+			#elif perl -ne ... 32 bits version of retpoline asm seq
 			# TODO
-			# objdump -D "$vmlinux"
-			# pstatus red NO
-			# pstatus green YES
+			#	retpoline_compiler=1
+			#	pstatus green YES "retpoline 33 bits asm sequence found"
+			else
+				pstatus red NO
+			fi
 		fi
 	fi
 else
@@ -280,10 +288,10 @@ if grep -q AMD /proc/cpuinfo; then
 	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
 elif [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
 	pstatus green "NOT VULNERABLE" "IBRS mitigates the vulnerability"
-elif [ "$retpoline" = 1 ]; then
-	pstatus green "NOT VULNERABLE" "retpolines mitigate the vulnerability"
+elif [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
+	pstatus green "NOT VULNERABLE" "retpoline mitigate the vulnerability"
 else
-	pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpolines are needed to mitigate the vulnerability"
+	pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
 fi
 
 ##########
