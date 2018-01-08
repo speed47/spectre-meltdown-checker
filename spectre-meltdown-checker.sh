@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.16
+VERSION=0.17
 
 # print status function
 pstatus()

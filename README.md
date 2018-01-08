@@ -63,7 +63,7 @@ CVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'
 > STATUS:  VULNERABLE  (PTI is needed to mitigate the vulnerability)
 ```
 
-## #First patched kernel of RHEL6
+### First patched kernel of RHEL6
 
 ```
 $ sudo ./spectre-meltdown-checker.sh --kernel /tmp/vmlinuz-2.6.32-696.18.7.el6.x86_64 --config /tmp/config-2.6.32-696.18.7.el6.x86_64 --map /tmp/System.map-2.6.32-696.18.7.el6.x86_64
@@ -74,7 +74,7 @@ Will use vmlinux image /tmp/vmlinuz-2.6.32-696.18.7.el6.x86_64
 Will use kconfig /tmp/config-2.6.32-696.18.7.el6.x86_64
 Will use System.map file /tmp/System.map-2.6.32-696.18.7.el6.x86_64
 
-CVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'm
+CVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'
 * Kernel compiled with LFENCE opcode inserted at the proper places:  YES  (84 opcodes found, which is >= 70)
 > STATUS:  NOT VULNERABLE 
 
