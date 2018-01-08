@@ -288,11 +288,9 @@ fi
 /bin/echo -n "* PTI enabled and active: "
 if grep ^flags /proc/cpuinfo | grep -qw pti; then
 	# vanilla PTI patch sets the 'pti' flag in cpuinfo
-	pstatus green YES
 	kpti_enabled=1
 elif grep ^flags /proc/cpuinfo | grep -qw kaiser; then
 	# kernel line 4.9 sets the 'kaiser' flag in cpuinfo
-	pstatus green YES
 	kpti_enabled=1
 elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
 	# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
