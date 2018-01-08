@@ -35,7 +35,7 @@ pstatus()
 
 check_vmlinux()
 {
-	file "$1" 2>/dev/null | grep -q ELF || return 1
+	readelf -h $1 > /dev/null 2>&1 || return 1
 	return 0
 }
 
