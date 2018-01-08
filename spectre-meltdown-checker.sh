@@ -2,6 +2,7 @@
 # Spectre & Meltdown checker
 # Stephane Lesimple
 VERSION=0.13
+exitcode=7
 
 # print status function
 pstatus()
@@ -135,7 +136,7 @@ fi
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
 [ "$status" = 0 ] && pstatus yellow UNKNOWN
 [ "$status" = 1 ] && pstatus red VULNERABLE
-[ "$status" = 2 ] && pstatus green 'NOT VULNERABLE'
+[ "$status" = 2 ] && pstatus green 'NOT VULNERABLE' && exitcode=$((exitcode - 1))
 
 ###########
 # VARIANT 2
@@ -232,10 +233,13 @@ fi
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
 if grep -q AMD /proc/cpuinfo; then
 	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
+	exitcode=$((exitcode - 2))
 elif [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
 	pstatus green "NOT VULNERABLE" "IBRS mitigates the vulnerability"
+	exitcode=$((exitcode - 2))
 elif [ "$retpoline" = 1 ]; then
 	pstatus green "NOT VULNERABLE" "retpolines mitigate the vulnerability"
+	exitcode=$((exitcode - 2))
 else
 	pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpolines are needed to mitigate the vulnerability"
 fi
@@ -315,8 +319,10 @@ fi
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
 if grep -q AMD /proc/cpuinfo; then
 	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
+	exitcode=$((exitcode - 4))
 elif [ "$kpti_enabled" = 1 ]; then
 	pstatus green "NOT VULNERABLE" "PTI mitigates the vulnerability"
+	exitcode=$((exitcode - 4))
 else
 	pstatus red "VULNERABLE" "PTI is needed to mitigate the vulnerability"
 fi
@@ -324,3 +330,5 @@ fi
 /bin/echo
 
 [ -n "$vmlinux" -a -f "$vmlinux" ] && rm -f "$vmlinux"
+
+exit $exitcode
