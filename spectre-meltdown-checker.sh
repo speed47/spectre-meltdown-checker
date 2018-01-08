@@ -291,7 +291,7 @@ elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page ta
 	# if we can't find the flag, grep in dmesg
 	pstatus green YES
 	kpti_enabled=1
-elif [ -e /sys/kernel/debug/x86/pti_enabled -a "$(cat /sys/kernel/debug/x86/pti_enabled)" = 1 ]; then
+elif [ -e /sys/kernel/debug/x86/pti_enabled -a "$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)" = 1 ]; then
 	pstatus green YES
 	kpti_enabled=1
 else
