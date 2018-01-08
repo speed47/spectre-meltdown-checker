@@ -93,6 +93,7 @@ img=''
 [ -e /boot/vmlinuz-$(uname -r) ] && img=/boot/vmlinuz-$(uname -r)
 [ -e /boot/kernel-$( uname -r) ] && img=/boot/kernel-$( uname -r)
 [ -e /boot/bzImage-$(uname -r) ] && img=/boot/bzImage-$(uname -r)
+[ -e /boot/kernel-genkernel-$(uname -m)-$(uname -r) ] && img=/boot/kernel-genkernel-$(uname -m)-$(uname -r)
 if [ -z "$img" ]; then
 	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot, if you used netboot, this is normal"
 else
