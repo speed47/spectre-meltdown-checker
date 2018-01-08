@@ -256,7 +256,7 @@ fi
 
 
 /bin/echo
-if [ "$USER" != root ]; then
+if [ "$(id -u)" -ne 0 ]; then
 	/bin/echo "Note that you should launch this script with root privileges to get accurate information"
 	/bin/echo "You can try the following command: sudo $0"
 fi
