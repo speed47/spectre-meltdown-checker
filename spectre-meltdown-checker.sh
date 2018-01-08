@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.09
+VERSION=0.10
 
 # print status function
 pstatus()
@@ -45,34 +45,35 @@ try_decompress()
         # "grep" that report the byte offset of the line instead of the pattern.
 
         # Try to find the header ($1) and decompress from here
-        for     pos in `tr "$1\n$2" "\n$2=" < "$img" | grep -abo "^$2"`
+        for     pos in `tr "$1\n$2" "\n$2=" < "$4" | grep -abo "^$2"`
         do
                 pos=${pos%%:*}
-                tail -c+$pos "$img" | $3 > $vmlinuxtmp 2> /dev/null
-                check_vmlinux $vmlinuxtmp && echo $vmlinuxtmp && return 0
+                tail -c+$pos "$4" | $3 > $vmlinuxtmp 2> /dev/null
+                check_vmlinux "$vmlinuxtmp" && echo "$vmlinuxtmp" && return 0
         done
+	return 1
 }
 
 extract_vmlinux()
 {
-	img="$1"
-
+	[ -n "$1" ] || return 1
 	# Prepare temp files:
-	vmlinuxtmp=$(mktemp /tmp/vmlinux-XXX)
+	vmlinuxtmp="$(mktemp /tmp/vmlinux-XXX)"
 
 	# Initial attempt for uncompressed images or objects:
-	if check_vmlinux $img; then
-		cat $img > $vmlinuxtmp
-		echo $vmlinuxtmp
+	if check_vmlinux "$1"; then
+		cat "$1" > "$vmlinuxtmp"
+		echo "$vmlinuxtmp"
 		return 0
 	fi
 
 	# That didn't work, so retry after decompression.
-	try_decompress '\037\213\010' xy    gunzip     || \
-	try_decompress '\3757zXZ\000' abcde unxz       || \
-	try_decompress 'BZh'          xy    bunzip2    || \
-	try_decompress '\135\0\0\0'   xxx   unlzma     || \
-	try_decompress '\211\114\132' xy    'lzop -d'
+	try_decompress '\037\213\010' xy    gunzip     "$1" && return 0
+	try_decompress '\3757zXZ\000' abcde unxz       "$1" && return 0
+	try_decompress 'BZh'          xy    bunzip2    "$1" && return 0
+	try_decompress '\135\0\0\0'   xxx   unlzma     "$1" && return 0
+	try_decompress '\211\114\132' xy    'lzop -d'  "$1" && return 0
+	return 1
 }
 
 # end of extract-vmlinux functions
