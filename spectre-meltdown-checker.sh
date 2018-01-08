@@ -171,15 +171,20 @@ if [ ! -e /sys/kernel/debug/sched_features ]; then
 	# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
 	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null && mounted_debugfs=1
 fi
-if [ -e /sys/kernel/debug/ibrs_enabled -o -e /sys/kernel/debug/x86/ibrs_enabled ]; then
+if [ -e /sys/kernel/debug/ibrs_enabled ]; then
 	# if the file is there, we have IBRS compiled-in
 	pstatus green YES
 	ibrs_supported=1
+	ibrs_enabled=$(cat /sys/kernel/debug/ibrs_enabled 2>/dev/null)
+elif [ -e /sys/kernel/debug/x86/ibrs_enabled ]; then
+	# RedHat uses a different path (see https://access.redhat.com/articles/3311301)
+	pstatus green YES
+	ibrs_supported=1
+	ibrs_enabled=$(cat /sys/kernel/debug/x86/ibrs_enabled 2>/dev/null)
 else
 	pstatus red NO
 fi
 
-[ -f /sys/kernel/debug/ibrs_enabled ] && ibrs_enabled=$(cat /sys/kernel/debug/ibrs_enabled 2>/dev/null) || ibrs_enabled=$(cat /sys/kernel/debug/x86/ibrs_enabled 2>/dev/null)
 /bin/echo -n "*   IBRS enabled for Kernel space: "
 # 0 means disabled
 # 1 is enabled only for kernel space
@@ -198,11 +203,6 @@ case "$ibrs_enabled" in
 	2) pstatus green YES;;
 	*) pstatus yellow unknown;;
 esac
-
-if [ "$mounted_debugfs" = 1 ]; then
-	# umount debugfs if we did mount it ourselves
-	umount /sys/kernel/debug
-fi
 
 /bin/echo "* Mitigation 2"
 /bin/echo -n "*   Kernel compiled with retpolines: "
@@ -250,13 +250,13 @@ kpti_can_tell=0
 if [ -e /proc/config.gz ]; then
 	# either the running kernel exports his own config
 	kpti_can_tell=1
-	if zgrep -q '^CONFIG_PAGE_TABLE_ISOLATION=y' /proc/config.gz; then
+	if zgrep -q '^\(CONFIG_PAGE_TABLE_ISOLATION=y\|CONFIG_KAISER=y\)' /proc/config.gz; then
 		kpti_support=1
 	fi
 elif [ -e /boot/config-$(uname -r) ]; then
 	# or we can find a config file in /root with the kernel release name
 	kpti_can_tell=1
-	if grep  -q '^CONFIG_PAGE_TABLE_ISOLATION=y' /boot/config-$(uname -r); then
+	if grep  -q '^\(CONFIG_PAGE_TABLE_ISOLATION=y\|CONFIG_KAISER=y\)' /boot/config-$(uname -r); then
 		kpti_support=1
 	fi
 fi
@@ -290,15 +290,24 @@ if grep ^flags /proc/cpuinfo | grep -qw pti; then
 	# vanilla PTI patch sets the 'pti' flag in cpuinfo
 	pstatus green YES
 	kpti_enabled=1
+elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
+	# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
+	kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
 elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
 	# if we can't find the flag, grep in dmesg
-	pstatus green YES
-	kpti_enabled=1
-elif [ -e /sys/kernel/debug/x86/pti_enabled -a "$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)" = 1 ]; then
-	pstatus green YES
 	kpti_enabled=1
 else
+	kpti_enabled=0
+fi
+if [ "$kpti_enabled" = 1 ]; then
+	pstatus green YES
+else
 	pstatus red NO
+fi
+
+if [ "$mounted_debugfs" = 1 ]; then
+	# umount debugfs if we did mount it ourselves
+	umount /sys/kernel/debug
 fi
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
