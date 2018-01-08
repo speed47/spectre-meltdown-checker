@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.10
+VERSION=0.11
 
 # print status function
 pstatus()
@@ -78,8 +78,17 @@ extract_vmlinux()
 
 # end of extract-vmlinux functions
 
-/bin/echo "Spectre and Meltdown mitigation detection tool v$VERSION"
+/bin/echo -e "\033[1;34mSpectre and Meltdown mitigation detection tool v$VERSION\033[0m"
 /bin/echo
+
+# root check
+
+if [ "$(id -u)" -ne 0 ]; then
+	/bin/echo -e "\033[31mNote that you should launch this script with root privileges to get accurate information."
+	/bin/echo -e "\033[31mWe'll proceed but you might see permission denied errors."
+	/bin/echo -e "\033[31mTo run it as root, you can try the following command: sudo $0"
+	/bin/echo
+fi
 
 ###########
 # SPECTRE 1
@@ -293,9 +302,5 @@ else
 fi
 
 /bin/echo
-if [ "$(id -u)" -ne 0 ]; then
-	/bin/echo "Note that you should launch this script with root privileges to get accurate information"
-	/bin/echo "You can try the following command: sudo $0"
-fi
 
 [ -n "$vmlinux" -a -f "$vmlinux" ] && rm -f "$vmlinux"
