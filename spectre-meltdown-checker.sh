@@ -199,11 +199,6 @@ case "$ibrs_enabled" in
 	*) pstatus yellow unknown;;
 esac
 
-if [ "$mounted_debugfs" = 1 ]; then
-	# umount debugfs if we did mount it ourselves
-	umount /sys/kernel/debug
-fi
-
 /bin/echo "* Mitigation 2"
 /bin/echo -n "*   Kernel compiled with retpolines: "
 # We check the RETPOLINE kernel options
@@ -299,6 +294,11 @@ elif [ -e /sys/kernel/debug/x86/pti_enabled -a "$(cat /sys/kernel/debug/x86/pti_
 	kpti_enabled=1
 else
 	pstatus red NO
+fi
+
+if [ "$mounted_debugfs" = 1 ]; then
+	# umount debugfs if we did mount it ourselves
+	umount /sys/kernel/debug
 fi
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
