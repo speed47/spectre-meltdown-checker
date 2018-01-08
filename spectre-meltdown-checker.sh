@@ -3,6 +3,7 @@
 # Stephane Lesimple
 VERSION=0.09
 
+# print status function
 pstatus()
 {
 	case "$1" in
@@ -15,6 +16,11 @@ pstatus()
 	[ -n "$3" ] && /bin/echo -n " ($3)"
 	/bin/echo
 }
+
+# The 3 below functions are taken from the extract-linux script, available here:
+# https://github.com/torvalds/linux/blob/master/scripts/extract-vmlinux
+# The functions have been modified for better integration to this script
+# The original header of the file has been retained below
 
 # ----------------------------------------------------------------------
 # extract-vmlinux - Extract uncompressed vmlinux from a kernel image
@@ -69,29 +75,35 @@ extract_vmlinux()
 	try_decompress '\211\114\132' xy    'lzop -d'
 }
 
+# end of extract-vmlinux functions
 
 /bin/echo "Spectre and Meltdown mitigation detection tool v$VERSION"
 /bin/echo
 
+###########
 # SPECTRE 1
 /bin/echo -e "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
 /bin/echo -n "* Kernel compiled with LFENCE opcode inserted at the proper places: "
 
 status=0
 img=''
+# try to find the image of the current running kernel
 [ -e /boot/vmlinuz-$(uname -r) ] && img=/boot/vmlinuz-$(uname -r)
 [ -e /boot/vmlinux-$(uname -r) ] && img=/boot/vmlinux-$(uname -r)
 [ -e /boot/kernel-$( uname -r) ] && img=/boot/kernel-$( uname -r)
 [ -e /boot/bzImage-$(uname -r) ] && img=/boot/bzImage-$(uname -r)
 if [ -z "$img" ]; then
-	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot"
+	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot, if you used netboot, this is normal"
 else
 	vmlinux=$(extract_vmlinux $img)
 	if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
-		pstatus yellow UNKNOWN "couldn't extract your kernel"
+		pstatus yellow UNKNOWN "couldn't extract your kernel from $img"
 	elif ! which objdump >/dev/null 2>&1; then
 		pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
 	else
+		# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
+		# in non-patched kernels, this has been empirically determined as being around 40-50
+		# in patched kernels, this is more around 70-80
 		nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
 		if [ "$nb_lfence" -lt 60 ]; then
 			pstatus red NO "only $nb_lfence opcodes found, should be >= 60"
@@ -108,19 +120,22 @@ fi
 [ "$status" = 1 ] && pstatus red VULNERABLE
 [ "$status" = 2 ] && pstatus green 'NOT VULNERABLE'
 
-
+###########
 # VARIANT 2
 /bin/echo
 /bin/echo -e "\033[1;34mCVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'\033[0m"
 /bin/echo "* Mitigation 1"
 /bin/echo -n "*   Hardware (CPU microcode) support for mitigation: "
 if [ ! -e /dev/cpu/0/msr ]; then
+	# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 	modprobe msr 2>/dev/null && insmod_msr=1
 fi
 if [ ! -e /dev/cpu/0/msr ]; then
 	pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
 else
-	# same that rdmsr 0x48 but without needing the rdmsr tool
+	# the new MSR 'SPEC_CTRL' is at offset 0x48
+	# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
+	# if we get a read error, the MSR is not there
 	dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
 	if [ $? -eq 0 ]; then
 		pstatus green YES
@@ -130,14 +145,17 @@ else
 fi
 
 if [ "$insmod_msr" = 1 ]; then
+	# if we used modprobe ourselves, rmmod the module
 	rmmod msr 2>/dev/null
 fi
 
 /bin/echo -n "*   Kernel support for IBRS: "
 if [ -e /sys/kernel/debug/sched_features ]; then
+	# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
 	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null && mounted_debugfs=1
 fi
 if [ -e /sys/kernel/debug/ibrs_enabled ]; then
+	# if the file is there, we have IBRS compiled-in
 	pstatus green YES
 	ibrs_supported=1
 else
@@ -146,6 +164,9 @@ fi
 
 ibrs_enabled=$(cat /sys/kernel/debug/ibrs_enabled 2>/dev/null)
 /bin/echo -n "*   IBRS enabled for Kernel space: "
+# 0 means disabled
+# 1 is enabled only for kernel space
+# 2 is enabled for kernel and user space
 case "$ibrs_enabled" in
 	"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
 	0)     pstatus red NO;;
@@ -162,13 +183,17 @@ case "$ibrs_enabled" in
 esac
 
 if [ "$mounted_debugfs" = 1 ]; then
+	# umount debugfs if we did mount it ourselves
 	umount /sys/kernel/debug
 fi
 
 /bin/echo "* Mitigation 2"
 /bin/echo -n "*   Kernel compiled with retpolines: "
+# We check the RETPOLINE kernel options
 # XXX this doesn't mean the kernel has been compiled with a retpoline-aware gcc
+# still looking for a way do detect that ...
 if [ -e /proc/config.gz ]; then
+	# either the running kernel exports his own config
 	if zgrep -q '^CONFIG_RETPOLINE=y' /proc/config.gz; then
 		pstatus green YES
 		retpoline=1
@@ -176,6 +201,7 @@ if [ -e /proc/config.gz ]; then
 		pstatus red NO
 	fi
 elif [ -e /boot/config-$(uname -r) ]; then
+	# or we can find a config file in /root with the kernel release name
 	if grep  -q '^CONFIG_RETPOLINE=y' /boot/config-$(uname -r); then
 		pstatus green YES
 		retpoline=1
@@ -197,48 +223,58 @@ else
 	pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpolines are needed to mitigate the vulnerability"
 fi
 
+##########
 # MELTDOWN
 /bin/echo
 /bin/echo -e "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
 /bin/echo -n "* Kernel supports Page Table Isolation (PTI): "
+kpti_support=0
+kpti_can_tell=0
 if [ -e /proc/config.gz ]; then
+	# either the running kernel exports his own config
+	kpti_can_tell=1
 	if zgrep -q '^CONFIG_PAGE_TABLE_ISOLATION=y' /proc/config.gz; then
-		pstatus green YES
 		kpti_support=1
-	else
-		pstatus red NO
 	fi
 elif [ -e /boot/config-$(uname -r) ]; then
+	# or we can find a config file in /root with the kernel release name
+	kpti_can_tell=1
 	if grep  -q '^CONFIG_PAGE_TABLE_ISOLATION=y' /boot/config-$(uname -r); then
-		pstatus green YES
 		kpti_support=1
-	else
-		pstatus red NO
 	fi
-elif [ -e /boot/System.map-$(uname -r) ]; then
+fi
+if [ -e /boot/System.map-$(uname -r) ]; then
+	# it's not an elif: some backports don't have the PTI config but still include the patch
+	# so we try to find an exported symbol that is part of the PTI patch in System.map
+	kpti_can_tell=1
 	if grep -qw kpti_force_enabled /boot/System.map-$(uname -r); then
-		pstatus green YES
 		kpti_support=1
-	else
-		pstatus red NO
 	fi
-elif [ -n "$vmlinux" ]; then
-	# some backports don't have the option but still have the patch, try to find out
+fi
+if [ -n "$vmlinux" ]; then
+	# same as above but in case we don't have System.map and only vmlinux, look for the
+	# nopti option that is part of the patch (kernel command line option)
+	kpti_can_tell=1
 	if strings "$vmlinux" | grep -qw nopti; then
-		pstatus green YES
 		kpti_support=1
-	else
-		pstatus red NO
 	fi
+fi
+
+if [ "$kpti_support" = 1 ]; then
+	pstatus green YES
+elif [ "$kpti_can_tell" = 1 ]; then
+	pstatus red NO
 else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
 
 /bin/echo -n "* PTI enabled and active: "
 if grep ^flags /proc/cpuinfo | grep -qw pti; then
+	# vanilla PTI patch sets the 'pti' flag in cpuinfo
 	pstatus green YES
 	kpti_enabled=1
 elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
+	# if we can't find the flag, grep in dmesg
 	pstatus green YES
 	kpti_enabled=1
 else
@@ -254,7 +290,6 @@ else
 	pstatus red "VULNERABLE" "PTI is needed to mitigate the vulnerability"
 fi
 
-
 /bin/echo
 if [ "$(id -u)" -ne 0 ]; then
 	/bin/echo "Note that you should launch this script with root privileges to get accurate information"
@@ -262,4 +297,3 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 [ -n "$vmlinux" -a -f "$vmlinux" ] && rm -f "$vmlinux"
-
