@@ -108,6 +108,7 @@ status=0
 img=''
 # try to find the image of the current running kernel
 [ -e /boot/vmlinuz-linux       ] && img=/boot/vmlinuz-linux
+[ -e /boot/vmlinuz-linux-libre ] && img=/boot/vmlinuz-linux-libre
 [ -e /boot/vmlinuz-$(uname -r) ] && img=/boot/vmlinuz-$(uname -r)
 [ -e /boot/kernel-$( uname -r) ] && img=/boot/kernel-$( uname -r)
 [ -e /boot/bzImage-$(uname -r) ] && img=/boot/bzImage-$(uname -r)
