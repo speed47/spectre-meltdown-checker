@@ -280,8 +280,12 @@ if [ "$kpti_support" = 0 -a -n "$vmlinux" ]; then
 	# same as above but in case we don't have System.map and only vmlinux, look for the
 	# nopti option that is part of the patch (kernel command line option)
 	kpti_can_tell=1
-	if strings "$vmlinux" | grep -qw nopti; then
-		kpti_support=1
+	if ! which strings >/dev/null 2>&1; then
+		pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
+	else
+		if strings "$vmlinux" | grep -qw nopti; then
+			kpti_support=1
+		fi
 	fi
 fi
 
