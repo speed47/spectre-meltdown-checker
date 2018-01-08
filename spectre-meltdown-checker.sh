@@ -90,7 +90,7 @@ if [ "$(id -u)" -ne 0 ]; then
 	/bin/echo
 fi
 
-/bin/echo -e "Checking vulnerabilities against \033[35m"$(uname -s) $(uname -r) $(uname -m)"\033[0m"
+/bin/echo -e "Checking vulnerabilities against \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
 /bin/echo
 
 ###########
