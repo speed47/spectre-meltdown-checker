@@ -250,13 +250,13 @@ kpti_can_tell=0
 if [ -e /proc/config.gz ]; then
 	# either the running kernel exports his own config
 	kpti_can_tell=1
-	if zgrep -q '^CONFIG_PAGE_TABLE_ISOLATION=y' /proc/config.gz; then
+	if zgrep -q '^\(CONFIG_PAGE_TABLE_ISOLATION=y\|CONFIG_KAISER=y\)' /proc/config.gz; then
 		kpti_support=1
 	fi
 elif [ -e /boot/config-$(uname -r) ]; then
 	# or we can find a config file in /root with the kernel release name
 	kpti_can_tell=1
-	if grep  -q '^CONFIG_PAGE_TABLE_ISOLATION=y' /boot/config-$(uname -r); then
+	if grep  -q '^\(CONFIG_PAGE_TABLE_ISOLATION=y\|CONFIG_KAISER=y\)' /boot/config-$(uname -r); then
 		kpti_support=1
 	fi
 fi
