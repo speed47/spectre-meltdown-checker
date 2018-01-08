@@ -1,7 +1,7 @@
 #! /bin/sh
 # Spectre & Meltdown checker
 # Stephane Lesimple
-VERSION=0.14
+VERSION=0.15
 
 # print status function
 pstatus()
@@ -231,52 +231,29 @@ fi
 # Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
 # For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
 # See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
-# We'll look for the presence of 'retpoline_call_target' in symbols
+# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
+# *AND* if the compiler is retpoline-compliant, so look for that symbol
 if [ -n "$vmlinux" ]; then
 	# look for the symbol
-	if which nm >/dev/null 2>&1; then
-		# the proper way: use nm and look for the symbol
-		if nm "$vmlinux" 2>/dev/null | grep -qw retpoline_call_target; then
+	if [ -e /boot/System.map-$(uname -r) ]; then
+		if grep -qw noretpoline_setup /boot/System.map-$(uname -r); then
 			retpoline_compiler=1
-			pstatus green YES "retpoline_call_target found"
+			pstatus green YES "noretpoline_setup symbol found in System.map"
 		fi
-	else
+	elif which nm >/dev/null 2>&1; then
+		# the proper way: use nm and look for the symbol
+		if nm "$vmlinux" 2>/dev/null | grep -qw 'noretpoline_setup'; then
+			retpoline_compiler=1
+			pstatus green YES "noretpoline_setup symbol found in vmlinux"
+		fi
+	elif grep -q noretpoline_setup "$vmlinux"; then
 		# if we don't have nm, nevermind, the symbol name is long enough to not have
 		# any false positive using good old grep directly on the binary
-		if grep -q retpoline_call_target "$vmlinux"; then
-			retpoline_compiler=1
-			pstatus green YES "retpoline_call_target found"
-		fi
+		retpoline_compiler=1
+		pstatus green YES "noretpoline_setup symbol found in vmlinux"
 	fi
 	if [ "$retpoline_compiler" != 1 ]; then
-		# still not ? maybe we just don't have symbols in the kernel image (stripped)
-		# let's objdump it and look for the asm sequence (here for 64 bits)
-		#
-		# ffffffff81000350 <__x86.indirect_thunk>:
-		# ffffffff81000350:       e8 05 00 00 00          callq  ffffffff8100035a <retpoline_call_target>
-		# ffffffff81000355:       0f ae e8                lfence 
-		# ffffffff81000358:       eb fb                   jmp    ffffffff81000355 <__x86.indirect_thunk+0x5>
-
-		# ffffffff8100035a <retpoline_call_target>:
-		# ffffffff8100035a:       48 8d 64 24 08          lea    0x8(%rsp),%rsp
-		# ffffffff8100035f:       c3                      retq   
-		#
-		if ! which perl >/dev/null 2>&1; then
-			pstatus yellow UNKNOWN "missing 'perl', please install it"
-		else
-			# directly look for the opcode sequence in the binary
-			# 64 bits version
-			if perl -ne '/\xe8\x05\x00\x00\x00\x0f\xae\xe8\xeb\xfb\x48\x8d\x64\x24\x08\xc3/ and $found=1; END { exit($found ? 0 : 1) }' "$vmlinux"; then
-				retpoline_compiler=1
-				pstatus green YES "retpoline 64 bits asm sequence found"
-			#elif perl -ne ... 32 bits version of retpoline asm seq
-			# TODO
-			#	retpoline_compiler=1
-			#	pstatus green YES "retpoline 33 bits asm sequence found"
-			else
-				pstatus red NO
-			fi
-		fi
+		pstatus red NO
 	fi
 else
 	pstatus yellow UNKNOWN "couldn't find your kernel image"
