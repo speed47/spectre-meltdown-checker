@@ -260,7 +260,7 @@ elif [ -e /boot/config-$(uname -r) ]; then
 		kpti_support=1
 	fi
 fi
-if [ -e /boot/System.map-$(uname -r) ]; then
+if [ "$kpti_support" = 0 -a -e /boot/System.map-$(uname -r) ]; then
 	# it's not an elif: some backports don't have the PTI config but still include the patch
 	# so we try to find an exported symbol that is part of the PTI patch in System.map
 	kpti_can_tell=1
@@ -268,7 +268,7 @@ if [ -e /boot/System.map-$(uname -r) ]; then
 		kpti_support=1
 	fi
 fi
-if [ -n "$vmlinux" ]; then
+if [ "$kpti_support" = 0 -a -n "$vmlinux" ]; then
 	# same as above but in case we don't have System.map and only vmlinux, look for the
 	# nopti option that is part of the patch (kernel command line option)
 	kpti_can_tell=1
