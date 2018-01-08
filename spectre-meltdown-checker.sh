@@ -89,8 +89,8 @@ extract_vmlinux()
 status=0
 img=''
 # try to find the image of the current running kernel
+[ -e /boot/vmlinuz-linux       ] && img=/boot/vmlinuz-linux
 [ -e /boot/vmlinuz-$(uname -r) ] && img=/boot/vmlinuz-$(uname -r)
-[ -e /boot/vmlinux-$(uname -r) ] && img=/boot/vmlinux-$(uname -r)
 [ -e /boot/kernel-$( uname -r) ] && img=/boot/kernel-$( uname -r)
 [ -e /boot/bzImage-$(uname -r) ] && img=/boot/bzImage-$(uname -r)
 if [ -z "$img" ]; then
