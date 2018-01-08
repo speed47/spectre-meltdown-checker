@@ -164,7 +164,7 @@ if [ "$insmod_msr" = 1 ]; then
 fi
 
 /bin/echo -n "*   Kernel support for IBRS: "
-if [ -e /sys/kernel/debug/sched_features ]; then
+if [ ! -e /sys/kernel/debug/sched_features ]; then
 	# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
 	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null && mounted_debugfs=1
 fi
