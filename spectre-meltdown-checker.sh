@@ -155,7 +155,7 @@ if [ -e /sys/kernel/debug/sched_features ]; then
 	# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
 	mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null && mounted_debugfs=1
 fi
-if [ -e /sys/kernel/debug/ibrs_enabled ]; then
+if [ -e /sys/kernel/debug/ibrs_enabled -o -e /sys/kernel/debug/x86/ibrs_enabled ]; then
 	# if the file is there, we have IBRS compiled-in
 	pstatus green YES
 	ibrs_supported=1
@@ -163,7 +163,7 @@ else
 	pstatus red NO
 fi
 
-ibrs_enabled=$(cat /sys/kernel/debug/ibrs_enabled 2>/dev/null)
+[ -f /sys/kernel/debug/ibrs_enabled ] && ibrs_enabled=$(cat /sys/kernel/debug/ibrs_enabled 2>/dev/null) || ibrs_enabled=$(cat /sys/kernel/debug/x86/ibrs_enabled 2>/dev/null)
 /bin/echo -n "*   IBRS enabled for Kernel space: "
 # 0 means disabled
 # 1 is enabled only for kernel space
@@ -276,6 +276,9 @@ if grep ^flags /proc/cpuinfo | grep -qw pti; then
 	kpti_enabled=1
 elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
 	# if we can't find the flag, grep in dmesg
+	pstatus green YES
+	kpti_enabled=1
+elif [ -e /sys/kernel/debug/x86/pti_enabled -a "$(cat /sys/kernel/debug/x86/pti_enabled)" = 1 ]; then
 	pstatus green YES
 	kpti_enabled=1
 else
