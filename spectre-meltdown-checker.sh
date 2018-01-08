@@ -238,7 +238,7 @@ fi
 if grep ^flags /proc/cpuinfo | grep -qw pti; then
 	pstatus green YES
 	kpti_enabled=1
-elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
+elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled|x86/pti: Unmapping kernel while in userspace'; then
 	pstatus green YES
 	kpti_enabled=1
 else
