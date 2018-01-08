@@ -33,6 +33,8 @@ pstatus()
 # Licensed under the GNU General Public License, version 2 (GPLv2).
 # ----------------------------------------------------------------------
 
+vmlinux=''
+vmlinux_err=''
 check_vmlinux()
 {
 	readelf -h $1 > /dev/null 2>&1 || return 1
@@ -41,16 +43,20 @@ check_vmlinux()
 
 try_decompress()
 {
-        # The obscure use of the "tr" filter is to work around older versions of
-        # "grep" that report the byte offset of the line instead of the pattern.
+	# The obscure use of the "tr" filter is to work around older versions of
+	# "grep" that report the byte offset of the line instead of the pattern.
 
-        # Try to find the header ($1) and decompress from here
-        for     pos in `tr "$1\n$2" "\n$2=" < "$4" | grep -abo "^$2"`
-        do
-                pos=${pos%%:*}
-                tail -c+$pos "$4" | $3 > $vmlinuxtmp 2> /dev/null
-                check_vmlinux "$vmlinuxtmp" && echo "$vmlinuxtmp" && return 0
-        done
+	# Try to find the header ($1) and decompress from here
+	for     pos in `tr "$1\n$2" "\n$2=" < "$5" | grep -abo "^$2"`
+	do
+		if ! which $3 >/dev/null 2>&1; then
+			vmlinux_err="missing '$3' tool, please install it, usually it's in the '$4' package"
+			return 0
+		fi
+		pos=${pos%%:*}
+		tail -c+$pos "$5" | $3 > $vmlinuxtmp 2> /dev/null
+		check_vmlinux "$vmlinuxtmp" && vmlinux=$vmlinuxtmp && return 0
+	done
 	return 1
 }
 
@@ -68,11 +74,11 @@ extract_vmlinux()
 	fi
 
 	# That didn't work, so retry after decompression.
-	try_decompress '\037\213\010' xy    gunzip     "$1" && return 0
-	try_decompress '\3757zXZ\000' abcde unxz       "$1" && return 0
-	try_decompress 'BZh'          xy    bunzip2    "$1" && return 0
-	try_decompress '\135\0\0\0'   xxx   unlzma     "$1" && return 0
-	try_decompress '\211\114\132' xy    'lzop -d'  "$1" && return 0
+	try_decompress '\037\213\010' xy    gunzip     gunzip	"$1" && return 0
+	try_decompress '\3757zXZ\000' abcde unxz       xz-utils	"$1" && return 0
+	try_decompress 'BZh'          xy    bunzip2    bzip2	"$1" && return 0
+	try_decompress '\135\0\0\0'   xxx   unlzma     xz-utils	"$1" && return 0
+	try_decompress '\211\114\132' xy    'lzop -d'  lzop	"$1" && return 0
 	return 1
 }
 
@@ -109,8 +115,10 @@ img=''
 if [ -z "$img" ]; then
 	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot, if you used netboot, this is normal"
 else
-	vmlinux=$(extract_vmlinux $img)
-	if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
+	extract_vmlinux $img
+	if [ "$vmlinux_err" != "" ]; then
+		pstatus yellow UNKNOWN "couldn't extract your kernel from $img: $vmlinux_err"
+	elif [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
 		pstatus yellow UNKNOWN "couldn't extract your kernel from $img"
 	elif ! which objdump >/dev/null 2>&1; then
 		pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
