@@ -201,14 +201,12 @@ case "$ibrs_enabled" in
 	"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
 	0 | 1) pstatus red NO;;
 	2) pstatus green YES;;
-	*) pstatus yellow unknown;;
+	*) pstatus yellow UNKNOWN;;
 esac
 
 /bin/echo "* Mitigation 2"
 /bin/echo -n "*   Kernel compiled with retpolines: "
 # We check the RETPOLINE kernel options
-# XXX this doesn't mean the kernel has been compiled with a retpoline-aware gcc
-# still looking for a way do detect that ...
 if [ -e /proc/config.gz ]; then
 	# either the running kernel exports his own config
 	if zgrep -q '^CONFIG_RETPOLINE=y' /proc/config.gz; then
@@ -228,6 +226,54 @@ elif [ -e /boot/config-$(uname -r) ]; then
 else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
+
+/bin/echo -n "*   Kernel compiled with a retpolines-aware compiler: "
+# Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
+# For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
+# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
+# We'll look for the presence of 'retpoline_call_target' in symbols
+if [ -n "$vmlinux" ]; then
+	# look for the symbol
+	if which nm >/dev/null 2>&1; then
+		# the proper way: use nm and look for the symbol
+		if nm "$vmlinux" 2>/dev/null | grep -qw retpoline_call_target; then
+			retpoline_compiler=1
+			pstatus green YES
+		fi
+	else
+		# if we don't have nm, nevermind, the symbol name is long enough to not have
+		# any false positive using good old grep directly on the binary
+		if grep -q retpoline_call_target "$vmlinux"; then
+			retpoline_compiler=1
+			pstatus green YES
+		fi
+	fi
+	if [ "$retpoline_compiler" != 1 ]; then
+		# still not ? maybe we just don't have symbols in the kernel image (stripped)
+		# let's objdump it and look for the asm sequence (here for 64 bits)
+		#
+		# ffffffff81000350 <__x86.indirect_thunk>:
+		# ffffffff81000350:       e8 05 00 00 00          callq  ffffffff8100035a <retpoline_call_target>
+		# ffffffff81000355:       0f ae e8                lfence 
+		# ffffffff81000358:       eb fb                   jmp    ffffffff81000355 <__x86.indirect_thunk+0x5>
+
+		# ffffffff8100035a <retpoline_call_target>:
+		# ffffffff8100035a:       48 8d 64 24 08          lea    0x8(%rsp),%rsp
+		# ffffffff8100035f:       c3                      retq   
+		#
+		if ! which objdump >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+		else
+			# TODO
+			# objdump -D "$vmlinux"
+			# pstatus red NO
+			# pstatus green YES
+		fi
+	fi
+else
+	pstatus yellow UNKNOWN "couldn't find your kernel image"
+fi
+
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
 if grep -q AMD /proc/cpuinfo; then
