@@ -115,27 +115,31 @@ img=''
 if [ -z "$img" ]; then
 	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot, if you used netboot, this is normal"
 else
-	extract_vmlinux $img
-	if [ "$vmlinux_err" != "" ]; then
-		pstatus yellow UNKNOWN "couldn't extract your kernel from $img: $vmlinux_err"
-	elif [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
-		pstatus yellow UNKNOWN "couldn't extract your kernel from $img"
-	elif ! which objdump >/dev/null 2>&1; then
-		pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+	if ! which readelf >/dev/null 2>&1; then
+		pstatus yellow UNKNOWN "missing 'readelf' tool, please install it, usually it's in the 'binutils' package"
 	else
-		# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
-		# in non-patched kernels, this has been empirically determined as being around 40-50
-		# in patched kernels, this is more around 70-80, sometimes way higher (100+)
-		# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
-		# so let's push the threshold to 70.
-		# TODO LKML patch is starting to dump LFENCE in favor of the PAUSE opcode, we might need to check that (patch not stabilized yet)
-		nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
-		if [ "$nb_lfence" -lt 70 ]; then
-			pstatus red NO "only $nb_lfence opcodes found, should be >= 70"
-			status=1
+		extract_vmlinux $img
+		if [ "$vmlinux_err" != "" ]; then
+			pstatus yellow UNKNOWN "couldn't extract your kernel from $img: $vmlinux_err"
+		elif [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
+			pstatus yellow UNKNOWN "couldn't extract your kernel from $img"
+		elif ! which objdump >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
 		else
-			pstatus green YES "$nb_lfence opcodes found, which is >= 70"
-			status=2
+			# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
+			# in non-patched kernels, this has been empirically determined as being around 40-50
+			# in patched kernels, this is more around 70-80, sometimes way higher (100+)
+			# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
+			# so let's push the threshold to 70.
+			# TODO LKML patch is starting to dump LFENCE in favor of the PAUSE opcode, we might need to check that (patch not stabilized yet)
+			nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
+			if [ "$nb_lfence" -lt 70 ]; then
+				pstatus red NO "only $nb_lfence opcodes found, should be >= 70"
+				status=1
+			else
+				pstatus green YES "$nb_lfence opcodes found, which is >= 70"
+				status=2
+			fi
 		fi
 	fi
 fi
