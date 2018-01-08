@@ -33,24 +33,30 @@ pstatus()
 # Licensed under the GNU General Public License, version 2 (GPLv2).
 # ----------------------------------------------------------------------
 
+vmlinux=''
+vmlinux_err=''
 check_vmlinux()
 {
-	file "$1" 2>/dev/null | grep -q ELF || return 1
+	readelf -h $1 > /dev/null 2>&1 || return 1
 	return 0
 }
 
 try_decompress()
 {
-        # The obscure use of the "tr" filter is to work around older versions of
-        # "grep" that report the byte offset of the line instead of the pattern.
+	# The obscure use of the "tr" filter is to work around older versions of
+	# "grep" that report the byte offset of the line instead of the pattern.
 
-        # Try to find the header ($1) and decompress from here
-        for     pos in `tr "$1\n$2" "\n$2=" < "$4" | grep -abo "^$2"`
-        do
-                pos=${pos%%:*}
-                tail -c+$pos "$4" | $3 > $vmlinuxtmp 2> /dev/null
-                check_vmlinux "$vmlinuxtmp" && echo "$vmlinuxtmp" && return 0
-        done
+	# Try to find the header ($1) and decompress from here
+	for     pos in `tr "$1\n$2" "\n$2=" < "$5" | grep -abo "^$2"`
+	do
+		if ! which $3 >/dev/null 2>&1; then
+			vmlinux_err="missing '$3' tool, please install it, usually it's in the '$4' package"
+			return 0
+		fi
+		pos=${pos%%:*}
+		tail -c+$pos "$5" | $3 > $vmlinuxtmp 2> /dev/null
+		check_vmlinux "$vmlinuxtmp" && vmlinux=$vmlinuxtmp && return 0
+	done
 	return 1
 }
 
@@ -68,11 +74,11 @@ extract_vmlinux()
 	fi
 
 	# That didn't work, so retry after decompression.
-	try_decompress '\037\213\010' xy    gunzip     "$1" && return 0
-	try_decompress '\3757zXZ\000' abcde unxz       "$1" && return 0
-	try_decompress 'BZh'          xy    bunzip2    "$1" && return 0
-	try_decompress '\135\0\0\0'   xxx   unlzma     "$1" && return 0
-	try_decompress '\211\114\132' xy    'lzop -d'  "$1" && return 0
+	try_decompress '\037\213\010' xy    gunzip     gunzip	"$1" && return 0
+	try_decompress '\3757zXZ\000' abcde unxz       xz-utils	"$1" && return 0
+	try_decompress 'BZh'          xy    bunzip2    bzip2	"$1" && return 0
+	try_decompress '\135\0\0\0'   xxx   unlzma     xz-utils	"$1" && return 0
+	try_decompress '\211\114\132' xy    'lzop -d'  lzop	"$1" && return 0
 	return 1
 }
 
@@ -109,25 +115,31 @@ img=''
 if [ -z "$img" ]; then
 	pstatus yellow UNKNOWN "couldn't find your kernel image in /boot, if you used netboot, this is normal"
 else
-	vmlinux=$(extract_vmlinux $img)
-	if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
-		pstatus yellow UNKNOWN "couldn't extract your kernel from $img"
-	elif ! which objdump >/dev/null 2>&1; then
-		pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+	if ! which readelf >/dev/null 2>&1; then
+		pstatus yellow UNKNOWN "missing 'readelf' tool, please install it, usually it's in the 'binutils' package"
 	else
-		# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
-		# in non-patched kernels, this has been empirically determined as being around 40-50
-		# in patched kernels, this is more around 70-80, sometimes way higher (100+)
-		# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
-		# so let's push the threshold to 70.
-		# TODO LKML patch is starting to dump LFENCE in favor of the PAUSE opcode, we might need to check that (patch not stabilized yet)
-		nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
-		if [ "$nb_lfence" -lt 70 ]; then
-			pstatus red NO "only $nb_lfence opcodes found, should be >= 70"
-			status=1
+		extract_vmlinux $img
+		if [ "$vmlinux_err" != "" ]; then
+			pstatus yellow UNKNOWN "couldn't extract your kernel from $img: $vmlinux_err"
+		elif [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
+			pstatus yellow UNKNOWN "couldn't extract your kernel from $img"
+		elif ! which objdump >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
 		else
-			pstatus green YES "$nb_lfence opcodes found, which is >= 70"
-			status=2
+			# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
+			# in non-patched kernels, this has been empirically determined as being around 40-50
+			# in patched kernels, this is more around 70-80, sometimes way higher (100+)
+			# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
+			# so let's push the threshold to 70.
+			# TODO LKML patch is starting to dump LFENCE in favor of the PAUSE opcode, we might need to check that (patch not stabilized yet)
+			nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
+			if [ "$nb_lfence" -lt 70 ]; then
+				pstatus red NO "only $nb_lfence opcodes found, should be >= 70"
+				status=1
+			else
+				pstatus green YES "$nb_lfence opcodes found, which is >= 70"
+				status=2
+			fi
 		fi
 	fi
 fi
@@ -291,7 +303,7 @@ elif [ -e /boot/config-$(uname -r) ]; then
 		kpti_support=1
 	fi
 fi
-if [ -e /boot/System.map-$(uname -r) ]; then
+if [ "$kpti_support" = 0 -a -e /boot/System.map-$(uname -r) ]; then
 	# it's not an elif: some backports don't have the PTI config but still include the patch
 	# so we try to find an exported symbol that is part of the PTI patch in System.map
 	kpti_can_tell=1
@@ -299,12 +311,16 @@ if [ -e /boot/System.map-$(uname -r) ]; then
 		kpti_support=1
 	fi
 fi
-if [ -n "$vmlinux" ]; then
+if [ "$kpti_support" = 0 -a -n "$vmlinux" ]; then
 	# same as above but in case we don't have System.map and only vmlinux, look for the
 	# nopti option that is part of the patch (kernel command line option)
 	kpti_can_tell=1
-	if strings "$vmlinux" | grep -qw nopti; then
-		kpti_support=1
+	if ! which strings >/dev/null 2>&1; then
+		pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
+	else
+		if strings "$vmlinux" | grep -qw nopti; then
+			kpti_support=1
+		fi
 	fi
 fi
 
