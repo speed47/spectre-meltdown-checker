@@ -111,11 +111,11 @@ is_cpu_vulnerable()
 		variant1=0
 		variant2=1
 		variant3=1
-	elif grep -qi 'CPU implementer : 0x41' /proc/cpuinfo; then
+	elif grep -qi 'CPU implementer\s*:\s*0x41' /proc/cpuinfo; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
-		cpupart=$(awk '/CPU part :/        {print $4;exit}' /proc/cpuinfo)
-		cpuarch=$(awk '/CPU architecture:/ {print $3;exit}' /proc/cpuinfo)
+		cpupart=$(awk '/CPU part/         {print $4;exit}' /proc/cpuinfo)
+		cpuarch=$(awk '/CPU architecture/ {print $3;exit}' /proc/cpuinfo)
 		if [ -n "$cpupart" -a -n "$cpuarch" ]; then
 			# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 			# I can't find their CPU part number, but it's probably not that useful anyway
