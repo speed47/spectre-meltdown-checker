@@ -130,7 +130,7 @@ __echo()
 	msg="$@"
 	if [ "$opt_no_color" = 1 ] ; then
 		# strip ANSI color codes
-		msg=$(echo "$msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
+		msg=$(/bin/echo -e  "$msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
 	fi
 	# explicitely call /bin/echo to avoid shell builtins that might not take options
 	/bin/echo $opt -e "$msg"
