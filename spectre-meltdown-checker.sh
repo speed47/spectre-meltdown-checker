@@ -186,7 +186,11 @@ if [ "$opt_live" = 1 ]; then
 	[ -e /boot/kernel-genkernel-$(uname -m)-$(uname -r) ] && opt_kernel=/boot/kernel-genkernel-$(uname -m)-$(uname -r)
 
 	# system.map
-	[ -e /boot/System.map-$(uname -r) ] && opt_map=/boot/System.map-$(uname -r)
+	if [ -e /proc/kallsyms ] ; then
+		opt_map="/proc/kallsyms"
+	elif [ -e /boot/System.map-$(uname -r) ] ; then
+		opt_map=/boot/System.map-$(uname -r)
+	fi
 
 	# config
 	if [ -e /proc/config.gz ] ; then
