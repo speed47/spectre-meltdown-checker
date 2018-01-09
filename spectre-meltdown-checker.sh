@@ -65,7 +65,7 @@ extract_vmlinux()
 {
 	[ -n "$1" ] || return 1
 	# Prepare temp files:
-	vmlinuxtmp="$(mktemp /tmp/vmlinux-XXX)"
+	vmlinuxtmp="$(mktemp /tmp/vmlinux-XXXXXX)"
 	trap "rm -f $vmlinuxtmp" EXIT
 
 	# Initial attempt for uncompressed images or objects:
@@ -190,7 +190,7 @@ if [ "$opt_live" = 1 ]; then
 
 	# config
 	if [ -e /proc/config.gz ] ; then
-		dumped_config="$(mktemp /tmp/config-XXX)"
+		dumped_config="$(mktemp /tmp/config-XXXXXX)"
 		gunzip -c /proc/config.gz > $dumped_config
 		# dumped_config will be deleted at the end of the script
 		opt_config=$dumped_config
