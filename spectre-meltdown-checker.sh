@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.20
+VERSION=0.21
 
 # Script configuration
 show_usage()
@@ -35,6 +35,35 @@ show_usage()
 		--no-color			Don't use color codes
 		-v, --verbose			Increase verbosity level
 		--batch				Produce machine readable output
+
+	IMPORTANT:
+	A false sense of security is worse than no security at all.
+	Please use the --disclaimer option to understand exactly what this script does.
+
+EOF
+}
+
+show_disclaimer()
+{
+	cat <<EOF
+Disclaimer:
+
+This tool does its best to determine whether your system is immune (or has proper mitigations in place) for the
+collectively named "speculative execution" vulnerabilities. It doesn't attempt to run any kind of exploit, and can't guarantee
+that your system is secure, but rather helps you verifying whether your system has the known correct mitigations in place.
+However, some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might
+falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).
+
+Your system exposure also depends on your CPU. As of now, AMD and ARM processors are marked as immune to some or all of these
+vulnerabilities (except some specific ARM models). All Intel processors manufactured since circa 1995 are thought to be vulnerable.
+Whatever processor one uses, one might seek more information from the manufacturer of that processor and/or of the device
+in which it runs.
+
+The nature of the discovered vulnerabilities being quite new, the landscape of vulnerable processors can be expected
+to change over time, which is why this script makes the assumption that all CPUs are vulnerable, except if the manufacturer
+explicitely stated otherwise in a verifiable public announcement.
+
+This tool has been released in the hope that it'll be useful, but don't use it to jump to conclusions about your security.
 
 EOF
 }
@@ -213,6 +242,10 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "-h" -o "$1" = "--help" ]; then
 		show_header
 		show_usage
+		exit 0
+	elif [ "$1" = "--disclaimer" ]; then
+		show_header
+		show_disclaimer
 		exit 0
 	else
 		show_header
@@ -688,5 +721,7 @@ else
 fi
 
 _info
+
+_info "A false sense of security is worst than no security at all, see --disclaimer"
 
 [ -n "$dumped_config" ] && rm -f "$dumped_config"
