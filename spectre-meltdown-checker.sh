@@ -1,7 +1,14 @@
 #! /bin/sh
 # Spectre & Meltdown checker
+#
+# Check for the latest version at:
+# https://github.com/speed47/spectre-meltdown-checker
+# git clone https://github.com/speed47/spectre-meltdown-checker.git
+# or wget https://raw.githubusercontent.com/speed47/spectre-meltdown-checker/master/spectre-meltdown-checker.sh
+#
 # Stephane Lesimple
-VERSION=0.17
+#
+VERSION=0.18
 
 # print status function
 pstatus()
@@ -207,7 +214,7 @@ fi
 if [ -n "$opt_kernel" ]; then
 	/bin/echo -e "Will use vmlinux image \033[35m$opt_kernel\033[0m"
 else
-	/bin/echo "Will use no vmlinux image (accuracy might be reduced"
+	/bin/echo "Will use no vmlinux image (accuracy might be reduced)"
 fi
 if [ -n "$dumped_config" ]; then
 	/bin/echo -e "Will use kconfig \033[35m/proc/config.gz\033[0m"
