@@ -542,7 +542,7 @@ kpti_support=0
 kpti_can_tell=0
 if [ -n "$opt_config" ]; then
 	kpti_can_tell=1
-	if grep -Eq '^\(CONFIG_PAGE_TABLE_ISOLATION\|CONFIG_KAISER\)=y' "$opt_config"; then
+	if grep -Eq '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config"; then
 		kpti_support=1
 	fi
 fi
