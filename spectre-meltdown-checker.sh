@@ -399,7 +399,7 @@ if [ -e "$opt_kernel" ]; then
 		extract_vmlinux "$opt_kernel"
 	fi
 else
-	vmlinux_err="couldn't find your kernel image in /boot, if you used neboot, this is normal"
+	vmlinux_err="couldn't find your kernel image in /boot, if you used netboot, this is normal"
 fi
 if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
