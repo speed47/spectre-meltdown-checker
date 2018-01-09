@@ -234,7 +234,7 @@ fi
 ###########
 # SPECTRE 1
 /bin/echo -e "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
-/bin/echo -n "* Kernel compiled with LFENCE opcode inserted at the proper places: "
+/bin/echo -n "* Checking count of LFENCE opcodes in kernel: "
 
 status=0
 if [ -n "$vmlinux_err" ]; then
@@ -262,8 +262,8 @@ fi
 
 /bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
 [ "$status" = 0 ] && pstatus yellow UNKNOWN
-[ "$status" = 1 ] && pstatus red VULNERABLE
-[ "$status" = 2 ] && pstatus green 'NOT VULNERABLE'
+[ "$status" = 1 ] && pstatus red   'VULNERABLE'     'heuristic to be improved when official patches become available'
+[ "$status" = 2 ] && pstatus green 'NOT VULNERABLE' 'heuristic to be improved when official patches become available'
 
 ###########
 # VARIANT 2
