@@ -33,6 +33,8 @@ show_usage()
 
 	Options:
 		--no-color			Don't use color codes
+		-v, --verbose			Increase verbosity level
+		--batch				Produce machine readable output
 
 EOF
 }
@@ -44,6 +46,8 @@ opt_map=''
 opt_live_explicit=0
 opt_live=1
 opt_no_color=0
+opt_batch=0
+opt_verbose=1
 
 __echo()
 {
@@ -60,12 +64,38 @@ __echo()
 
 _echo()
 {
-	__echo '' "$@"
+	if [ $opt_verbose -ge $1 ]; then
+		shift
+		__echo '' "$@"
+	fi
 }
 
 _echo_nol()
 {
-	__echo -n "$@"
+	if [ $opt_verbose -ge $1 ]; then
+		shift
+		__echo -n "$@"
+	fi
+}
+
+_warn()
+{
+	_echo 0 "\033[31m${@}\033[0m"
+}
+
+_info()
+{
+	_echo 1 "$@"
+}
+
+_info_nol()
+{
+	_echo_nol 1 "$@"
+}
+
+_verbose()
+{
+	_echo 2 "$@"
 }
 
 is_cpu_vulnerable()
@@ -116,8 +146,11 @@ is_cpu_vulnerable()
 	return 255
 }
 
-_echo "\033[1;34mSpectre and Meltdown mitigation detection tool v$VERSION\033[0m"
-_echo
+show_header()
+{
+	_info "\033[1;34mSpectre and Meltdown mitigation detection tool v$VERSION\033[0m"
+	_info
+}
 
 parse_opt_file()
 {
@@ -125,16 +158,20 @@ parse_opt_file()
 	option_name="$1"
 	option_value="$2"
 	if [ -z "$option_value" ]; then
+		show_header
 		show_usage
 		echo "$0: error: --$option_name expects one parameter (a file)" >&2
 		exit 1
 	elif [ ! -e "$option_value" ]; then
+		show_header
 		echo "$0: error: couldn't find file $option_value" >&2
 		exit 1
 	elif [ ! -f "$option_value" ]; then
+		show_header
 		echo "$0: error: $option_value is not a file" >&2
 		exit 1
 	elif [ ! -e "$option_value" ]; then
+		show_header
 		echo "$0: error: couldn't read $option_value (are you root?)" >&2
 		exit 1
 	fi
@@ -164,21 +201,32 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--no-color" ]; then
 		opt_no_color=1
 		shift
+	elif [ "$1" = "--batch" ]; then
+		opt_batch=1
+		opt_verbose=0
+		shift
+	elif [ "$1" = "-v" -o "$1" = "--verbose" ]; then
+		opt_verbose=$(expr $opt_verbose + 1)
+		shift
 	elif [ "$1" = "-h" -o "$1" = "--help" ]; then
+		show_header
 		show_usage
 		exit 0
 	else
+		show_header
 		show_usage
 		echo "$0: error: unknown option '$1'"
 		exit 1
 	fi
 done
 
+show_header
+
 # print status function
 pstatus()
 {
 	if [ "$opt_no_color" = 1 ]; then
-		_echo_nol "$2"
+		_info_nol "$2"
 	else
 		case "$1" in
 			red)    col="\033[101m\033[30m";;
@@ -187,11 +235,27 @@ pstatus()
 			blue)   col="\033[104m\033[30m";;
 			*)      col="";;
 		esac
-		_echo_nol "$col $2 \033[0m"
+		_info_nol "$col $2 \033[0m"
 	fi
-	[ -n "$3" ] && _echo_nol " ($3)"
-	_echo
+	[ -n "$3" ] && _info_nol " ($3)"
+	_info
 }
+
+# Print the final status of a vulnerability (incl. batch mode)
+# Arguments are: CVE UNK/OK/VULN description
+pvulnstatus()
+{
+	[ "$opt_batch" = 1 ] && _echo 0 "$1: $2 ($3)"
+	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
+	vulnstatus="$2"
+	shift 2
+	case "$vulnstatus" in
+		UNK) pstatus yellow UNKNOWN "$@";;
+		VULN) pstatus red 'VULNERABLE' "$@";;
+		OK) pstatus green 'NOT VULNERABLE' "$@";;
+	esac
+}
+
 
 # The 3 below functions are taken from the extract-linux script, available here:
 # https://github.com/torvalds/linux/blob/master/scripts/extract-vmlinux
@@ -274,12 +338,12 @@ fi
 
 if [ "$opt_live" = 1 ]; then
 	if [ "$(id -u)" -ne 0 ]; then
-		_echo "\033[31mNote that you should launch this script with root privileges to get accurate information.\033[0m"
-		_echo "\033[31mWe'll proceed but you might see permission denied errors.\033[0m"
-		_echo "\033[31mTo run it as root, you can try the following command: sudo $0\033[0m"
-		_echo
+		_warn "Note that you should launch this script with root privileges to get accurate information."
+		_warn "We'll proceed but you might see permission denied errors."
+		_warn "To run it as root, you can try the following command: sudo $0"
+		_warn
 	fi
-	_echo "Checking for vulnerabilities against live running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
+	_info "Checking for vulnerabilities against live running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
 
 	# try to find the image of the current running kernel
 	[ -e /boot/vmlinuz-linux       ] && opt_kernel=/boot/vmlinuz-linux
@@ -306,24 +370,24 @@ if [ "$opt_live" = 1 ]; then
 		opt_config=/boot/config-$(uname -r)
 	fi
 else
-	_echo "Checking for vulnerabilities against specified kernel"
+	_info "Checking for vulnerabilities against specified kernel"
 fi
 if [ -n "$opt_kernel" ]; then
-	_echo "Will use vmlinux image \033[35m$opt_kernel\033[0m"
+	_verbose "Will use vmlinux image \033[35m$opt_kernel\033[0m"
 else
-	_echo "Will use no vmlinux image (accuracy might be reduced)"
+	_verbose "Will use no vmlinux image (accuracy might be reduced)"
 fi
 if [ -n "$dumped_config" ]; then
-	_echo "Will use kconfig \033[35m/proc/config.gz\033[0m"
+	_verbose "Will use kconfig \033[35m/proc/config.gz\033[0m"
 elif [ -n "$opt_config" ]; then
-	_echo "Will use kconfig \033[35m$opt_config\033[0m"
+	_verbose "Will use kconfig \033[35m$opt_config\033[0m"
 else
-	_echo "Will use no kconfig (accuracy might be reduced)"
+	_verbose "Will use no kconfig (accuracy might be reduced)"
 fi
 if [ -n "$opt_map" ]; then
-	_echo "Will use System.map file \033[35m$opt_map\033[0m"
+	_verbose "Will use System.map file \033[35m$opt_map\033[0m"
 else
-	_echo "Will use no System.map file (accuracy might be reduced)"
+	_verbose "Will use no System.map file (accuracy might be reduced)"
 fi
 
 if [ -e "$opt_kernel" ]; then
@@ -339,12 +403,12 @@ if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
 fi
 
-_echo
+_info
 
 ###########
 # SPECTRE 1
-_echo "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
-_echo_nol "* Checking count of LFENCE opcodes in kernel: "
+_info "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
+_info_nol "* Checking count of LFENCE opcodes in kernel: "
 
 status=0
 if [ -n "$vmlinux_err" ]; then
@@ -370,21 +434,22 @@ else
 	fi
 fi
 
-_echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
 if ! is_cpu_vulnerable 1; then
-	pstatus green 'NOT VULNERABLE' "your CPU vendor reported your CPU model as not vulnerable"
+	pvulnstatus CVE-2017-5753 OK "your CPU vendor reported your CPU model as not vulnerable"
 else
-	[ "$status" = 0 ] && pstatus yellow UNKNOWN
-	[ "$status" = 1 ] && pstatus red   'VULNERABLE'     'heuristic to be improved when official patches become available'
-	[ "$status" = 2 ] && pstatus green 'NOT VULNERABLE' 'heuristic to be improved when official patches become available'
+	case "$status" in
+		0) pvulnstatus CVE-2017-5753 UNK "impossible to check ${vmlinux}";;
+		1) pvulnstatus CVE-2017-5753 VULN 'heuristic to be improved when official patches become available';;
+		2) pvulnstatus CVE-2017-5753 OK 'heuristic to be improved when official patches become available';;
+	esac
 fi
 
 ###########
 # VARIANT 2
-_echo
-_echo "\033[1;34mCVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'\033[0m"
-_echo "* Mitigation 1"
-_echo_nol "*   Hardware (CPU microcode) support for mitigation: "
+_info
+_info "\033[1;34mCVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'\033[0m"
+_info "* Mitigation 1"
+_info_nol "*   Hardware (CPU microcode) support for mitigation: "
 if [ ! -e /dev/cpu/0/msr ]; then
 	# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 	modprobe msr 2>/dev/null && insmod_msr=1
@@ -408,7 +473,7 @@ if [ "$insmod_msr" = 1 ]; then
 	rmmod msr 2>/dev/null
 fi
 
-_echo_nol "*   Kernel support for IBRS: "
+_info_nol "*   Kernel support for IBRS: "
 if [ "$opt_live" = 1 ]; then
 	if [ ! -e /sys/kernel/debug/sched_features ]; then
 		# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
@@ -436,7 +501,7 @@ if [ "$ibrs_supported" != 1 ]; then
 	pstatus red NO
 fi
 
-_echo_nol "*   IBRS enabled for Kernel space: "
+_info_nol "*   IBRS enabled for Kernel space: "
 if [ "$opt_live" = 1 ]; then
 	# 0 means disabled
 	# 1 is enabled only for kernel space
@@ -451,7 +516,7 @@ else
 	pstatus blue N/A "not testable in offline mode"
 fi
 
-_echo_nol "*   IBRS enabled for User space: "
+_info_nol "*   IBRS enabled for User space: "
 if [ "$opt_live" = 1 ]; then
 	case "$ibrs_enabled" in
 		"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
@@ -463,8 +528,8 @@ else
 	pstatus blue N/A "not testable in offline mode"
 fi
 
-_echo "* Mitigation 2"
-_echo_nol "*   Kernel compiled with retpoline option: "
+_info "* Mitigation 2"
+_info_nol "*   Kernel compiled with retpoline option: "
 # We check the RETPOLINE kernel options
 if [ -r "$opt_config" ]; then
 	if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
@@ -477,7 +542,7 @@ else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
 
-_echo_nol "*   Kernel compiled with a retpoline-aware compiler: "
+_info_nol "*   Kernel compiled with a retpoline-aware compiler: "
 # Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
 # For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
 # See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
@@ -513,30 +578,29 @@ else
 	pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
 fi
 
-_echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
 if ! is_cpu_vulnerable 2; then
-	pstatus green 'NOT VULNERABLE' "your CPU vendor reported your CPU model as not vulnerable"
+	pvulnstatus CVE-2017-5715 OK "your CPU vendor reported your CPU model as not vulnerable"
 elif [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
-	pstatus green "NOT VULNERABLE" "retpoline mitigate the vulnerability"
+	pvulnstatus CVE-2017-5715 OK "retpoline mitigate the vulnerability"
 elif [ "$opt_live" = 1 ]; then
 	if [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
-		pstatus green "NOT VULNERABLE" "IBRS mitigates the vulnerability"
+		pvulnstatus CVE-2017-5715 OK "IBRS mitigates the vulnerability"
 	else
-		pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+		pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
 	fi
 else
 	if [ "$ibrs_supported" = 1 ]; then
-		pstatus green "NOT VULNERABLE" "offline mode: IBRS will mitigate the vulnerability if enabled at runtime"
+		pvulnstatus CVE-2017-5715 OK "offline mode: IBRS will mitigate the vulnerability if enabled at runtime"
 	else
-		pstatus red VULNERABLE "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+		pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
 	fi
 fi
 
 ##########
 # MELTDOWN
-_echo
-_echo "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
-_echo_nol "* Kernel supports Page Table Isolation (PTI): "
+_info
+_info "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
+_info_nol "* Kernel supports Page Table Isolation (PTI): "
 kpti_support=0
 kpti_can_tell=0
 if [ -n "$opt_config" ]; then
@@ -574,7 +638,7 @@ else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration nor System.map file"
 fi
 
-_echo_nol "* PTI enabled and active: "
+_info_nol "* PTI enabled and active: "
 if [ "$opt_live" = 1 ]; then
 	if grep ^flags /proc/cpuinfo | grep -qw pti; then
 		# vanilla PTI patch sets the 'pti' flag in cpuinfo
@@ -605,23 +669,22 @@ if [ "$mounted_debugfs" = 1 ]; then
 	umount /sys/kernel/debug
 fi
 
-_echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
 if ! is_cpu_vulnerable 3; then
-	pstatus green 'NOT VULNERABLE' "your CPU vendor reported your CPU model as not vulnerable"
+	pvulnstatus CVE-2017-5754 OK "your CPU vendor reported your CPU model as not vulnerable"
 elif [ "$opt_live" = 1 ]; then
 	if [ "$kpti_enabled" = 1 ]; then
-		pstatus green "NOT VULNERABLE" "PTI mitigates the vulnerability"
+		pvulnstatus CVE-2017-5754 OK "PTI mitigates the vulnerability"
 	else
-		pstatus red "VULNERABLE" "PTI is needed to mitigate the vulnerability"
+		pvulnstatus CVE-2017-5754 VULN "PTI is needed to mitigate the vulnerability"
 	fi
 else
 	if [ "$kpti_support" = 1 ]; then
-		pstatus green "NOT VULNERABLE" "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
+		pvulnstatus CVE-2017-5754 OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
 	else
-		pstatus red "VULNERABLE" "PTI is needed to mitigate the vulnerability"
+		pvulnstatus CVE-2017-5754 VULN "PTI is needed to mitigate the vulnerability"
 	fi
 fi
 
-_echo
+_info
 
 [ -n "$dumped_config" ] && rm -f "$dumped_config"
