@@ -205,7 +205,9 @@ if [ -n "$opt_kernel" ]; then
 else
 	/bin/echo "Will use no vmlinux image (accuracy might be reduced"
 fi
-if [ -n "$opt_config" ]; then
+if [ -n "$dumped_config" ]; then
+	/bin/echo -e "Will use kconfig \033[35m/proc/config.gz\033[0m"
+elif [ -n "$opt_config" ]; then
 	/bin/echo -e "Will use kconfig \033[35m$opt_config\033[0m"
 else
 	/bin/echo "Will use no kconfig (accuracy might be reduced)"
