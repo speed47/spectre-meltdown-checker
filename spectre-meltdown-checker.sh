@@ -312,7 +312,7 @@ if [ "$opt_live" = 1 ]; then
 		ibrs_enabled=$(cat /sys/kernel/debug/x86/ibrs_enabled 2>/dev/null)
 	fi
 fi
-if [ "$ibrs_supported " != 1 -a -n "$opt_map" ]; then
+if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
 	if grep -q spec_ctrl "$opt_map"; then
 		pstatus green YES
 		ibrs_supported=1
