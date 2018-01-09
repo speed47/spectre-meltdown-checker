@@ -722,6 +722,6 @@ fi
 
 _info
 
-_info "A false sense of security is worst than no security at all, see --disclaimer"
+_info "A false sense of security is worse than no security at all, see --disclaimer"
 
 [ -n "$dumped_config" ] && rm -f "$dumped_config"
