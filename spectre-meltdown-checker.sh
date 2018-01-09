@@ -8,21 +8,25 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.18
+VERSION=0.19
 
 # print status function
 pstatus()
 {
-	case "$1" in
-		red)    col="\033[101m\033[30m";;
-		green)  col="\033[102m\033[30m";;
-		yellow) col="\033[103m\033[30m";;
-		blue)   col="\033[104m\033[30m";;
-		*)      col="";;
-	esac
-	/bin/echo -ne "$col $2 \033[0m"
-	[ -n "$3" ] && /bin/echo -n " ($3)"
-	/bin/echo
+	if [ "$opt_no_color" = 1 ]; then
+		_echo_nol "$2"
+	else
+		case "$1" in
+			red)    col="\033[101m\033[30m";;
+			green)  col="\033[102m\033[30m";;
+			yellow) col="\033[103m\033[30m";;
+			blue)   col="\033[104m\033[30m";;
+			*)      col="";;
+		esac
+		_echo_nol "$col $2 \033[0m"
+	fi
+	[ -n "$3" ] && _echo_nol " ($3)"
+	_echo
 }
 
 # The 3 below functions are taken from the extract-linux script, available here:
@@ -97,13 +101,14 @@ show_usage()
 {
 	cat <<EOF
 	Usage:
-		Live mode:    $0
-		Offline mode: $0 [--kernel <vmlinux_file>] [--config <kernel_config>] [--map <kernel_map_file>]
-	Options:
+		Live mode:    $0 [options] [--live]
+		Offline mode: $0 [options] [--kernel <vmlinux_file>] [--config <kernel_config>] [--map <kernel_map_file>]
+
+	Modes:
 		Two modes are available.
 
 		First mode is the "live" mode (default), it does its best to find information about the currently running kernel.
-		To run under this mode, just start the script without any option.
+		To run under this mode, just start the script without any option (you can also use --live explicitely)
 
 		Second mode is the "offline" mode, where you can inspect a non-running kernel.
 		You'll need to specify the location of the vmlinux file, and if possible, the corresponding config and System.map files:
@@ -112,17 +117,45 @@ show_usage()
 		--config kernel_config		Specify a kernel config file
 		--map	 kernel_map_file	Specify a kernel System.map file
 
+	Options:
+		--no-color			Don't use color codes
+
 EOF
 }
 
-/bin/echo -e "\033[1;34mSpectre and Meltdown mitigation detection tool v$VERSION\033[0m"
-/bin/echo
+__echo()
+{
+	opt="$1"
+	shift
+	msg="$@"
+	if [ "$opt_no_color" = 1 ] ; then
+		# strip ANSI color codes
+		msg=$(echo "$msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
+	fi
+	# explicitely call /bin/echo to avoid shell builtins that might not take options
+	/bin/echo $opt -e "$msg"
+}
+
+_echo()
+{
+	__echo '' "$@"
+}
+
+_echo_nol()
+{
+	__echo -n "$@"
+}
+
+_echo "\033[1;34mSpectre and Meltdown mitigation detection tool v$VERSION\033[0m"
+_echo
 
 # parse options
 opt_kernel=''
 opt_config=''
 opt_map=''
+opt_live_explicit=0
 opt_live=1
+opt_no_color=0
 
 parse_opt_file()
 {
@@ -163,6 +196,12 @@ while [ -n "$1" ]; do
 		[ $? -ne 0 ] && exit $?
 		shift 2
 		opt_live=0
+	elif [ "$1" = "--live" ]; then
+		opt_live_explicit=1
+		shift
+	elif [ "$1" = "--no-color" ]; then
+		opt_no_color=1
+		shift
 	elif [ "$1" = "-h" -o "$1" = "--help" ]; then
 		show_usage
 		exit 0
@@ -173,16 +212,25 @@ while [ -n "$1" ]; do
 	fi
 done
 
+# check for mode selection inconsistency
+if [ "$opt_live_explicit" = 1 ]; then
+	if [ -n "$opt_kernel" -o -n "$opt_config" -o -n "$opt_map" ]; then
+		show_usage
+		echo "$0: error: incompatible modes specified, use either --live or --kernel/--config/--map"
+		exit 1
+	fi
+fi
+
 # root check (only for live mode, for offline mode, we already checked if we could read the files)
 
 if [ "$opt_live" = 1 ]; then
 	if [ "$(id -u)" -ne 0 ]; then
-		/bin/echo -e "\033[31mNote that you should launch this script with root privileges to get accurate information.\033[0m"
-		/bin/echo -e "\033[31mWe'll proceed but you might see permission denied errors.\033[0m"
-		/bin/echo -e "\033[31mTo run it as root, you can try the following command: sudo $0\033[0m"
-		/bin/echo
+		_echo "\033[31mNote that you should launch this script with root privileges to get accurate information.\033[0m"
+		_echo "\033[31mWe'll proceed but you might see permission denied errors.\033[0m"
+		_echo "\033[31mTo run it as root, you can try the following command: sudo $0\033[0m"
+		_echo
 	fi
-	/bin/echo -e "Checking for vulnerabilities against live running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
+	_echo "Checking for vulnerabilities against live running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
 
 	# try to find the image of the current running kernel
 	[ -e /boot/vmlinuz-linux       ] && opt_kernel=/boot/vmlinuz-linux
@@ -209,24 +257,24 @@ if [ "$opt_live" = 1 ]; then
 		opt_config=/boot/config-$(uname -r)
 	fi
 else
-	/bin/echo "Checking for vulnerabilities against specified kernel"
+	_echo "Checking for vulnerabilities against specified kernel"
 fi
 if [ -n "$opt_kernel" ]; then
-	/bin/echo -e "Will use vmlinux image \033[35m$opt_kernel\033[0m"
+	_echo "Will use vmlinux image \033[35m$opt_kernel\033[0m"
 else
-	/bin/echo "Will use no vmlinux image (accuracy might be reduced)"
+	_echo "Will use no vmlinux image (accuracy might be reduced)"
 fi
 if [ -n "$dumped_config" ]; then
-	/bin/echo -e "Will use kconfig \033[35m/proc/config.gz\033[0m"
+	_echo "Will use kconfig \033[35m/proc/config.gz\033[0m"
 elif [ -n "$opt_config" ]; then
-	/bin/echo -e "Will use kconfig \033[35m$opt_config\033[0m"
+	_echo "Will use kconfig \033[35m$opt_config\033[0m"
 else
-	/bin/echo "Will use no kconfig (accuracy might be reduced)"
+	_echo "Will use no kconfig (accuracy might be reduced)"
 fi
 if [ -n "$opt_map" ]; then
-	/bin/echo -e "Will use System.map file \033[35m$opt_map\033[0m"
+	_echo "Will use System.map file \033[35m$opt_map\033[0m"
 else
-	/bin/echo "Will use no System.map file (accuracy might be reduced)"
+	_echo "Will use no System.map file (accuracy might be reduced)"
 fi
 
 if [ -e "$opt_kernel" ]; then
@@ -242,12 +290,12 @@ if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
 fi
 
-/bin/echo
+_echo
 
 ###########
 # SPECTRE 1
-/bin/echo -e "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
-/bin/echo -n "* Checking count of LFENCE opcodes in kernel: "
+_echo "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
+_echo_nol "* Checking count of LFENCE opcodes in kernel: "
 
 status=0
 if [ -n "$vmlinux_err" ]; then
@@ -273,17 +321,17 @@ else
 	fi
 fi
 
-/bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
+_echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
 [ "$status" = 0 ] && pstatus yellow UNKNOWN
 [ "$status" = 1 ] && pstatus red   'VULNERABLE'     'heuristic to be improved when official patches become available'
 [ "$status" = 2 ] && pstatus green 'NOT VULNERABLE' 'heuristic to be improved when official patches become available'
 
 ###########
 # VARIANT 2
-/bin/echo
-/bin/echo -e "\033[1;34mCVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'\033[0m"
-/bin/echo "* Mitigation 1"
-/bin/echo -n "*   Hardware (CPU microcode) support for mitigation: "
+_echo
+_echo "\033[1;34mCVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'\033[0m"
+_echo "* Mitigation 1"
+_echo_nol "*   Hardware (CPU microcode) support for mitigation: "
 if [ ! -e /dev/cpu/0/msr ]; then
 	# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 	modprobe msr 2>/dev/null && insmod_msr=1
@@ -307,7 +355,7 @@ if [ "$insmod_msr" = 1 ]; then
 	rmmod msr 2>/dev/null
 fi
 
-/bin/echo -n "*   Kernel support for IBRS: "
+_echo_nol "*   Kernel support for IBRS: "
 if [ "$opt_live" = 1 ]; then
 	if [ ! -e /sys/kernel/debug/sched_features ]; then
 		# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
@@ -335,7 +383,7 @@ if [ "$ibrs_supported" != 1 ]; then
 	pstatus red NO
 fi
 
-/bin/echo -n "*   IBRS enabled for Kernel space: "
+_echo_nol "*   IBRS enabled for Kernel space: "
 if [ "$opt_live" = 1 ]; then
 	# 0 means disabled
 	# 1 is enabled only for kernel space
@@ -350,7 +398,7 @@ else
 	pstatus blue N/A "not testable in offline mode"
 fi
 
-/bin/echo -n "*   IBRS enabled for User space: "
+_echo_nol "*   IBRS enabled for User space: "
 if [ "$opt_live" = 1 ]; then
 	case "$ibrs_enabled" in
 		"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
@@ -362,8 +410,8 @@ else
 	pstatus blue N/A "not testable in offline mode"
 fi
 
-/bin/echo "* Mitigation 2"
-/bin/echo -n "*   Kernel compiled with retpoline option: "
+_echo "* Mitigation 2"
+_echo_nol "*   Kernel compiled with retpoline option: "
 # We check the RETPOLINE kernel options
 if [ -r "$opt_config" ]; then
 	if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
@@ -376,7 +424,7 @@ else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 fi
 
-/bin/echo -n "*   Kernel compiled with a retpoline-aware compiler: "
+_echo_nol "*   Kernel compiled with a retpoline-aware compiler: "
 # Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
 # For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
 # See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
@@ -412,7 +460,7 @@ else
 	pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
 fi
 
-/bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
+_echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
 if grep -q AMD /proc/cpuinfo; then
 	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
 elif [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
@@ -433,9 +481,9 @@ fi
 
 ##########
 # MELTDOWN
-/bin/echo
-/bin/echo -e "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
-/bin/echo -n "* Kernel supports Page Table Isolation (PTI): "
+_echo
+_echo "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
+_echo_nol "* Kernel supports Page Table Isolation (PTI): "
 kpti_support=0
 kpti_can_tell=0
 if [ -n "$opt_config" ]; then
@@ -473,7 +521,7 @@ else
 	pstatus yellow UNKNOWN "couldn't read your kernel configuration nor System.map file"
 fi
 
-/bin/echo -n "* PTI enabled and active: "
+_echo_nol "* PTI enabled and active: "
 if [ "$opt_live" = 1 ]; then
 	if grep ^flags /proc/cpuinfo | grep -qw pti; then
 		# vanilla PTI patch sets the 'pti' flag in cpuinfo
@@ -504,7 +552,7 @@ if [ "$mounted_debugfs" = 1 ]; then
 	umount /sys/kernel/debug
 fi
 
-/bin/echo -ne "> \033[46m\033[30mSTATUS:\033[0m "
+_echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
 if grep -q AMD /proc/cpuinfo; then
 	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
 elif [ "$opt_live" = 1 ]; then
@@ -521,6 +569,6 @@ else
 	fi
 fi
 
-/bin/echo
+_echo
 
 [ -n "$dumped_config" ] && rm -f "$dumped_config"
