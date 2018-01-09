@@ -651,8 +651,11 @@ if [ "$opt_live" = 1 ]; then
 	elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
 		# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
 		kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
-	elif grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled' /var/log/dmesg; then
-		# if we can't find the flag, grep in /var/log/dmesg
+	elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
+		# if we can't find the flag, grep dmesg output
+		kpti_enabled=1
+	elif [ -r /var/log/dmesg ] && grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled' /var/log/dmesg; then
+		# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
 		kpti_enabled=1
 	else
 		kpti_enabled=0
