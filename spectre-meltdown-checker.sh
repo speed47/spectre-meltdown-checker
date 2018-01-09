@@ -146,6 +146,54 @@ _echo_nol()
 	__echo -n "$@"
 }
 
+is_cpu_vulnerable()
+{
+	# param: 1, 2 or 3 (variant)
+	# returns 0 if vulnerable, 1 if vulnerable, 2 if not vulnerable, 255 on error
+	variant1=1
+	variant2=1
+	variant3=1
+	if grep -q AMD /proc/cpuinfo; then
+		variant1=1
+		variant2=0
+		variant3=0
+	elif grep -qi 'CPU implementer : 0x41' /proc/cpuinfo; then
+		# ARM
+		# reference: https://developer.arm.com/support/security-update
+		cpupart=$(awk '/CPU part :/        {print $4;exit}' /proc/cpuinfo)
+		cpuarch=$(awk '/CPU architecture:/ {print $3;exit}' /proc/cpuinfo)
+		if [ -n "$cpupart" -a -n "$cpuarch" ]; then
+			# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
+			# I can't find their CPU part number, but it's probably not that useful anyway
+			# model R7 R8 A9    A15   A17   A57   A72    A73    A75
+			# part   ?  ? 0xc09 0xc0f 0xc0e 0xd07 0xd08  0xd09  0xd0a
+			# arch  7? 7? 7     7     7     8     8      8      8
+			if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c09|c0f|c0e)$'; then
+				# armv7 vulnerable chips
+				variant1=1
+				variant2=1
+			elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(d07|d08|d09|d0a)$'; then
+				# armv8 vulnerable chips
+				variant1=1
+				variant2=1
+			else
+				variant1=0
+				variant2=0
+			fi
+			# for variant3, only A75 is vulnerable
+			if [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
+				variant3=1
+			else
+				variant3=0
+			fi
+		fi
+	fi
+	[ "$1" = 1 ] && return $variant1
+	[ "$1" = 2 ] && return $variant2
+	[ "$1" = 3 ] && return $variant3
+	return 255
+}
+
 _echo "\033[1;34mSpectre and Meltdown mitigation detection tool v$VERSION\033[0m"
 _echo
 
@@ -322,9 +370,13 @@ else
 fi
 
 _echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
-[ "$status" = 0 ] && pstatus yellow UNKNOWN
-[ "$status" = 1 ] && pstatus red   'VULNERABLE'     'heuristic to be improved when official patches become available'
-[ "$status" = 2 ] && pstatus green 'NOT VULNERABLE' 'heuristic to be improved when official patches become available'
+if ! is_cpu_vulnerable 1; then
+	pstatus green 'NOT VULNERABLE' "your CPU vendor reported your CPU model as not vulnerable"
+else
+	[ "$status" = 0 ] && pstatus yellow UNKNOWN
+	[ "$status" = 1 ] && pstatus red   'VULNERABLE'     'heuristic to be improved when official patches become available'
+	[ "$status" = 2 ] && pstatus green 'NOT VULNERABLE' 'heuristic to be improved when official patches become available'
+fi
 
 ###########
 # VARIANT 2
@@ -461,8 +513,8 @@ else
 fi
 
 _echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
-if grep -q AMD /proc/cpuinfo; then
-	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
+if ! is_cpu_vulnerable 2; then
+	pstatus green 'NOT VULNERABLE' "your CPU vendor reported your CPU model as not vulnerable"
 elif [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
 	pstatus green "NOT VULNERABLE" "retpoline mitigate the vulnerability"
 elif [ "$opt_live" = 1 ]; then
@@ -553,8 +605,8 @@ if [ "$mounted_debugfs" = 1 ]; then
 fi
 
 _echo_nol "> \033[46m\033[30mSTATUS:\033[0m "
-if grep -q AMD /proc/cpuinfo; then
-	pstatus green "NOT VULNERABLE" "your CPU is not vulnerable as per the vendor"
+if ! is_cpu_vulnerable 3; then
+	pstatus green 'NOT VULNERABLE' "your CPU vendor reported your CPU model as not vulnerable"
 elif [ "$opt_live" = 1 ]; then
 	if [ "$kpti_enabled" = 1 ]; then
 		pstatus green "NOT VULNERABLE" "PTI mitigates the vulnerability"
