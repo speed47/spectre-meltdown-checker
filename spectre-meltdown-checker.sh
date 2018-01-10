@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.23
+VERSION=0.24
 
 # Script configuration
 show_usage()
@@ -364,7 +364,7 @@ vmlinux=''
 vmlinux_err=''
 check_vmlinux()
 {
-	readelf -h $1 > /dev/null 2>&1 || return 1
+	readelf -h "$1" > /dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -374,15 +374,22 @@ try_decompress()
 	# "grep" that report the byte offset of the line instead of the pattern.
 
 	# Try to find the header ($1) and decompress from here
-	for     pos in `tr "$1\n$2" "\n$2=" < "$5" | grep -abo "^$2"`
+	for     pos in `tr "$1\n$2" "\n$2=" < "$6" | grep -abo "^$2"`
 	do
-		if ! which $3 >/dev/null 2>&1; then
-			vmlinux_err="missing '$3' tool, please install it, usually it's in the '$4' package"
+		_debug "try_decompress: magic for $3 found at offset $pos"
+		if ! which "$3" >/dev/null 2>&1; then
+			vmlinux_err="missing '$3' tool, please install it, usually it's in the '$5' package"
 			return 0
 		fi
 		pos=${pos%%:*}
-		tail -c+$pos "$5" | $3 > $vmlinuxtmp 2> /dev/null
-		check_vmlinux "$vmlinuxtmp" && vmlinux=$vmlinuxtmp && return 0
+		tail -c+$pos "$6" 2>/dev/null | $3 $4 > $vmlinuxtmp 2>/dev/null
+		if check_vmlinux "$vmlinuxtmp"; then
+			vmlinux="$vmlinuxtmp"
+			_debug "try_decompress: decompressed with $3 successfully!"
+			return 0
+		else
+			_debug "try_decompress: decompression with $3 did not work"
+		fi
 	done
 	return 1
 }
@@ -402,11 +409,12 @@ extract_vmlinux()
 	fi
 
 	# That didn't work, so retry after decompression.
-	try_decompress '\037\213\010' xy    gunzip     gunzip	"$1" && return 0
-	try_decompress '\3757zXZ\000' abcde unxz       xz-utils	"$1" && return 0
-	try_decompress 'BZh'          xy    bunzip2    bzip2	"$1" && return 0
-	try_decompress '\135\0\0\0'   xxx   unlzma     xz-utils	"$1" && return 0
-	try_decompress '\211\114\132' xy    'lzop -d'  lzop	"$1" && return 0
+	try_decompress '\037\213\010'     xy    gunzip  ''      gunzip      "$1" && return 0
+	try_decompress '\3757zXZ\000'     abcde unxz    ''      xz-utils    "$1" && return 0
+	try_decompress 'BZh'              xy    bunzip2 ''      bzip2       "$1" && return 0
+	try_decompress '\135\0\0\0'       xxx   unlzma  ''      xz-utils    "$1" && return 0
+	try_decompress '\211\114\132'     xy    'lzop'  '-d'    lzop        "$1" && return 0
+	try_decompress '\002\041\114\030' xyy   'lz4'   '-d -l' liblz4-tool "$1" && return 0
 	return 1
 }
 
