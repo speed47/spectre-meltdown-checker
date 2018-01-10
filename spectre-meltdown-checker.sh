@@ -326,7 +326,7 @@ pvulnstatus()
 		case "$opt_batch_format" in
 			     text) _echo 0 "$1: $2 ($3)";;
 			     nrpe)
-			     	      case "$2" in
+			     	    case "$2" in
 			                    UKN) nrpe_unknown="1";;
 			                    VULN) nrpe_critical="1"; nrpe_vuln="$nrpe_vuln $1";;
 			            esac
@@ -335,15 +335,15 @@ pvulnstatus()
 			            case "$1" in
 			                    CVE-2017-5753) aka="SPECTRE VARIANT 1";;
 			                    CVE-2017-5715) aka="SPECTRE VARIANT 2";;
-			     	              CVE-2017-5754) aka="MELTDOWN";;
+			     	            CVE-2017-5754) aka="MELTDOWN";;
 			            esac
 			     	      case "$2" in
-			     	              UKN)  is_vuln="unknown";;
-			     	              VULN) is_vuln="true";;
+			     	            UKN)  is_vuln="unknown";;
+			     	            VULN) is_vuln="true";;
 			                    OK)   is_vuln="false";;
 			            esac
-                  json_output="${json_output:-[}{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"},"
-                  ;;
+                        json_output="${json_output:-[}{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"},"
+                        ;;
 		esac
 	fi
 
