@@ -218,7 +218,7 @@ parse_opt_file()
 		show_header
 		echo "$0: error: $option_value is not a file" >&2
 		exit 1
-	elif [ ! -e "$option_value" ]; then
+	elif [ ! -r "$option_value" ]; then
 		show_header
 		echo "$0: error: couldn't read $option_value (are you root?)" >&2
 		exit 1
