@@ -244,6 +244,13 @@ while [ -n "$1" ]; do
 		shift
 		case "$1" in
 			text|nrpe) opt_batch_format="$1"; shift;;
+			--*) ;;    # allow subsequent flags
+			'') ;;     # allow nothing at all
+			*)
+				echo "$0: error: unknown batch format '$1'"
+				echo "$0: error: --batch expects a format from: text, nrpe"
+				exit 1 >&2
+				;;
 		esac
 	elif [ "$1" = "-v" -o "$1" = "--verbose" ]; then
 		opt_verbose=$(expr $opt_verbose + 1)
