@@ -139,6 +139,11 @@ _verbose()
 	_echo 2 "$@"
 }
 
+_debug()
+{
+	_echo 3 "(debug) $@"
+}
+
 is_cpu_vulnerable()
 {
 	# param: 1, 2 or 3 (variant)
@@ -428,12 +433,25 @@ if [ "$opt_live" = 1 ]; then
 	_info "Checking for vulnerabilities against live running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
 
 	# try to find the image of the current running kernel
-	[ -e /boot/vmlinuz-linux       ] && opt_kernel=/boot/vmlinuz-linux
-	[ -e /boot/vmlinuz-linux-libre ] && opt_kernel=/boot/vmlinuz-linux-libre
-	[ -e /boot/vmlinuz-$(uname -r) ] && opt_kernel=/boot/vmlinuz-$(uname -r)
-	[ -e /boot/kernel-$( uname -r) ] && opt_kernel=/boot/kernel-$( uname -r)
-	[ -e /boot/bzImage-$(uname -r) ] && opt_kernel=/boot/bzImage-$(uname -r)
-	[ -e /boot/kernel-genkernel-$(uname -m)-$(uname -r) ] && opt_kernel=/boot/kernel-genkernel-$(uname -m)-$(uname -r)
+	# first, look for the BOOT_IMAGE hint in the kernel cmdline
+	if [ -r /proc/cmdline ] && grep -q 'BOOT_IMAGE=' /proc/cmdline; then
+		opt_kernel=$(grep -Eo 'BOOT_IMAGE=[^ ]+' /proc/cmdline | cut -d= -f2)
+		_debug "found opt_kernel=$opt_kernel in /proc/cmdline"
+		# if we have a dedicated /boot partition, our bootloader might have just called it /
+		# so try to prepend /boot and see if we find anything
+		[ -e "/boot/$opt_kernel" ] && $opt_kernel="/boot/$opt_kernel"
+		_debug "opt_kernel is now $opt_kernel"
+		# else, the full path is already there (most probably /boot/something)
+	fi
+	# if we didn't find a kernel, default to guessing
+	if [ ! -e "$opt_kernel" ]; then
+		[ -e /boot/vmlinuz-linux       ] && opt_kernel=/boot/vmlinuz-linux
+		[ -e /boot/vmlinuz-linux-libre ] && opt_kernel=/boot/vmlinuz-linux-libre
+		[ -e /boot/vmlinuz-$(uname -r) ] && opt_kernel=/boot/vmlinuz-$(uname -r)
+		[ -e /boot/kernel-$( uname -r) ] && opt_kernel=/boot/kernel-$( uname -r)
+		[ -e /boot/bzImage-$(uname -r) ] && opt_kernel=/boot/bzImage-$(uname -r)
+		[ -e /boot/kernel-genkernel-$(uname -m)-$(uname -r) ] && opt_kernel=/boot/kernel-genkernel-$(uname -m)-$(uname -r)
+	fi
 
 	# system.map
 	if [ -e /proc/kallsyms ] ; then
