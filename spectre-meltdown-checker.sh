@@ -35,6 +35,7 @@ show_usage()
 		--no-color			Don't use color codes
 		-v, --verbose			Increase verbosity level
 		--batch text			Produce machine readable output, this is the default if --batch is specified alone
+		--batch json			Produce JSON output formatted for Puppet, Ansible, Chef...
 		--batch nrpe			Produce machine readable output formatted for NRPE
 		--variant [1,2,3]		Specify which variant you'd like to check, by default all variants are checked
 						Can be specified multiple times (e.g. --variant 2 --variant 3)
@@ -254,12 +255,12 @@ while [ -n "$1" ]; do
 		opt_verbose=0
 		shift
 		case "$1" in
-			text|nrpe) opt_batch_format="$1"; shift;;
+			text|nrpe|json) opt_batch_format="$1"; shift;;
 			--*) ;;    # allow subsequent flags
 			'') ;;     # allow nothing at all
 			*)
 				echo "$0: error: unknown batch format '$1'"
-				echo "$0: error: --batch expects a format from: text, nrpe"
+				echo "$0: error: --batch expects a format from: text, nrpe, json"
 				exit 1 >&2
 				;;
 		esac
@@ -329,6 +330,19 @@ pvulnstatus()
 					UKN) nrpe_unknown="1";;
 					VULN) nrpe_critical="1"; nrpe_vuln="$nrpe_vuln $1";;
 				esac
+				;;
+			json)
+			  case "$1" in
+				  CVE-2017-5753) aka="SPECTRE VARIANT 1";;
+				  CVE-2017-5715) aka="SPECTRE VARIANT 2";;
+				  CVE-2017-5754) aka="SPECTRE VARIANT 3";;
+			  esac
+				case "$2" in
+					UKN)  is_vuln="unknown";;
+					VULN) is_vuln="true";;
+					OK)   is_vuln="false";;
+				esac
+				_echo 0 "{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"}"
 				;;
 		esac
 	fi
