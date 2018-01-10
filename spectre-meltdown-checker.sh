@@ -601,17 +601,21 @@ check_variant2()
 	_info_nol "*   Kernel support for IBRS: "
 	if [ "$opt_live" = 1 ]; then
 		mount_debugfs
-		if [ -e /sys/kernel/debug/ibrs_enabled ]; then
-			# if the file is there, we have IBRS compiled-in
-			pstatus green YES
-			ibrs_supported=1
-			ibrs_enabled=$(cat /sys/kernel/debug/ibrs_enabled 2>/dev/null)
-		elif [ -e /sys/kernel/debug/x86/ibrs_enabled ]; then
-			# RedHat uses a different path (see https://access.redhat.com/articles/3311301)
-			pstatus green YES
-			ibrs_supported=1
-			ibrs_enabled=$(cat /sys/kernel/debug/x86/ibrs_enabled 2>/dev/null)
-		fi
+		for ibrs_file in \
+			/sys/kernel/debug/ibrs_enabled \
+			/sys/kernel/debug/x86/ibrs_enabled \
+			/proc/sys/kernel/ibrs_enabled; do
+			if [ -e "$ibrs_file" ]; then
+				# if the file is there, we have IBRS compiled-in
+				# /sys/kernel/debug/ibrs_enabled: vanilla
+				# /sys/kernel/debug/x86/ibrs_enabled: RedHat (see https://access.redhat.com/articles/3311301)
+				# /proc/sys/kernel/ibrs_enabled: OpenSUSE tumbleweed
+				pstatus green YES
+				ibrs_supported=1
+				ibrs_enabled=$(cat "$ibrs_file" 2>/dev/null)
+				break
+			fi
+		done
 	fi
 	if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
 		if grep -q spec_ctrl "$opt_map"; then
