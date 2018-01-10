@@ -35,7 +35,7 @@ show_usage()
 		--no-color			Don't use color codes
 		-v, --verbose			Increase verbosity level
 		--batch				Produce machine readable output
-		--batch nrpe		Produce machine readable output formatted for NRPE
+		--batch nrpe			Produce machine readable output formatted for NRPE
 
 	IMPORTANT:
 	A false sense of security is worse than no security at all.
