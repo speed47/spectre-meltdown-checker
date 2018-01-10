@@ -35,6 +35,7 @@ show_usage()
 		--no-color			Don't use color codes
 		-v, --verbose			Increase verbosity level
 		--batch				Produce machine readable output
+		--batch nrpe			Produce machine readable output formatted for NRPE
 
 	IMPORTANT:
 	A false sense of security is worse than no security at all.
@@ -76,7 +77,12 @@ opt_live_explicit=0
 opt_live=1
 opt_no_color=0
 opt_batch=0
+opt_batch_format="text"
 opt_verbose=1
+
+nrpe_critical=0
+nrpe_unknown=0
+nrpe_vuln=""
 
 __echo()
 {
@@ -236,6 +242,16 @@ while [ -n "$1" ]; do
 		opt_batch=1
 		opt_verbose=0
 		shift
+		case "$1" in
+			text|nrpe) opt_batch_format="$1"; shift;;
+			--*) ;;    # allow subsequent flags
+			'') ;;     # allow nothing at all
+			*)
+				echo "$0: error: unknown batch format '$1'"
+				echo "$0: error: --batch expects a format from: text, nrpe"
+				exit 1 >&2
+				;;
+		esac
 	elif [ "$1" = "-v" -o "$1" = "--verbose" ]; then
 		opt_verbose=$(expr $opt_verbose + 1)
 		shift
@@ -280,7 +296,18 @@ pstatus()
 # Arguments are: CVE UNK/OK/VULN description
 pvulnstatus()
 {
-	[ "$opt_batch" = 1 ] && _echo 0 "$1: $2 ($3)"
+	if [ "$opt_batch" = 1 ]; then
+		case "$opt_batch_format" in
+			text) _echo 0 "$1: $2 ($3)";;
+			nrpe)
+				case "$2" in
+					UKN) nrpe_unknown="1";;
+					VULN) nrpe_critical="1"; nrpe_vuln="$nrpe_vuln $1";;
+				esac
+				;;
+		esac
+	fi
+
 	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
 	vulnstatus="$2"
 	shift 2
@@ -728,3 +755,14 @@ _info
 _info "A false sense of security is worse than no security at all, see --disclaimer"
 
 [ -n "$dumped_config" ] && rm -f "$dumped_config"
+
+if [ "$opt_batch" = 1 -a "$opt_batch_format" = "nrpe" ]; then
+	if [ ! -z "$nrpe_vuln" ]; then
+		echo "Vulnerable:$nrpe_vuln"
+	else
+		echo "OK"
+	fi
+	[ "$nrpe_critical" = 1 ] && exit 2  # critical
+	[ "$nrpe_unknown" = 1 ] && exit 3  # unknown
+	exit 0  # ok
+fi
