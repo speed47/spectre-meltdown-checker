@@ -439,7 +439,7 @@ if [ "$opt_live" = 1 ]; then
 		_debug "found opt_kernel=$opt_kernel in /proc/cmdline"
 		# if we have a dedicated /boot partition, our bootloader might have just called it /
 		# so try to prepend /boot and see if we find anything
-		[ -e "/boot/$opt_kernel" ] && $opt_kernel="/boot/$opt_kernel"
+		[ -e "/boot/$opt_kernel" ] && opt_kernel="/boot/$opt_kernel"
 		_debug "opt_kernel is now $opt_kernel"
 		# else, the full path is already there (most probably /boot/something)
 	fi
