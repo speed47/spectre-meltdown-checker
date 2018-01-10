@@ -1,7 +1,7 @@
 Spectre & Meltdown Checker
 ==========================
 
-A simple shell script to tell if your Linux installation is vulnerable against the 3 "speculative execution" CVEs.
+A simple shell script to tell if your Linux installation is vulnerable against the 3 "speculative execution" CVEs that were made public early 2018.
 
 Without options, it'll inspect you currently running kernel. 
 You can also specify a kernel image on the command line, if you'd like to inspect a kernel you're not running.
@@ -10,7 +10,7 @@ The script will do its best to detect mitigations, including backported non-vani
 
 ## Example of script output
 
-![checker](https://framapic.org/FjroIZximyoM/EO5msoSMKb6L.png)
+![checker](https://framapic.org/6O4v4AAwMenv/M6J4CFWwsB3z.png)
 
 ## Quick summary of the CVEs
 
@@ -32,3 +32,14 @@ The script will do its best to detect mitigations, including backported non-vani
    - Impact: Kernel
    - Mitigation: updated kernel (with PTI/KPTI patches), updating the kernel is enough
    - Performance impact of the mitigation: low to medium
+
+## Disclaimer
+
+This tool does its best to determine whether your system is immune (or has proper mitigations in place) for the collectively named "speculative execution" vulnerabilities. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying whether your system has the known correct mitigations in place.
+However, some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).
+
+Your system exposure also depends on your CPU. As of now, AMD and ARM processors are marked as immune to some or all of these vulnerabilities (except some specific ARM models). All Intel processors manufactured since circa 1995 are thought to be vulnerable. Whatever processor one uses, one might seek more information from the manufacturer of that processor and/or of the device in which it runs.
+
+The nature of the discovered vulnerabilities being quite new, the landscape of vulnerable processors can be expected to change over time, which is why this script makes the assumption that all CPUs are vulnerable, except if the manufacturer explicitely stated otherwise in a verifiable public announcement.
+
+This tool has been released in the hope that it'll be useful, but don't use it to jump to conclusions about your security.
