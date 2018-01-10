@@ -324,26 +324,26 @@ pvulnstatus()
 {
 	if [ "$opt_batch" = 1 ]; then
 		case "$opt_batch_format" in
-			text) _echo 0 "$1: $2 ($3)";;
-			nrpe)
-				case "$2" in
-					UKN) nrpe_unknown="1";;
-					VULN) nrpe_critical="1"; nrpe_vuln="$nrpe_vuln $1";;
-				esac
-				;;
-			json)
-			  case "$1" in
-				  CVE-2017-5753) aka="SPECTRE VARIANT 1";;
-				  CVE-2017-5715) aka="SPECTRE VARIANT 2";;
-				  CVE-2017-5754) aka="SPECTRE VARIANT 3";;
-			  esac
-				case "$2" in
-					UKN)  is_vuln="unknown";;
-					VULN) is_vuln="true";;
-					OK)   is_vuln="false";;
-				esac
-				_echo 0 "{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"}"
-				;;
+			     text) _echo 0 "$1: $2 ($3)";;
+			     nrpe)
+			     	      case "$2" in
+			                    UKN) nrpe_unknown="1";;
+			                    VULN) nrpe_critical="1"; nrpe_vuln="$nrpe_vuln $1";;
+			            esac
+			            ;;
+			     json)
+			            case "$1" in
+			                    CVE-2017-5753) aka="SPECTRE VARIANT 1";;
+			                    CVE-2017-5715) aka="SPECTRE VARIANT 2";;
+			     	              CVE-2017-5754) aka="MELTDOWN";;
+			            esac
+			     	      case "$2" in
+			     	              UKN)  is_vuln="unknown";;
+			     	              VULN) is_vuln="true";;
+			                    OK)   is_vuln="false";;
+			            esac
+                  json_output="${json_output:-[}{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"},"
+                  ;;
 		esac
 	fi
 
@@ -854,4 +854,8 @@ if [ "$opt_batch" = 1 -a "$opt_batch_format" = "nrpe" ]; then
 	[ "$nrpe_critical" = 1 ] && exit 2  # critical
 	[ "$nrpe_unknown" = 1 ] && exit 3  # unknown
 	exit 0  # ok
+fi
+
+if [ "$opt_batch" = 1 -a "$opt_batch_format" = "json" ]; then
+	_echo 0 ${json_output%?}]
 fi
