@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.24
+VERSION=0.25
 
 # Script configuration
 show_usage()
