@@ -3,7 +3,7 @@ Spectre & Meltdown Checker
 
 A simple shell script to tell if your Linux installation is vulnerable against the 3 "speculative execution" CVEs that were made public early 2018.
 
-Without options, it'll inspect you currently running kernel. 
+Without options, it'll inspect your currently running kernel. 
 You can also specify a kernel image on the command line, if you'd like to inspect a kernel you're not running.
 
 The script will do its best to detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number.
