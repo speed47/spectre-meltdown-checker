@@ -40,6 +40,6 @@ However, some mitigations could also exist in your kernel that this script doesn
 
 Your system exposure also depends on your CPU. As of now, AMD and ARM processors are marked as immune to some or all of these vulnerabilities (except some specific ARM models). All Intel processors manufactured since circa 1995 are thought to be vulnerable. Whatever processor one uses, one might seek more information from the manufacturer of that processor and/or of the device in which it runs.
 
-The nature of the discovered vulnerabilities being quite new, the landscape of vulnerable processors can be expected to change over time, which is why this script makes the assumption that all CPUs are vulnerable, except if the manufacturer explicitely stated otherwise in a verifiable public announcement.
+The nature of the discovered vulnerabilities being quite new, the landscape of vulnerable processors can be expected to change over time, which is why this script makes the assumption that all CPUs are vulnerable, except if the manufacturer explicitly stated otherwise in a verifiable public announcement.
 
 This tool has been released in the hope that it'll be useful, but don't use it to jump to conclusions about your security.
