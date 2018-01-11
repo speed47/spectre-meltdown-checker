@@ -611,7 +611,7 @@ check_variant1()
 				if [ "$nb_lfence" -lt 70 ]; then
 					msg="only $nb_lfence opcodes found, should be >= 70, heuristic to be improved when official patches become available"
 					status=VULN
-					pstatus yellow UNKNOWN
+					pstatus red NO
 				else
 					msg="$nb_lfence opcodes found, which is >= 70, heuristic to be improved when official patches become available"
 					status=OK
@@ -857,6 +857,9 @@ check_variant3()
 		mount_debugfs
 		_info_nol "* PTI enabled and active: "
 		if [ "$opt_live" = 1 ]; then
+			dmesg_grep="Kernel/User page tables isolation: enabled"
+			dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
+			dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
 			if grep ^flags /proc/cpuinfo | grep -qw pti; then
 				# vanilla PTI patch sets the 'pti' flag in cpuinfo
 				kpti_enabled=1
@@ -866,10 +869,10 @@ check_variant3()
 			elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
 				# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
-			elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
+			elif dmesg | grep -Eq "$dmesg_grep"; then
 				# if we can't find the flag, grep dmesg output
 				kpti_enabled=1
-			elif [ -r /var/log/dmesg ] && grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled' /var/log/dmesg; then
+			elif [ -r /var/log/dmesg ] && grep -Eq "$dmesg_grep" /var/log/dmesg; then
 				# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
 				kpti_enabled=1
 			else
