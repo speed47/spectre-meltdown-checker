@@ -607,7 +607,7 @@ check_variant1()
 				# in patched kernels, this is more around 70-80, sometimes way higher (100+)
 				# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
 				# so let's push the threshold to 70.
-				nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
+				nb_lfence=$(objdump -d "$vmlinux" | grep -wc lfence)
 				if [ "$nb_lfence" -lt 70 ]; then
 					msg="only $nb_lfence opcodes found, should be >= 70, heuristic to be improved when official patches become available"
 					status=VULN
