@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.25
+VERSION=0.26
 
 # Script configuration
 show_usage()
@@ -33,7 +33,8 @@ show_usage()
 
 	Options:
 		--no-color			Don't use color codes
-		-v, --verbose			Increase verbosity level
+		--verbose, -v			Increase verbosity level
+		--no-sysfs			Don't use the /sys interface even if present
 		--batch text			Produce machine readable output, this is the default if --batch is specified alone
 		--batch json			Produce JSON output formatted for Puppet, Ansible, Chef...
 		--batch nrpe			Produce machine readable output formatted for NRPE
@@ -86,6 +87,7 @@ opt_variant1=0
 opt_variant2=0
 opt_variant3=0
 opt_allvariants=1
+opt_no_sysfs=0
 
 nrpe_critical=0
 nrpe_unknown=0
@@ -95,13 +97,13 @@ __echo()
 {
 	opt="$1"
 	shift
-	msg="$@"
+	_msg="$@"
 	if [ "$opt_no_color" = 1 ] ; then
 		# strip ANSI color codes
-		msg=$(/bin/echo -e  "$msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
+		_msg=$(/bin/echo -e  "$_msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
 	fi
 	# explicitely call /bin/echo to avoid shell builtins that might not take options
-	/bin/echo $opt -e "$msg"
+	/bin/echo $opt -e "$_msg"
 }
 
 _echo()
@@ -249,6 +251,9 @@ while [ -n "$1" ]; do
 		shift
 	elif [ "$1" = "--no-color" ]; then
 		opt_no_color=1
+		shift
+	elif [ "$1" = "--no-sysfs" ]; then
+		opt_no_sysfs=1
 		shift
 	elif [ "$1" = "--batch" ]; then
 		opt_batch=1
@@ -548,46 +553,83 @@ umount_debugfs()
 	fi
 }
 
+sys_interface_check()
+{
+	[ "$opt_live" = 1 -a "$opt_no_sysfs" = 0 -a -r "$1" ] || return 1
+	_info_nol "* Checking wheter we're safe according to the /sys interface: "
+	if grep -qi '^not affected' "$1"; then
+		# Not affected
+		status=OK
+		pstatus green YES "kernel confirms that your CPU is unaffected"
+	elif grep -qi '^mitigation' "$1"; then
+		# Mitigation: PTI
+		status=OK
+		pstatus green YES "kernel confirms that the mitigation is active"
+	elif grep -qi '^vulnerable' "$1"; then
+		# Vulnerable
+		status=VULN
+		pstatus red NO "kernel confirms your system is vulnerable"
+	else
+		status=UNK
+		pstatus yellow UNKNOWN "unknown value reported by kernel"
+	fi
+	msg=$(cat "$1")
+	return 0
+}
+
 ###################
 # SPECTRE VARIANT 1
 check_variant1()
 {
 	_info "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
-	_info_nol "* Checking count of LFENCE opcodes in kernel: "
 
-	status=0
-	if [ -n "$vmlinux_err" ]; then
-		pstatus yellow UNKNOWN "$vmlinux_err"
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spectre_v1"; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
 	else
-		if ! which objdump >/dev/null 2>&1; then
-			pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+		# no /sys interface (or offline mode), fallback to our own ways
+		_info_nol "* Checking count of LFENCE opcodes in kernel: "
+		if [ -n "$vmlinux_err" ]; then
+			msg="couldn't check ($vmlinux_err)"
+			status=UNK
+			pstatus yellow UNKNOWN
 		else
-			# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
-			# in non-patched kernels, this has been empirically determined as being around 40-50
-			# in patched kernels, this is more around 70-80, sometimes way higher (100+)
-			# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
-			# so let's push the threshold to 70.
-			# TODO LKML patch is starting to dump LFENCE in favor of the PAUSE opcode, we might need to check that (patch not stabilized yet)
-			nb_lfence=$(objdump -D "$vmlinux" | grep -wc lfence)
-			if [ "$nb_lfence" -lt 70 ]; then
-				pstatus red NO "only $nb_lfence opcodes found, should be >= 70"
-				status=1
+			if ! which objdump >/dev/null 2>&1; then
+				msg="missing 'objdump' tool, please install it, usually it's in the binutils package"
+				status=UNK
+				pstatus yellow UNKNOWN
 			else
-				pstatus green YES "$nb_lfence opcodes found, which is >= 70"
-				status=2
+				# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
+				# in non-patched kernels, this has been empirically determined as being around 40-50
+				# in patched kernels, this is more around 70-80, sometimes way higher (100+)
+				# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
+				# so let's push the threshold to 70.
+				nb_lfence=$(objdump -d "$vmlinux" | grep -wc lfence)
+				if [ "$nb_lfence" -lt 70 ]; then
+					msg="only $nb_lfence opcodes found, should be >= 70, heuristic to be improved when official patches become available"
+					status=VULN
+					pstatus yellow UNKNOWN
+				else
+					msg="$nb_lfence opcodes found, which is >= 70, heuristic to be improved when official patches become available"
+					status=OK
+					pstatus green YES
+				fi
 			fi
 		fi
 	fi
 
-	if ! is_cpu_vulnerable 1; then
-		pvulnstatus CVE-2017-5753 OK "your CPU vendor reported your CPU model as not vulnerable"
-	else
-		case "$status" in
-			0) pvulnstatus CVE-2017-5753 UNK "impossible to check ${vmlinux}";;
-			1) pvulnstatus CVE-2017-5753 VULN 'heuristic to be improved when official patches become available';;
-			2) pvulnstatus CVE-2017-5753 OK 'heuristic to be improved when official patches become available';;
-		esac
+	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
+	if [ "$sys_interface_available" = 0 ] && ! is_cpu_vulnerable 1; then
+		# override status & msg in case CPU is not vulnerable after all
+		msg="your CPU vendor reported your CPU model as not vulnerable"
+		status=OK
 	fi
+
+	# report status
+	pvulnstatus CVE-2017-5753 "$status" "$msg"
 }
 
 ###################
@@ -595,153 +637,169 @@ check_variant1()
 check_variant2()
 {
 	_info "\033[1;34mCVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'\033[0m"
-	_info "* Mitigation 1"
-	_info_nol "*   Hardware (CPU microcode) support for mitigation: "
-	if [ ! -e /dev/cpu/0/msr ]; then
-		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-		modprobe msr 2>/dev/null && insmod_msr=1
-	fi
-	if [ ! -e /dev/cpu/0/msr ]; then
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
 	else
-		# the new MSR 'SPEC_CTRL' is at offset 0x48
-		# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
-		# if we get a read error, the MSR is not there
-		dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
-		if [ $? -eq 0 ]; then
-			pstatus green YES
-		else
-			pstatus red NO
+		_info "* Mitigation 1"
+		_info_nol "*   Hardware (CPU microcode) support for mitigation: "
+		if [ ! -e /dev/cpu/0/msr ]; then
+			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+			modprobe msr 2>/dev/null && insmod_msr=1
 		fi
-	fi
-
-	if [ "$insmod_msr" = 1 ]; then
-		# if we used modprobe ourselves, rmmod the module
-		rmmod msr 2>/dev/null
-	fi
-
-	_info_nol "*   Kernel support for IBRS: "
-	if [ "$opt_live" = 1 ]; then
-		mount_debugfs
-		for ibrs_file in \
-			/sys/kernel/debug/ibrs_enabled \
-			/sys/kernel/debug/x86/ibrs_enabled \
-			/proc/sys/kernel/ibrs_enabled; do
-			if [ -e "$ibrs_file" ]; then
-				# if the file is there, we have IBRS compiled-in
-				# /sys/kernel/debug/ibrs_enabled: vanilla
-				# /sys/kernel/debug/x86/ibrs_enabled: RedHat (see https://access.redhat.com/articles/3311301)
-				# /proc/sys/kernel/ibrs_enabled: OpenSUSE tumbleweed
+		if [ ! -e /dev/cpu/0/msr ]; then
+			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+		else
+			# the new MSR 'SPEC_CTRL' is at offset 0x48
+			# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
+			# if we get a read error, the MSR is not there
+			dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
+			if [ $? -eq 0 ]; then
 				pstatus green YES
-				ibrs_supported=1
-				ibrs_enabled=$(cat "$ibrs_file" 2>/dev/null)
-				break
-			fi
-		done
-	fi
-	if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
-		if grep -q spec_ctrl "$opt_map"; then
-			pstatus green YES
-			ibrs_supported=1
-		fi
-	fi
-	if [ "$ibrs_supported" != 1 ]; then
-		pstatus red NO
-	fi
-
-	_info_nol "*   IBRS enabled for Kernel space: "
-	if [ "$opt_live" = 1 ]; then
-		# 0 means disabled
-		# 1 is enabled only for kernel space
-		# 2 is enabled for kernel and user space
-		case "$ibrs_enabled" in
-			"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
-			0)     pstatus red NO;;
-			1 | 2) pstatus green YES;;
-			*)     pstatus yellow UNKNOWN;;
-		esac
-	else
-		pstatus blue N/A "not testable in offline mode"
-	fi
-
-	_info_nol "*   IBRS enabled for User space: "
-	if [ "$opt_live" = 1 ]; then
-		case "$ibrs_enabled" in
-			"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
-			0 | 1) pstatus red NO;;
-			2) pstatus green YES;;
-			*) pstatus yellow UNKNOWN;;
-		esac
-	else
-		pstatus blue N/A "not testable in offline mode"
-	fi
-
-	_info "* Mitigation 2"
-	_info_nol "*   Kernel compiled with retpoline option: "
-	# We check the RETPOLINE kernel options
-	if [ -r "$opt_config" ]; then
-		if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
-			pstatus green YES
-			retpoline=1
-		else
-			pstatus red NO
-		fi
-	else
-		pstatus yellow UNKNOWN "couldn't read your kernel configuration"
-	fi
-
-	_info_nol "*   Kernel compiled with a retpoline-aware compiler: "
-	# Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
-	# For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
-	# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
-	# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
-	# *AND* if the compiler is retpoline-compliant, so look for that symbol
-	if [ -n "$opt_map" ]; then
-		# look for the symbol
-		if grep -qw noretpoline_setup "$opt_map"; then
-			retpoline_compiler=1
-			pstatus green YES "noretpoline_setup symbol found in System.map"
-		else
-			pstatus red NO
-		fi
-	elif [ -n "$vmlinux" ]; then
-		# look for the symbol
-		if which nm >/dev/null 2>&1; then
-			# the proper way: use nm and look for the symbol
-			if nm "$vmlinux" 2>/dev/null | grep -qw 'noretpoline_setup'; then
-				retpoline_compiler=1
-				pstatus green YES "noretpoline_setup found in vmlinux symbols"
 			else
 				pstatus red NO
 			fi
-		elif grep -q noretpoline_setup "$vmlinux"; then
-			# if we don't have nm, nevermind, the symbol name is long enough to not have
-			# any false positive using good old grep directly on the binary
-			retpoline_compiler=1
-			pstatus green YES "noretpoline_setup found in vmlinux"
-		else
+		fi
+
+		if [ "$insmod_msr" = 1 ]; then
+			# if we used modprobe ourselves, rmmod the module
+			rmmod msr 2>/dev/null
+		fi
+
+		_info_nol "*   Kernel support for IBRS: "
+		if [ "$opt_live" = 1 ]; then
+			mount_debugfs
+			for ibrs_file in \
+				/sys/kernel/debug/ibrs_enabled \
+				/sys/kernel/debug/x86/ibrs_enabled \
+				/proc/sys/kernel/ibrs_enabled; do
+				if [ -e "$ibrs_file" ]; then
+					# if the file is there, we have IBRS compiled-in
+					# /sys/kernel/debug/ibrs_enabled: vanilla
+					# /sys/kernel/debug/x86/ibrs_enabled: RedHat (see https://access.redhat.com/articles/3311301)
+					# /proc/sys/kernel/ibrs_enabled: OpenSUSE tumbleweed
+					pstatus green YES
+					ibrs_supported=1
+					ibrs_enabled=$(cat "$ibrs_file" 2>/dev/null)
+					break
+				fi
+			done
+		fi
+		if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
+			if grep -q spec_ctrl "$opt_map"; then
+				pstatus green YES
+				ibrs_supported=1
+			fi
+		fi
+		if [ "$ibrs_supported" != 1 ]; then
 			pstatus red NO
 		fi
-	else
-		pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
+
+		_info_nol "*   IBRS enabled for Kernel space: "
+		if [ "$opt_live" = 1 ]; then
+			# 0 means disabled
+			# 1 is enabled only for kernel space
+			# 2 is enabled for kernel and user space
+			case "$ibrs_enabled" in
+				"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
+				0)     pstatus red NO;;
+				1 | 2) pstatus green YES;;
+				*)     pstatus yellow UNKNOWN;;
+			esac
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+
+		_info_nol "*   IBRS enabled for User space: "
+		if [ "$opt_live" = 1 ]; then
+			case "$ibrs_enabled" in
+				"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
+				0 | 1) pstatus red NO;;
+				2) pstatus green YES;;
+				*) pstatus yellow UNKNOWN;;
+			esac
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+
+		_info "* Mitigation 2"
+		_info_nol "*   Kernel compiled with retpoline option: "
+		# We check the RETPOLINE kernel options
+		if [ -r "$opt_config" ]; then
+			if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
+				pstatus green YES
+				retpoline=1
+			else
+				pstatus red NO
+			fi
+		else
+			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
+		fi
+
+		_info_nol "*   Kernel compiled with a retpoline-aware compiler: "
+		# Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
+		# For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
+		# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
+		# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
+		# *AND* if the compiler is retpoline-compliant, so look for that symbol
+		if [ -n "$opt_map" ]; then
+			# look for the symbol
+			if grep -qw noretpoline_setup "$opt_map"; then
+				retpoline_compiler=1
+				pstatus green YES "noretpoline_setup symbol found in System.map"
+			else
+				pstatus red NO
+			fi
+		elif [ -n "$vmlinux" ]; then
+			# look for the symbol
+			if which nm >/dev/null 2>&1; then
+				# the proper way: use nm and look for the symbol
+				if nm "$vmlinux" 2>/dev/null | grep -qw 'noretpoline_setup'; then
+					retpoline_compiler=1
+					pstatus green YES "noretpoline_setup found in vmlinux symbols"
+				else
+					pstatus red NO
+				fi
+			elif grep -q noretpoline_setup "$vmlinux"; then
+				# if we don't have nm, nevermind, the symbol name is long enough to not have
+				# any false positive using good old grep directly on the binary
+				retpoline_compiler=1
+				pstatus green YES "noretpoline_setup found in vmlinux"
+			else
+				pstatus red NO
+			fi
+		else
+			pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
+		fi
 	fi
 
-	if ! is_cpu_vulnerable 2; then
+	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
+	if [ "$sys_interface_available" = 0 ] && ! is_cpu_vulnerable 2; then
+		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus CVE-2017-5715 OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
-		pvulnstatus CVE-2017-5715 OK "retpoline mitigate the vulnerability"
-	elif [ "$opt_live" = 1 ]; then
-		if [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
-			pvulnstatus CVE-2017-5715 OK "IBRS mitigates the vulnerability"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		if [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
+			pvulnstatus CVE-2017-5715 OK "retpoline mitigate the vulnerability"
+		elif [ "$opt_live" = 1 ]; then
+			if [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ]; then
+				pvulnstatus CVE-2017-5715 OK "IBRS mitigates the vulnerability"
+			else
+				pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+			fi
 		else
-			pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+			if [ "$ibrs_supported" = 1 ]; then
+				pvulnstatus CVE-2017-5715 OK "offline mode: IBRS will mitigate the vulnerability if enabled at runtime"
+			else
+				pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+			fi
 		fi
 	else
-		if [ "$ibrs_supported" = 1 ]; then
-			pvulnstatus CVE-2017-5715 OK "offline mode: IBRS will mitigate the vulnerability if enabled at runtime"
-		else
-			pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
-		fi
+		pvulnstatus CVE-2017-5715 "$status" "$msg"
 	fi
 }
 
@@ -750,88 +808,105 @@ check_variant2()
 check_variant3()
 {
 	_info "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
-	_info_nol "* Kernel supports Page Table Isolation (PTI): "
-	kpti_support=0
-	kpti_can_tell=0
-	if [ -n "$opt_config" ]; then
-		kpti_can_tell=1
-		if grep -Eq '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config"; then
-			kpti_support=1
-		fi
-	fi
-	if [ "$kpti_support" = 0 -a -n "$opt_map" ]; then
-		# it's not an elif: some backports don't have the PTI config but still include the patch
-		# so we try to find an exported symbol that is part of the PTI patch in System.map
-		kpti_can_tell=1
-		if grep -qw kpti_force_enabled "$opt_map"; then
-			kpti_support=1
-		fi
-	fi
-	if [ "$kpti_support" = 0 -a -n "$vmlinux" ]; then
-		# same as above but in case we don't have System.map and only vmlinux, look for the
-		# nopti option that is part of the patch (kernel command line option)
-		kpti_can_tell=1
-		if ! which strings >/dev/null 2>&1; then
-			pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
-		else
-			if strings "$vmlinux" | grep -qw nopti; then
+
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/meltdown"; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	else
+		_info_nol "* Kernel supports Page Table Isolation (PTI): "
+		kpti_support=0
+		kpti_can_tell=0
+		if [ -n "$opt_config" ]; then
+			kpti_can_tell=1
+			if grep -Eq '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config"; then
 				kpti_support=1
 			fi
 		fi
-	fi
-
-	if [ "$kpti_support" = 1 ]; then
-		pstatus green YES
-	elif [ "$kpti_can_tell" = 1 ]; then
-		pstatus red NO
-	else
-		pstatus yellow UNKNOWN "couldn't read your kernel configuration nor System.map file"
-	fi
-
-	mount_debugfs
-	_info_nol "* PTI enabled and active: "
-	if [ "$opt_live" = 1 ]; then
-		if grep ^flags /proc/cpuinfo | grep -qw pti; then
-			# vanilla PTI patch sets the 'pti' flag in cpuinfo
-			kpti_enabled=1
-		elif grep ^flags /proc/cpuinfo | grep -qw kaiser; then
-			# kernel line 4.9 sets the 'kaiser' flag in cpuinfo
-			kpti_enabled=1
-		elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
-			# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
-			kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
-		elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
-			# if we can't find the flag, grep dmesg output
-			kpti_enabled=1
-		elif [ -r /var/log/dmesg ] && grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled' /var/log/dmesg; then
-			# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
-			kpti_enabled=1
-		else
-			kpti_enabled=0
+		if [ "$kpti_support" = 0 -a -n "$opt_map" ]; then
+			# it's not an elif: some backports don't have the PTI config but still include the patch
+			# so we try to find an exported symbol that is part of the PTI patch in System.map
+			kpti_can_tell=1
+			if grep -qw kpti_force_enabled "$opt_map"; then
+				kpti_support=1
+			fi
 		fi
-		if [ "$kpti_enabled" = 1 ]; then
-			pstatus green YES
-		else
-			pstatus red NO
+		if [ "$kpti_support" = 0 -a -n "$vmlinux" ]; then
+			# same as above but in case we don't have System.map and only vmlinux, look for the
+			# nopti option that is part of the patch (kernel command line option)
+			kpti_can_tell=1
+			if ! which strings >/dev/null 2>&1; then
+				pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
+			else
+				if strings "$vmlinux" | grep -qw nopti; then
+					kpti_support=1
+				fi
+			fi
 		fi
-	else
-		pstatus blue N/A "can't verify if PTI is enabled in offline mode"
-	fi
 
-	if ! is_cpu_vulnerable 3; then
-		pvulnstatus CVE-2017-5754 OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ "$opt_live" = 1 ]; then
-		if [ "$kpti_enabled" = 1 ]; then
-			pvulnstatus CVE-2017-5754 OK "PTI mitigates the vulnerability"
-		else
-			pvulnstatus CVE-2017-5754 VULN "PTI is needed to mitigate the vulnerability"
-		fi
-	else
 		if [ "$kpti_support" = 1 ]; then
-			pvulnstatus CVE-2017-5754 OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
+			pstatus green YES
+		elif [ "$kpti_can_tell" = 1 ]; then
+			pstatus red NO
 		else
-			pvulnstatus CVE-2017-5754 VULN "PTI is needed to mitigate the vulnerability"
+			pstatus yellow UNKNOWN "couldn't read your kernel configuration nor System.map file"
 		fi
+
+		mount_debugfs
+		_info_nol "* PTI enabled and active: "
+		if [ "$opt_live" = 1 ]; then
+			if grep ^flags /proc/cpuinfo | grep -qw pti; then
+				# vanilla PTI patch sets the 'pti' flag in cpuinfo
+				kpti_enabled=1
+			elif grep ^flags /proc/cpuinfo | grep -qw kaiser; then
+				# kernel line 4.9 sets the 'kaiser' flag in cpuinfo
+				kpti_enabled=1
+			elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
+				# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
+				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
+			elif dmesg | grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled'; then
+				# if we can't find the flag, grep dmesg output
+				kpti_enabled=1
+			elif [ -r /var/log/dmesg ] && grep -Eq 'Kernel/User page tables isolation: enabled|Kernel page table isolation enabled' /var/log/dmesg; then
+				# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
+				kpti_enabled=1
+			else
+				kpti_enabled=0
+			fi
+			if [ "$kpti_enabled" = 1 ]; then
+				pstatus green YES
+			else
+				pstatus red NO
+			fi
+		else
+			pstatus blue N/A "can't verify if PTI is enabled in offline mode"
+		fi
+	fi
+
+	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
+	cve='CVE-2017-5754'
+	if [ "$sys_interface_available" = 0 ] && ! is_cpu_vulnerable 3; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		if [ "$opt_live" = 1 ]; then
+			if [ "$kpti_enabled" = 1 ]; then
+				pvulnstatus $cve OK "PTI mitigates the vulnerability"
+			else
+				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+			fi
+		else
+			if [ "$kpti_support" = 1 ]; then
+				pvulnstatus $cve OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
+			else
+				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+			fi
+		fi
+	else
+		pvulnstatus $cve "$status" "$msg"
 	fi
 }
 
