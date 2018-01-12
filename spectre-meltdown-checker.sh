@@ -22,7 +22,7 @@ show_usage()
 		Two modes are available.
 
 		First mode is the "live" mode (default), it does its best to find information about the currently running kernel.
-		To run under this mode, just start the script without any option (you can also use --live explicitely)
+		To run under this mode, just start the script without any option (you can also use --live explicitly)
 
 		Second mode is the "offline" mode, where you can inspect a non-running kernel.
 		You'll need to specify the location of the vmlinux file, and if possible, the corresponding config and System.map files:
@@ -66,7 +66,7 @@ in which it runs.
 
 The nature of the discovered vulnerabilities being quite new, the landscape of vulnerable processors can be expected
 to change over time, which is why this script makes the assumption that all CPUs are vulnerable, except if the manufacturer
-explicitely stated otherwise in a verifiable public announcement.
+explicitly stated otherwise in a verifiable public announcement.
 
 This tool has been released in the hope that it'll be useful, but don't use it to jump to conclusions about your security.
 
@@ -556,7 +556,7 @@ umount_debugfs()
 sys_interface_check()
 {
 	[ "$opt_live" = 1 -a "$opt_no_sysfs" = 0 -a -r "$1" ] || return 1
-	_info_nol "* Checking wheter we're safe according to the /sys interface: "
+	_info_nol "* Checking whether we're safe according to the /sys interface: "
 	if grep -qi '^not affected' "$1"; then
 		# Not affected
 		status=OK
