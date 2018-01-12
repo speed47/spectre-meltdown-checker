@@ -457,7 +457,8 @@ if [ "$opt_live" = 1 ]; then
 		_warn "To run it as root, you can try the following command: sudo $0"
 		_warn
 	fi
-	_info "Checking for vulnerabilities against live running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
+	_info "Checking for vulnerabilities against running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
+	_info "CPU is\033[35m"$(grep '^model name' /proc/cpuinfo | cut -d: -f2 | head -1)"\033[0m"
 
 	# try to find the image of the current running kernel
 	# first, look for the BOOT_IMAGE hint in the kernel cmdline
