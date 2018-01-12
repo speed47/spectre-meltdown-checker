@@ -159,7 +159,6 @@ is_cpu_vulnerable()
 	variant2=0
 	variant3=0
 	if grep -q AMD /proc/cpuinfo; then
-		variant1=0
 		variant2=1
 		variant3=1
 	elif grep -qi 'CPU implementer\s*:\s*0x41' /proc/cpuinfo; then
@@ -175,20 +174,16 @@ is_cpu_vulnerable()
 			# arch  7? 7? 7     7     7     8     8      8      8
 			if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c09|c0f|c0e)$'; then
 				# armv7 vulnerable chips
-				variant1=0
-				variant2=0
+				:
 			elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(d07|d08|d09|d0a)$'; then
 				# armv8 vulnerable chips
-				variant1=0
-				variant2=0
+				:
 			else
 				variant1=1
 				variant2=1
 			fi
 			# for variant3, only A75 is vulnerable
-			if [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
-				variant3=0
-			else
+			if ! [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
 				variant3=1
 			fi
 		fi
