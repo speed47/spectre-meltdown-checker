@@ -151,7 +151,7 @@ _debug()
 is_cpu_vulnerable()
 {
 	# param: 1, 2 or 3 (variant)
-	# returns 0 if vulnerable, 1 if not vulnerable, 255 on error
+	# returns 0 if vulnerable, 1 if not vulnerable
 	# (note that in shell, a return of 0 is success)
 	# by default, everything is vulnerable, we work in a "whitelist" logic here.
 	# usage: is_cpu_vulnerable 2 && do something if vulnerable
@@ -196,7 +196,8 @@ is_cpu_vulnerable()
 	[ "$1" = 1 ] && return $variant1
 	[ "$1" = 2 ] && return $variant2
 	[ "$1" = 3 ] && return $variant3
-	return 255
+	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
+	exit 1
 }
 
 show_header()
