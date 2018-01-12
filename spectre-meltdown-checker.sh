@@ -144,7 +144,7 @@ _verbose()
 
 _debug()
 {
-	_echo 3 "(debug) $@"
+	_echo 3 "\033[34m(debug) $@\033[0m"
 }
 
 is_cpu_vulnerable()
@@ -574,6 +574,7 @@ sys_interface_check()
 		pstatus yellow UNKNOWN "unknown value reported by kernel"
 	fi
 	msg=$(cat "$1")
+	_debug "sys_interface_check: $1=$msg"
 	return 0
 }
 
@@ -650,6 +651,7 @@ check_variant2()
 		if [ ! -e /dev/cpu/0/msr ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe msr 2>/dev/null && insmod_msr=1
+			_debug "attempted to load module msr, ret=$insmod_msr"
 		fi
 		if [ ! -e /dev/cpu/0/msr ]; then
 			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
@@ -668,6 +670,7 @@ check_variant2()
 		if [ "$insmod_msr" = 1 ]; then
 			# if we used modprobe ourselves, rmmod the module
 			rmmod msr 2>/dev/null
+			_debug "attempted to unload module msr, ret=$?"
 		fi
 
 		_info_nol "*   Kernel support for IBRS: "
@@ -685,7 +688,10 @@ check_variant2()
 					pstatus green YES
 					ibrs_supported=1
 					ibrs_enabled=$(cat "$ibrs_file" 2>/dev/null)
+					_debug "ibrs: found $ibrs_file=$ibrs_enabled"
 					break
+				else
+					_debug "ibrs: file $ibrs_file doesn't exist"
 				fi
 			done
 		fi
@@ -693,6 +699,7 @@ check_variant2()
 			if grep -q spec_ctrl "$opt_map"; then
 				pstatus green YES
 				ibrs_supported=1
+				_debug "ibrs: found '*spec_ctrl*' symbol in $opt_map"
 			fi
 		fi
 		if [ "$ibrs_supported" != 1 ]; then
@@ -733,6 +740,7 @@ check_variant2()
 			if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
 				pstatus green YES
 				retpoline=1
+				_debug "retpoline: found "$(grep '^CONFIG_RETPOLINE' "$opt_config")" in $opt_config"
 			else
 				pstatus red NO
 			fi
@@ -822,6 +830,7 @@ check_variant3()
 		if [ -n "$opt_config" ]; then
 			kpti_can_tell=1
 			if grep -Eq '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config"; then
+				_debug "kpti_support: found option "$(grep -E '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config")" in $opt_config"
 				kpti_support=1
 			fi
 		fi
@@ -830,6 +839,7 @@ check_variant3()
 			# so we try to find an exported symbol that is part of the PTI patch in System.map
 			kpti_can_tell=1
 			if grep -qw kpti_force_enabled "$opt_map"; then
+				_debug "kpti_support: found kpti_force_enabled in $opt_map"
 				kpti_support=1
 			fi
 		fi
@@ -841,6 +851,7 @@ check_variant3()
 				pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
 			else
 				if strings "$vmlinux" | grep -qw nopti; then
+					_debug "kpti_support: found nopti string in $vmlinux"
 					kpti_support=1
 				fi
 			fi
@@ -862,20 +873,26 @@ check_variant3()
 			dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
 			if grep ^flags /proc/cpuinfo | grep -qw pti; then
 				# vanilla PTI patch sets the 'pti' flag in cpuinfo
+				_debug "kpti_enabled: found 'pti' flag in /proc/cpuinfo"
 				kpti_enabled=1
 			elif grep ^flags /proc/cpuinfo | grep -qw kaiser; then
 				# kernel line 4.9 sets the 'kaiser' flag in cpuinfo
+				_debug "kpti_enabled: found 'kaiser' flag in /proc/cpuinfo"
 				kpti_enabled=1
 			elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
 				# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
+				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
 			elif dmesg | grep -Eq "$dmesg_grep"; then
 				# if we can't find the flag, grep dmesg output
+				_debug "kpti_enabled: found hint in dmesg: "$(dmesg | grep -E "$dmesg_grep")
 				kpti_enabled=1
 			elif [ -r /var/log/dmesg ] && grep -Eq "$dmesg_grep" /var/log/dmesg; then
 				# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
+				_debug "kpti_enabled: found hint in /var/log/dmesg: "$(grep -E "$dmesg_grep" /var/log/dmesg)
 				kpti_enabled=1
 			else
+				_debug "kpti_enabled: couldn't find any hint that PTI is enabled"
 				kpti_enabled=0
 			fi
 			if [ "$kpti_enabled" = 1 ]; then
