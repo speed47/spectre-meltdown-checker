@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.27
+VERSION=0.28
 
 # Script configuration
 show_usage()
@@ -40,6 +40,7 @@ show_usage()
 		--batch nrpe			Produce machine readable output formatted for NRPE
 		--variant [1,2,3]		Specify which variant you'd like to check, by default all variants are checked
 						Can be specified multiple times (e.g. --variant 2 --variant 3)
+
 
 	IMPORTANT:
 	A false sense of security is worse than no security at all.
@@ -290,6 +291,10 @@ while [ -n "$1" ]; do
 		show_header
 		show_usage
 		exit 0
+	elif [ "$1" = "--version" ]; then
+		opt_no_color=1
+		show_header
+		exit 1
 	elif [ "$1" = "--disclaimer" ]; then
 		show_header
 		show_disclaimer
