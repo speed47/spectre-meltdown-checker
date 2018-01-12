@@ -151,7 +151,8 @@ _debug()
 is_cpu_vulnerable()
 {
 	# param: 1, 2 or 3 (variant)
-	# returns 1 if vulnerable, 0 if not vulnerable, 255 on error
+	# returns 0 if vulnerable, 1 if not vulnerable, 255 on error
+	# (note that in shell, a return of 0 is success)
 	# by default, everything is vulnerable, we work in a "whitelist" logic here.
 	# usage: is_cpu_vulnerable 2 && do something if vulnerable
 	variant1=0
