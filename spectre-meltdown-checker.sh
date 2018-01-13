@@ -151,14 +151,14 @@ _debug()
 is_cpu_vulnerable()
 {
 	# param: 1, 2 or 3 (variant)
-	# returns 1 if vulnerable, 0 if not vulnerable, 255 on error
+	# returns 0 if vulnerable, 1 if not vulnerable
+	# (note that in shell, a return of 0 is success)
 	# by default, everything is vulnerable, we work in a "whitelist" logic here.
 	# usage: is_cpu_vulnerable 2 && do something if vulnerable
 	variant1=0
 	variant2=0
 	variant3=0
 	if grep -q AMD /proc/cpuinfo; then
-		variant1=0
 		variant2=1
 		variant3=1
 	elif grep -qi 'CPU implementer\s*:\s*0x41' /proc/cpuinfo; then
@@ -174,20 +174,16 @@ is_cpu_vulnerable()
 			# arch  7? 7? 7     7     7     8     8      8      8
 			if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c09|c0f|c0e)$'; then
 				# armv7 vulnerable chips
-				variant1=0
-				variant2=0
+				:
 			elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(d07|d08|d09|d0a)$'; then
 				# armv8 vulnerable chips
-				variant1=0
-				variant2=0
+				:
 			else
 				variant1=1
 				variant2=1
 			fi
 			# for variant3, only A75 is vulnerable
-			if [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
-				variant3=0
-			else
+			if ! [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
 				variant3=1
 			fi
 		fi
@@ -195,7 +191,8 @@ is_cpu_vulnerable()
 	[ "$1" = 1 ] && return $variant1
 	[ "$1" = 2 ] && return $variant2
 	[ "$1" = 3 ] && return $variant3
-	return 255
+	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
+	exit 1
 }
 
 show_header()
