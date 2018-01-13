@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.28
+VERSION=0.29
 
 # Script configuration
 show_usage()
@@ -158,8 +158,10 @@ is_cpu_vulnerable()
 	variant1=0
 	variant2=0
 	variant3=0
+
 	if grep -q AMD /proc/cpuinfo; then
-		variant2=1
+		# AMD revised their statement about variant2 => vulnerable
+		# https://www.amd.com/en/corporate/speculative-execution
 		variant3=1
 	elif grep -qi 'CPU implementer\s*:\s*0x41' /proc/cpuinfo; then
 		# ARM
@@ -188,6 +190,7 @@ is_cpu_vulnerable()
 			fi
 		fi
 	fi
+
 	[ "$1" = 1 ] && return $variant1
 	[ "$1" = 2 ] && return $variant2
 	[ "$1" = 3 ] && return $variant3
