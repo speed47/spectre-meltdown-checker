@@ -15,8 +15,8 @@ show_usage()
 {
 	cat <<EOF
 	Usage:
-		Live mode:    $0 [options] [--live]
-		Offline mode: $0 [options] [--kernel <vmlinux_file>] [--config <kernel_config>] [--map <kernel_map_file>]
+		Live mode:    `basename $0` [options] [--live]
+		Offline mode: `basename $0` [options] [--kernel <vmlinux_file>] [--config <kernel_config>] [--map <kernel_map_file>]
 
 	Modes:
 		Two modes are available.
