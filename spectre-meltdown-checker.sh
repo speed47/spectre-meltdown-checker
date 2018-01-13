@@ -94,6 +94,8 @@ nrpe_critical=0
 nrpe_unknown=0
 nrpe_vuln=""
 
+ret=0
+
 __echo()
 {
 	opt="$1"
@@ -364,6 +366,9 @@ pvulnstatus()
 		UNK) pstatus yellow UNKNOWN "$@";;
 		VULN) pstatus red 'VULNERABLE' "$@";;
 		OK) pstatus green 'NOT VULNERABLE' "$@";;
+	esac
+	case "$vulnstatus" in
+		UNK|VULN) ret=1
 	esac
 }
 
@@ -980,3 +985,5 @@ fi
 if [ "$opt_batch" = 1 -a "$opt_batch_format" = "json" ]; then
 	_echo 0 ${json_output%?}]
 fi
+
+exit $ret
