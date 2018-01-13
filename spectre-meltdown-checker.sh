@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.29
+VERSION='0.29+cpuid_spec_ctrl-test1'
 
 show_usage()
 {
@@ -664,11 +664,11 @@ check_variant2()
 		sys_interface_available=1
 	else
 		_info "* Mitigation 1"
-		_info_nol "*   Hardware (CPU microcode) support for mitigation: "
+		_info_nol "*   Hardware / CPU microcode support for mitigation (SPEC_CTRL MSR): "
 		if [ ! -e /dev/cpu/0/msr ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe msr 2>/dev/null && insmod_msr=1
-			_debug "attempted to load module msr, ret=$insmod_msr"
+			_debug "attempted to load module msr, insmod_msr=$insmod_msr"
 		fi
 		if [ ! -e /dev/cpu/0/msr ]; then
 			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
@@ -689,6 +689,43 @@ check_variant2()
 			rmmod msr 2>/dev/null
 			_debug "attempted to unload module msr, ret=$?"
 		fi
+
+		# CPUID test
+		_info_nol "*   Hardware / CPU microcode support for mitigation (CPUID bit): "
+		# $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}'); echo $z; echo $(($z & 32))
+		if [ ! -e /dev/cpu/0/cpuid ]; then
+			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+			modprobe cpuid 2>/dev/null && insmod_cpuid=1
+			_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
+		fi
+		if [ ! -e /dev/cpu/0/cpuid ]; then
+			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuidr, is cpuid support enabled in your kernel?"
+		else
+			# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
+			if [ "$opt_verbose" -ge 3 ]; then
+				dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+				_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
+				_debug "cpuid: leaf7 eax-ebx-ecd-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
+				_debug "cpuid: leaf7 edx higher-half is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+			fi
+			# getting high byte of edx on leaf7 of cpuinfo in decimal
+			edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
+			_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
+			edx_bit26=$(( edx_hb & 8 ))
+			_debug "cpuid: edx_bit26=$edx_bit26"
+			if [ "$edx_bit26" -eq 8 ]; then
+				pstatus green YES
+			else
+				pstatus red NO
+			fi
+		fi
+
+		if [ "$insmod_cpuid" = 1 ]; then
+			# if we used modprobe ourselves, rmmod the module
+			rmmod cpuid 2>/dev/null
+			_debug "attempted to unload module cpuid, ret=$?"
+		fi
+		# /CPUID test
 
 		_info_nol "*   Kernel support for IBRS: "
 		if [ "$opt_live" = 1 ]; then
