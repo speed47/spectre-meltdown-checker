@@ -505,10 +505,12 @@ if [ "$opt_live" = 1 ]; then
 else
 	_info "Checking for vulnerabilities against specified kernel"
 fi
+
 if [ -n "$opt_kernel" ]; then
 	_verbose "Will use vmlinux image \033[35m$opt_kernel\033[0m"
 else
 	_verbose "Will use no vmlinux image (accuracy might be reduced)"
+	bad_accuracy=1
 fi
 if [ -n "$dumped_config" ]; then
 	_verbose "Will use kconfig \033[35m/proc/config.gz\033[0m"
@@ -516,11 +518,17 @@ elif [ -n "$opt_config" ]; then
 	_verbose "Will use kconfig \033[35m$opt_config\033[0m"
 else
 	_verbose "Will use no kconfig (accuracy might be reduced)"
+	bad_accuracy=1
 fi
 if [ -n "$opt_map" ]; then
 	_verbose "Will use System.map file \033[35m$opt_map\033[0m"
 else
 	_verbose "Will use no System.map file (accuracy might be reduced)"
+	bad_accuracy=1
+fi
+
+if [ "$bad_accuracy" = 1 ]; then
+	_info "We're missing some kernel info (see -v), accuracy might be reduced"
 fi
 
 if [ -e "$opt_kernel" ]; then
