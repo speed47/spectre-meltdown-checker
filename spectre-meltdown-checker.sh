@@ -10,7 +10,6 @@
 #
 VERSION=0.29
 
-# Script configuration
 show_usage()
 {
 	cat <<EOF
@@ -90,8 +89,8 @@ opt_variant3=0
 opt_allvariants=1
 opt_no_sysfs=0
 
-nrpe_critical=0
-nrpe_unknown=0
+global_critical=0
+global_unknown=0
 nrpe_vuln=""
 
 __echo()
@@ -195,7 +194,7 @@ is_cpu_vulnerable()
 	[ "$1" = 2 ] && return $variant2
 	[ "$1" = 3 ] && return $variant3
 	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
-	exit 1
+	exit 255
 }
 
 show_header()
@@ -234,17 +233,17 @@ parse_opt_file()
 while [ -n "$1" ]; do
 	if [ "$1" = "--kernel" ]; then
 		opt_kernel=$(parse_opt_file kernel "$2")
-		[ $? -ne 0 ] && exit $?
+		[ $? -ne 0 ] && exit 255
 		shift 2
 		opt_live=0
 	elif [ "$1" = "--config" ]; then
 		opt_config=$(parse_opt_file config "$2")
-		[ $? -ne 0 ] && exit $?
+		[ $? -ne 0 ] && exit 255
 		shift 2
 		opt_live=0
 	elif [ "$1" = "--map" ]; then
 		opt_map=$(parse_opt_file map "$2")
-		[ $? -ne 0 ] && exit $?
+		[ $? -ne 0 ] && exit 255
 		shift 2
 		opt_live=0
 	elif [ "$1" = "--live" ]; then
@@ -265,9 +264,9 @@ while [ -n "$1" ]; do
 			--*) ;;    # allow subsequent flags
 			'') ;;     # allow nothing at all
 			*)
-				echo "$0: error: unknown batch format '$1'"
-				echo "$0: error: --batch expects a format from: text, nrpe, json"
-				exit 1 >&2
+				echo "$0: error: unknown batch format '$1'" >&2
+				echo "$0: error: --batch expects a format from: text, nrpe, json" >&2
+				exit 255
 				;;
 		esac
 	elif [ "$1" = "-v" -o "$1" = "--verbose" ]; then
@@ -276,7 +275,7 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--variant" ]; then
 		if [ -z "$2" ]; then
 			echo "$0: error: option --variant expects a parameter (1, 2 or 3)" >&2
-			exit 1
+			exit 255
 		fi
 		case "$2" in
 			1) opt_variant1=1; opt_allvariants=0;;
@@ -284,7 +283,8 @@ while [ -n "$1" ]; do
 			3) opt_variant3=1; opt_allvariants=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2 or 3" >&2;
-				exit 1;;
+				exit 255
+				;;
 		esac
 		shift 2
 	elif [ "$1" = "-h" -o "$1" = "--help" ]; then
@@ -294,7 +294,7 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--version" ]; then
 		opt_no_color=1
 		show_header
-		exit 1
+		exit 0
 	elif [ "$1" = "--disclaimer" ]; then
 		show_header
 		show_disclaimer
@@ -303,7 +303,7 @@ while [ -n "$1" ]; do
 		show_header
 		show_usage
 		echo "$0: error: unknown option '$1'"
-		exit 1
+		exit 255
 	fi
 done
 
@@ -333,37 +333,38 @@ pstatus()
 pvulnstatus()
 {
 	if [ "$opt_batch" = 1 ]; then
-                case "$opt_batch_format" in
-                        text) _echo 0 "$1: $2 ($3)";;
-                        nrpe)
-                              case "$2" in
-                                       UKN) nrpe_unknown="1";;
-                                       VULN) nrpe_critical="1"; nrpe_vuln="$nrpe_vuln $1";;
-                              esac
-                              ;;
-                        json)
-                              case "$1" in
-                                       CVE-2017-5753) aka="SPECTRE VARIANT 1";;
-                                       CVE-2017-5715) aka="SPECTRE VARIANT 2";;
-                                       CVE-2017-5754) aka="MELTDOWN";;
-                              esac
-                              case "$2" in
-                                       UKN)  is_vuln="unknown";;
-                                       VULN) is_vuln="true";;
-                                       OK)   is_vuln="false";;
-                              esac
-                              json_output="${json_output:-[}{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"},"
-                              ;;
+		case "$opt_batch_format" in
+			text) _echo 0 "$1: $2 ($3)";;
+			json)
+				case "$1" in
+					CVE-2017-5753) aka="SPECTRE VARIANT 1";;
+					CVE-2017-5715) aka="SPECTRE VARIANT 2";;
+					CVE-2017-5754) aka="MELTDOWN";;
+				esac
+				case "$2" in
+					UNK)  is_vuln="null";;
+					VULN) is_vuln="true";;
+					OK)   is_vuln="false";;
+				esac
+				json_output="${json_output:-[}{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"},"
+				;;
+
+			nrpe)	[ "$2" = VULN ] && nrpe_vuln="$nrpe_vuln $1";;
 		esac
 	fi
 
+	# always fill global_* vars because we use that do decide the program exit code
+	case "$2" in
+		UNK)  global_unknown="1";;
+		VULN) global_critical="1";;
+	esac
+
+	# display info if we're not in quiet/batch mode
 	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
-	vulnstatus="$2"
-	shift 2
-	case "$vulnstatus" in
-		UNK) pstatus yellow UNKNOWN "$@";;
-		VULN) pstatus red 'VULNERABLE' "$@";;
-		OK) pstatus green 'NOT VULNERABLE' "$@";;
+	case "$2" in
+		UNK)  pstatus yellow 'UNKNOWN'        "$@";;
+		VULN) pstatus red    'VULNERABLE'     "$@";;
+		OK)   pstatus green  'NOT VULNERABLE' "$@";;
 	esac
 }
 
@@ -448,8 +449,8 @@ extract_vmlinux()
 if [ "$opt_live_explicit" = 1 ]; then
 	if [ -n "$opt_kernel" -o -n "$opt_config" -o -n "$opt_map" ]; then
 		show_usage
-		echo "$0: error: incompatible modes specified, use either --live or --kernel/--config/--map"
-		exit 1
+		echo "$0: error: incompatible modes specified, use either --live or --kernel/--config/--map" >&2
+		exit 255
 	fi
 fi
 
@@ -972,11 +973,13 @@ if [ "$opt_batch" = 1 -a "$opt_batch_format" = "nrpe" ]; then
 	else
 		echo "OK"
 	fi
-	[ "$nrpe_critical" = 1 ] && exit 2  # critical
-	[ "$nrpe_unknown" = 1 ] && exit 3  # unknown
-	exit 0  # ok
 fi
 
 if [ "$opt_batch" = 1 -a "$opt_batch_format" = "json" ]; then
-	_echo 0 ${json_output%?}]
+	_echo 0 ${json_output%?}']'
 fi
+
+# exit with the proper exit code
+[ "$global_critical" = 1 ] && exit 2  # critical
+[ "$global_unknown"  = 1 ] && exit 3  # unknown
+exit 0  # ok
