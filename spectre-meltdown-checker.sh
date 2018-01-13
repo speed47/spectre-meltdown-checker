@@ -103,7 +103,7 @@ __echo()
 		# strip ANSI color codes
 		_msg=$(/bin/echo -e  "$_msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
 	fi
-	# explicitely call /bin/echo to avoid shell builtins that might not take options
+	# explicitly call /bin/echo to avoid shell builtins that might not take options
 	/bin/echo $opt -e "$_msg"
 }
 
@@ -609,7 +609,7 @@ check_variant1()
 				status=UNK
 				pstatus yellow UNKNOWN
 			else
-				# here we disassemble the kernel and count the number of occurences of the LFENCE opcode
+				# here we disassemble the kernel and count the number of occurrences of the LFENCE opcode
 				# in non-patched kernels, this has been empirically determined as being around 40-50
 				# in patched kernels, this is more around 70-80, sometimes way higher (100+)
 				# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
