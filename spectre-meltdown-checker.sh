@@ -664,7 +664,7 @@ check_variant2()
 		sys_interface_available=1
 	else
 		_info "* Mitigation 1"
-		_info_nol "*   Hardware / CPU microcode support for mitigation (SPEC_CTRL MSR): "
+		_info_nol "*   Hardware (CPU microcode) support for mitigation [SPEC_CTRL MSR]: "
 		if [ ! -e /dev/cpu/0/msr ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe msr 2>/dev/null && insmod_msr=1
@@ -691,8 +691,7 @@ check_variant2()
 		fi
 
 		# CPUID test
-		_info_nol "*   Hardware / CPU microcode support for mitigation (CPUID bit): "
-		# $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}'); echo $z; echo $(($z & 32))
+		_info_nol "*   Hardware (CPU microcode) support for mitigation [CPUID bit]: "
 		if [ ! -e /dev/cpu/0/cpuid ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe cpuid 2>/dev/null && insmod_cpuid=1
@@ -720,12 +719,13 @@ check_variant2()
 			fi
 		fi
 
-		if [ "$insmod_cpuid" = 1 ]; then
-			# if we used modprobe ourselves, rmmod the module
-			rmmod cpuid 2>/dev/null
-			_debug "attempted to unload module cpuid, ret=$?"
+		# hardware support according to kernel
+		_info_nol "*   Hardware (CPU microcode) support for mitigation [cpuinfo flag]: "
+		if grep -qw spec_ctrl /proc/cpuinfo; then
+			pstatus green YES
+		else
+			pstatus red NO
 		fi
-		# /CPUID test
 
 		_info_nol "*   Kernel support for IBRS: "
 		if [ "$opt_live" = 1 ]; then
