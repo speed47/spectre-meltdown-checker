@@ -142,6 +142,11 @@ _verbose()
 	_echo 2 "$@"
 }
 
+_verbose_nol()
+{
+	_echo_nol 2 "$@"
+}
+
 _debug()
 {
 	_echo 3 "\033[34m(debug) $@\033[0m"
@@ -664,7 +669,8 @@ check_variant2()
 		sys_interface_available=1
 	else
 		_info "* Mitigation 1"
-		_info_nol "*   Hardware (CPU microcode) support for mitigation [SPEC_CTRL MSR]: "
+		_info "*   Hardware (CPU microcode) support for mitigation"
+		_info_nol "*     The SPEC_CTRL MSR is available: "
 		if [ ! -e /dev/cpu/0/msr ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe msr 2>/dev/null && insmod_msr=1
@@ -691,7 +697,7 @@ check_variant2()
 		fi
 
 		# CPUID test
-		_info_nol "*   Hardware (CPU microcode) support for mitigation [CPUID bit]: "
+		_info_nol "*     The SPEC_CTRL CPUID feature bit is set: "
 		if [ ! -e /dev/cpu/0/cpuid ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe cpuid 2>/dev/null && insmod_cpuid=1
@@ -720,11 +726,13 @@ check_variant2()
 		fi
 
 		# hardware support according to kernel
-		_info_nol "*   Hardware (CPU microcode) support for mitigation [cpuinfo flag]: "
-		if grep -qw spec_ctrl /proc/cpuinfo; then
-			pstatus green YES
-		else
-			pstatus red NO
+		if [ "$opt_verbose" -ge 2 ]; then
+			_verbose_nol "*     The kernel has set the spec_ctrl flag in cpuinfo: "
+			if grep -qw spec_ctrl /proc/cpuinfo; then
+				pstatus green YES
+			else
+				pstatus red NO
+			fi
 		fi
 
 		_info_nol "*   Kernel support for IBRS: "
