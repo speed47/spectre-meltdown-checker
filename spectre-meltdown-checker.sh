@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.30+xen-test1
+VERSION=0.31
 
 show_usage()
 {
