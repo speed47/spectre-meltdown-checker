@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.30
+VERSION=0.30+xen-test1
 
 show_usage()
 {
@@ -1013,6 +1013,25 @@ check_variant3()
 				pstatus blue NO 'no security impact but performance will be degraded with PTI'
 			fi
 		fi
+
+		if [ "$opt_live" = 1 ]; then
+			# checking whether we're running under Xen PV 64 bits. If yes, we're not affected by variant3
+			_info_nol "* Checking if we're running under Xen PV (64 bits): "
+			if [ "$(uname -m)" = "x86_64" ]; then
+				# XXX do we have a better way that relying on dmesg?
+				if dmesg | grep -q 'Booting paravirtualized kernel on Xen$' ; then
+					pstatus green YES 'Xen PV is not vulnerable'
+					xen_pv=1
+				elif [ -r /var/log/dmesg ] && grep -q 'Booting paravirtualized kernel on Xen$' /var/log/dmesg; then
+					pstatus green YES 'Xen PV is not vulnerable'
+					xen_pv=1
+				else
+					pstatus blue NO
+				fi
+			else
+				pstatus blue NO
+			fi
+		fi
 	fi
 
 	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
@@ -1025,6 +1044,8 @@ check_variant3()
 		if [ "$opt_live" = 1 ]; then
 			if [ "$kpti_enabled" = 1 ]; then
 				pvulnstatus $cve OK "PTI mitigates the vulnerability"
+			elif [ "$xen_pv" = 1 ]; then
+				pvulnstatus $cve OK "Xen PV 64 bits is not vulnerable"
 			else
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
 			fi
