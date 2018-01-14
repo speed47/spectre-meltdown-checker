@@ -487,6 +487,7 @@ if [ "$opt_live" = 1 ]; then
 		[ -e /boot/kernel-$( uname -r) ] && opt_kernel=/boot/kernel-$( uname -r)
 		[ -e /boot/bzImage-$(uname -r) ] && opt_kernel=/boot/bzImage-$(uname -r)
 		[ -e /boot/kernel-genkernel-$(uname -m)-$(uname -r) ] && opt_kernel=/boot/kernel-genkernel-$(uname -m)-$(uname -r)
+		[ -e /run/booted-system/kernel ] && opt_kernel=/run/booted-system/kernel
 	fi
 
 	# system.map
