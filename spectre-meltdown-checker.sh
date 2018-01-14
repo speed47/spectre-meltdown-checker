@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='0.29+cpuid_spec_ctrl-test1'
+VERSION=0.30
 
 show_usage()
 {
