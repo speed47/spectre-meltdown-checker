@@ -360,8 +360,10 @@ pvulnstatus()
 	esac
 
 	# display info if we're not in quiet/batch mode
+	vulnstatus="$2"
+	shift 2
 	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
-	case "$2" in
+	case "$vulnstatus" in
 		UNK)  pstatus yellow 'UNKNOWN'        "$@";;
 		VULN) pstatus red    'VULNERABLE'     "$@";;
 		OK)   pstatus green  'NOT VULNERABLE' "$@";;
