@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.29
+VERSION=0.30
 
 show_usage()
 {
@@ -140,6 +140,11 @@ _info_nol()
 _verbose()
 {
 	_echo 2 "$@"
+}
+
+_verbose_nol()
+{
+	_echo_nol 2 "$@"
 }
 
 _debug()
@@ -665,11 +670,12 @@ check_variant2()
 		sys_interface_available=1
 	else
 		_info "* Mitigation 1"
-		_info_nol "*   Hardware (CPU microcode) support for mitigation: "
+		_info "*   Hardware (CPU microcode) support for mitigation"
+		_info_nol "*     The SPEC_CTRL MSR is available: "
 		if [ ! -e /dev/cpu/0/msr ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe msr 2>/dev/null && insmod_msr=1
-			_debug "attempted to load module msr, ret=$insmod_msr"
+			_debug "attempted to load module msr, insmod_msr=$insmod_msr"
 		fi
 		if [ ! -e /dev/cpu/0/msr ]; then
 			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
@@ -689,6 +695,49 @@ check_variant2()
 			# if we used modprobe ourselves, rmmod the module
 			rmmod msr 2>/dev/null
 			_debug "attempted to unload module msr, ret=$?"
+		fi
+
+		# CPUID test
+		_info_nol "*     The SPEC_CTRL CPUID feature bit is set: "
+		if [ ! -e /dev/cpu/0/cpuid ]; then
+			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+			modprobe cpuid 2>/dev/null && insmod_cpuid=1
+			_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
+		fi
+		if [ ! -e /dev/cpu/0/cpuid ]; then
+			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuidr, is cpuid support enabled in your kernel?"
+		else
+			# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
+			if [ "$opt_verbose" -ge 3 ]; then
+				dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+				_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
+				_debug "cpuid: leaf7 eax-ebx-ecd-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
+				_debug "cpuid: leaf7 edx higher-half is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+			fi
+			# getting high byte of edx on leaf7 of cpuinfo in decimal
+			edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
+			_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
+			edx_bit26=$(( edx_hb & 8 ))
+			_debug "cpuid: edx_bit26=$edx_bit26"
+			if [ "$edx_bit26" -eq 8 ]; then
+				pstatus green YES
+			else
+				pstatus red NO
+			fi
+		fi
+
+		# hardware support according to kernel
+		if [ "$opt_verbose" -ge 2 ]; then
+			_verbose_nol "*     The kernel has set the spec_ctrl flag in cpuinfo: "
+			if [ "$opt_live" = 1 ]; then
+				if grep -qw spec_ctrl /proc/cpuinfo; then
+					pstatus green YES
+				else
+					pstatus red NO
+				fi
+			else
+				pstatus blue N/A "not testable in offline mode"
+			fi
 		fi
 
 		_info_nol "*   Kernel support for IBRS: "
@@ -712,6 +761,18 @@ check_variant2()
 					_debug "ibrs: file $ibrs_file doesn't exist"
 				fi
 			done
+			# on some newer kernels, the spec_ctrl_ibrs flag in /proc/cpuinfo
+			# is set when ibrs has been administratively enabled (usually from cmdline)
+			# which in that case means ibrs is supported *and* enabled for kernel & user
+			# as per the ibrs patch series v3
+			if [ "$ibrs_supported" = 0 ]; then
+				if grep -qw spec_ctrl_ibrs /proc/cpuinfo; then
+					_debug "ibrs: found spec_ctrl_ibrs flag in /proc/cpuinfo"
+					ibrs_supported=1
+					# enabled=2 -> kernel & user
+					ibrs_enabled=2
+				fi
+			fi
 		fi
 		if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
 			if grep -q spec_ctrl "$opt_map"; then
