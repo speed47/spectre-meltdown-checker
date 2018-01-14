@@ -730,7 +730,7 @@ check_variant2()
 		if [ "$opt_verbose" -ge 2 ]; then
 			_verbose_nol "*     The kernel has set the spec_ctrl flag in cpuinfo: "
 			if [ "$opt_live" = 1 ]; then
-				if grep -qw spec_ctrl /proc/cpuinfo; then
+				if grep ^flags /proc/cpuinfo | grep -qw spec_ctrl; then
 					pstatus green YES
 				else
 					pstatus red NO
@@ -766,7 +766,7 @@ check_variant2()
 			# which in that case means ibrs is supported *and* enabled for kernel & user
 			# as per the ibrs patch series v3
 			if [ "$ibrs_supported" = 0 ]; then
-				if grep -qw spec_ctrl_ibrs /proc/cpuinfo; then
+				if grep ^flags /proc/cpuinfo | grep -qw spec_ctrl_ibrs; then
 					_debug "ibrs: found spec_ctrl_ibrs flag in /proc/cpuinfo"
 					ibrs_supported=1
 					# enabled=2 -> kernel & user
@@ -981,6 +981,28 @@ check_variant3()
 			fi
 		else
 			pstatus blue N/A "can't verify if PTI is enabled in offline mode"
+		fi
+
+		# no security impact but give a hint to the user in verbose mode
+		# about PCID/INVPCID cpuid features that must be present to avoid
+		# too big a performance impact with PTI
+		# refs:
+		# https://marc.info/?t=151532047900001&r=1&w=2
+		# https://groups.google.com/forum/m/#!topic/mechanical-sympathy/L9mHTbeQLNU
+		if [ "$opt_verbose" -ge 2 ]; then
+			_info "* Performance impact if PTI is enabled"
+			_info_nol "*   CPU supports PCID: "
+			if grep ^flags /proc/cpuinfo | grep -qw pcid; then
+				pstatus green YES 'performance degradation with PTI will be limited'
+			else
+				pstatus blue NO 'no security impact but performance will be degraded with PTI'
+			fi
+			_info_nol "*   CPU supports INVPCID: "
+			if grep ^flags /proc/cpuinfo | grep -qw invpcid; then
+				pstatus green YES 'performance degradation with PTI will be limited'
+			else
+				pstatus blue NO 'no security impact but performance will be degraded with PTI'
+			fi
 		fi
 	fi
 
