@@ -163,7 +163,15 @@ is_cpu_vulnerable()
 	variant2=0
 	variant3=0
 
-	if grep -q AMD /proc/cpuinfo; then
+	if grep -q GenuineIntel /proc/cpuinfo; then
+		# Intel
+		# Old Atoms are not vulnerable to spectre 2 nor meltdown
+		# https://security-center.intel.com/advisory.aspx?intelid=INTEL-SA-00088&languageid=en-fr
+		if grep -qE '^model name.+ Atom\(TM\) CPU +(S|D|N|230|330)' /proc/cpuinfo; then
+			variant2=1
+			variant3=1
+		fi
+	elif grep -q AuthenticAMD /proc/cpuinfo; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
 		variant3=1
@@ -185,6 +193,7 @@ is_cpu_vulnerable()
 				# armv8 vulnerable chips
 				:
 			else
+				# others are not vulnerable
 				variant1=1
 				variant2=1
 			fi
