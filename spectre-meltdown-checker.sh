@@ -728,10 +728,14 @@ check_variant2()
 		# hardware support according to kernel
 		if [ "$opt_verbose" -ge 2 ]; then
 			_verbose_nol "*     The kernel has set the spec_ctrl flag in cpuinfo: "
-			if grep -qw spec_ctrl /proc/cpuinfo; then
-				pstatus green YES
+			if [ "$opt_live" = 1 ]; then
+				if grep -qw spec_ctrl /proc/cpuinfo; then
+					pstatus green YES
+				else
+					pstatus red NO
+				fi
 			else
-				pstatus red NO
+				pstatus blue N/A "not testable in offline mode"
 			fi
 		fi
 
@@ -756,6 +760,18 @@ check_variant2()
 					_debug "ibrs: file $ibrs_file doesn't exist"
 				fi
 			done
+			# on some newer kernels, the spec_ctrl_ibrs flag in /proc/cpuinfo
+			# is set when ibrs has been administratively enabled (usually from cmdline)
+			# which in that case means ibrs is supported *and* enabled for kernel & user
+			# as per the ibrs patch series v3
+			if [ "$ibrs_supported" = 0 ]; then
+				if grep -qw spec_ctrl_ibrs /proc/cpuinfo; then
+					_debug "ibrs: found spec_ctrl_ibrs flag in /proc/cpuinfo"
+					ibrs_supported=1
+					# enabled=2 -> kernel & user
+					ibrs_enabled=2
+				fi
+			fi
 		fi
 		if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
 			if grep -q spec_ctrl "$opt_map"; then
