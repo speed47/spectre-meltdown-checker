@@ -666,6 +666,13 @@ check_variant2()
 	else
 		_info "* Mitigation 1"
 		_info_nol "*   Hardware (CPU microcode) support for mitigation: "
+
+		# 0 - no, 1 - yes, 2 - cannot find out via msr
+		cpu_spec_ctrl=0
+		if grep -qwi spec_ctrl /proc/cpuinfo; then
+			cpu_spec_ctrl=1
+		fi
+
 		if [ ! -e /dev/cpu/0/msr ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 			modprobe msr 2>/dev/null && insmod_msr=1
@@ -673,16 +680,20 @@ check_variant2()
 		fi
 		if [ ! -e /dev/cpu/0/msr ]; then
 			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+			cpu_spec_ctrl=2
 		else
 			# the new MSR 'SPEC_CTRL' is at offset 0x48
 			# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
 			# if we get a read error, the MSR is not there
 			dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
 			if [ $? -eq 0 ]; then
-				pstatus green YES
-			else
-				pstatus red NO
+				cpu_spec_ctrl=1
 			fi
+		fi
+		if [ $cpu_spec_ctrl -eq 1 ]; then
+			pstatus green YES
+		elif [ $cpu_spec_ctrl -eq 0 ]; then
+			pstatus red NO
 		fi
 
 		if [ "$insmod_msr" = 1 ]; then
@@ -712,6 +723,12 @@ check_variant2()
 					_debug "ibrs: file $ibrs_file doesn't exist"
 				fi
 			done
+		fi
+		if [ "$ibrs_supported" != 1 ]; then
+			if grep -qwi spec_ctrl /proc/cpuinfo; then
+				pstatus green YES
+				ibrs_supported=1
+			fi
 		fi
 		if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
 			if grep -q spec_ctrl "$opt_map"; then
