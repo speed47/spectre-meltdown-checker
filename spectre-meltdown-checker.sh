@@ -166,6 +166,8 @@ is_cpu_vulnerable()
 	variant1=0
 	variant2=0
 	variant3=0
+	# we also set a friendly name for the CPU to be used in the script if needed
+	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1)
 
 	if grep -q GenuineIntel /proc/cpuinfo; then
 		# Intel
@@ -188,6 +190,7 @@ is_cpu_vulnerable()
 		cpupart=$(awk '/CPU part/         {print $4;exit}' /proc/cpuinfo)
 		cpuarch=$(awk '/CPU architecture/ {print $3;exit}' /proc/cpuinfo)
 		if [ -n "$cpupart" -a -n "$cpuarch" ]; then
+			cpu_friendly_name="ARM v$cpuarch Part Number $cpupart"
 			# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 			# I can't find their CPU part number, but it's probably not that useful anyway
 			# model R7 R8 A9    A15   A17   A57   A72    A73    A75
@@ -569,7 +572,9 @@ if [ "$opt_live" = 1 ]; then
 		_warn
 	fi
 	_info "Checking for vulnerabilities against running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
-	_info "CPU is\033[35m"$(grep '^model name' /proc/cpuinfo | cut -d: -f2 | head -1)"\033[0m"
+	# call is_cpu_vulnerable to fill the cpu_friendly_name var
+	is_cpu_vulnerable 1
+	_info "CPU is\033[35m$cpu_friendly_name\033[0m"
 
 	# try to find the image of the current running kernel
 	# first, look for the BOOT_IMAGE hint in the kernel cmdline
