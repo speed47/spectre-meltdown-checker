@@ -189,8 +189,10 @@ is_cpu_vulnerable()
 		# reference: https://developer.arm.com/support/security-update
 		cpupart=$(awk '/CPU part/         {print $4;exit}' /proc/cpuinfo)
 		cpuarch=$(awk '/CPU architecture/ {print $3;exit}' /proc/cpuinfo)
+		# some kernels report AArch64 instead of 8
+		[ "$cpuarch" = "AArch64" ] && cpuarch=8
 		if [ -n "$cpupart" -a -n "$cpuarch" ]; then
-			cpu_friendly_name="ARM v$cpuarch Part Number $cpupart"
+			cpu_friendly_name="ARM v$cpuarch model $cpupart"
 			# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 			# I can't find their CPU part number, but it's probably not that useful anyway
 			# model R7 R8 A9    A15   A17   A57   A72    A73    A75
@@ -574,7 +576,7 @@ if [ "$opt_live" = 1 ]; then
 	_info "Checking for vulnerabilities against running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
 	# call is_cpu_vulnerable to fill the cpu_friendly_name var
 	is_cpu_vulnerable 1
-	_info "CPU is\033[35m$cpu_friendly_name\033[0m"
+	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
 	# try to find the image of the current running kernel
 	# first, look for the BOOT_IMAGE hint in the kernel cmdline
