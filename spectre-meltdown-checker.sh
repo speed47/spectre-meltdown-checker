@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.31
+VERSION=0.31+coreos
 
 show_usage()
 {
@@ -39,6 +39,7 @@ show_usage()
 		--batch nrpe			Produce machine readable output formatted for NRPE
 		--variant [1,2,3]		Specify which variant you'd like to check, by default all variants are checked
 						Can be specified multiple times (e.g. --variant 2 --variant 3)
+		--coreos			Special mode for CoreOS (use an ephemeral toolbox to inspect kernel)
 
 
 	IMPORTANT:
@@ -88,6 +89,7 @@ opt_variant2=0
 opt_variant3=0
 opt_allvariants=1
 opt_no_sysfs=0
+opt_coreos=0
 
 global_critical=0
 global_unknown=0
@@ -268,6 +270,13 @@ while [ -n "$1" ]; do
 		shift
 	elif [ "$1" = "--no-sysfs" ]; then
 		opt_no_sysfs=1
+		shift
+	elif [ "$1" = "--coreos" ]; then
+		opt_coreos=1
+		shift
+	elif [ "$1" = "--coreos-within-toolbox" ]; then
+		# don't use directly: used internally by --coreos
+		opt_coreos=0
 		shift
 	elif [ "$1" = "--batch" ]; then
 		opt_batch=1
@@ -461,6 +470,52 @@ extract_vmlinux()
 
 # end of extract-vmlinux functions
 
+mount_debugfs()
+{
+	if [ ! -e /sys/kernel/debug/sched_features ]; then
+		# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
+		mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null && mounted_debugfs=1
+	fi
+}
+
+umount_debugfs()
+{
+	if [ "$mounted_debugfs" = 1 ]; then
+		# umount debugfs if we did mount it ourselves
+		umount /sys/kernel/debug
+	fi
+}
+
+load_msr()
+{
+	modprobe msr 2>/dev/null && insmod_msr=1
+	_debug "attempted to load module msr, insmod_msr=$insmod_msr"
+}
+
+unload_msr()
+{
+	if [ "$insmod_msr" = 1 ]; then
+		# if we used modprobe ourselves, rmmod the module
+		rmmod msr 2>/dev/null
+		_debug "attempted to unload module msr, ret=$?"
+	fi
+}
+
+load_cpuid()
+{
+	modprobe cpuid 2>/dev/null && insmod_cpuid=1
+	_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
+}
+
+unload_cpuid()
+{
+	if [ "$insmod_cpuid" = 1 ]; then
+		# if we used modprobe ourselves, rmmod the module
+		rmmod cpuid 2>/dev/null
+		_debug "attempted to unload module cpuid, ret=$?"
+	fi
+}
+
 # check for mode selection inconsistency
 if [ "$opt_live_explicit" = 1 ]; then
 	if [ -n "$opt_kernel" -o -n "$opt_config" -o -n "$opt_map" ]; then
@@ -468,6 +523,20 @@ if [ "$opt_live_explicit" = 1 ]; then
 		echo "$0: error: incompatible modes specified, use either --live or --kernel/--config/--map" >&2
 		exit 255
 	fi
+fi
+
+# coreos mode
+if [ "$opt_coreos" = 1 ]; then
+	_warn "CoreOS mode, starting an ephemeral toolbox to launch the script"
+	load_msr
+	load_cpuid
+	mount_debugfs
+	toolbox --ephemeral --bind-ro /dev/cpu:/dev/cpu -- sh -c "dnf install -y binutils curl which && /media/root$PWD/$0 $@ --coreos-within-toolbox"
+	exitcode=$?
+	mount_debugfs
+	unload_cpuid
+	unload_msr
+	exit $exitcode
 fi
 
 # root check (only for live mode, for offline mode, we already checked if we could read the files)
@@ -490,6 +559,8 @@ if [ "$opt_live" = 1 ]; then
 		# if we have a dedicated /boot partition, our bootloader might have just called it /
 		# so try to prepend /boot and see if we find anything
 		[ -e "/boot/$opt_kernel" ] && opt_kernel="/boot/$opt_kernel"
+		# special case for CoreOS if we're inside the toolbox
+		[ -e "/media/root/boot/$opt_kernel" ] && opt_kernel="/media/root/boot/$opt_kernel"
 		_debug "opt_kernel is now $opt_kernel"
 		# else, the full path is already there (most probably /boot/something)
 	fi
@@ -551,11 +622,13 @@ fi
 
 if [ -e "$opt_kernel" ]; then
 	if ! which readelf >/dev/null 2>&1; then
+		_debug "readelf not found"
 		vmlinux_err="missing 'readelf' tool, please install it, usually it's in the 'binutils' package"
 	else
 		extract_vmlinux "$opt_kernel"
 	fi
 else
+	_debug "no opt_kernel defined"
 	vmlinux_err="couldn't find your kernel image in /boot, if you used netboot, this is normal"
 fi
 if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
@@ -568,22 +641,6 @@ _info
 
 # now we define some util functions and the check_*() funcs, as
 # the user can choose to execute only some of those
-
-mount_debugfs()
-{
-	if [ ! -e /sys/kernel/debug/sched_features ]; then
-		# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
-		mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null && mounted_debugfs=1
-	fi
-}
-
-umount_debugfs()
-{
-	if [ "$mounted_debugfs" = 1 ]; then
-		# umount debugfs if we did mount it ourselves
-		umount /sys/kernel/debug
-	fi
-}
 
 sys_interface_check()
 {
@@ -683,8 +740,7 @@ check_variant2()
 		_info_nol "*     The SPEC_CTRL MSR is available: "
 		if [ ! -e /dev/cpu/0/msr ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-			modprobe msr 2>/dev/null && insmod_msr=1
-			_debug "attempted to load module msr, insmod_msr=$insmod_msr"
+			load_msr
 		fi
 		if [ ! -e /dev/cpu/0/msr ]; then
 			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
@@ -700,18 +756,13 @@ check_variant2()
 			fi
 		fi
 
-		if [ "$insmod_msr" = 1 ]; then
-			# if we used modprobe ourselves, rmmod the module
-			rmmod msr 2>/dev/null
-			_debug "attempted to unload module msr, ret=$?"
-		fi
+		unload_msr
 
 		# CPUID test
 		_info_nol "*     The SPEC_CTRL CPUID feature bit is set: "
 		if [ ! -e /dev/cpu/0/cpuid ]; then
 			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-			modprobe cpuid 2>/dev/null && insmod_cpuid=1
-			_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
+			load_cpuid
 		fi
 		if [ ! -e /dev/cpu/0/cpuid ]; then
 			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuidr, is cpuid support enabled in your kernel?"
@@ -734,6 +785,7 @@ check_variant2()
 				pstatus red NO
 			fi
 		fi
+		unload_cpuid
 
 		# hardware support according to kernel
 		if [ "$opt_verbose" -ge 2 ]; then
