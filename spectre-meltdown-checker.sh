@@ -516,6 +516,12 @@ unload_cpuid()
 	fi
 }
 
+is_coreos()
+{
+	which coreos-install >/dev/null && which toolbox >/dev/null && return 0
+	return 1
+}
+
 # check for mode selection inconsistency
 if [ "$opt_live_explicit" = 1 ]; then
 	if [ -n "$opt_kernel" -o -n "$opt_config" -o -n "$opt_map" ]; then
@@ -527,7 +533,7 @@ fi
 
 # coreos mode
 if [ "$opt_coreos" = 1 ]; then
-	if ! which coreos-install || ! which toolbox; then
+	if ! is_coreos; then
 		_warn "CoreOS mode asked, but we're not under CoreOS!"
 		exit 255
 	fi
@@ -541,6 +547,11 @@ if [ "$opt_coreos" = 1 ]; then
 	unload_cpuid
 	unload_msr
 	exit $exitcode
+else
+	if is_coreos; then
+		_warn "You seem to be running CoreOS, you might want to use the --coreos option for better results"
+		_warn
+	fi
 fi
 
 # root check (only for live mode, for offline mode, we already checked if we could read the files)
