@@ -518,7 +518,7 @@ unload_cpuid()
 
 is_coreos()
 {
-	which coreos-install >/dev/null && which toolbox >/dev/null && return 0
+	which coreos-install >/dev/null 2>&1 && which toolbox >/dev/null 2>&1 && return 0
 	return 1
 }
 
