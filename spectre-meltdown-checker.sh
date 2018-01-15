@@ -527,6 +527,10 @@ fi
 
 # coreos mode
 if [ "$opt_coreos" = 1 ]; then
+	if ! which coreos-install || ! which toolbox; then
+		_warn "CoreOS mode asked, but we're not under CoreOS!"
+		exit 255
+	fi
 	_warn "CoreOS mode, starting an ephemeral toolbox to launch the script"
 	load_msr
 	load_cpuid
