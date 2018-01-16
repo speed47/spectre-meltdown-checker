@@ -583,6 +583,7 @@ if [ "$opt_live" = 1 ]; then
 	fi
 	# if we didn't find a kernel, default to guessing
 	if [ ! -e "$opt_kernel" ]; then
+		[ -e /boot/vmlinuz             ] && opt_kernel=/boot/vmlinuz
 		[ -e /boot/vmlinuz-linux       ] && opt_kernel=/boot/vmlinuz-linux
 		[ -e /boot/vmlinuz-linux-libre ] && opt_kernel=/boot/vmlinuz-linux-libre
 		[ -e /boot/vmlinuz-$(uname -r) ] && opt_kernel=/boot/vmlinuz-$(uname -r)
