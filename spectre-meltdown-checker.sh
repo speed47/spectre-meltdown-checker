@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.31+coreos
+VERSION=0.31
 
 show_usage()
 {
@@ -24,7 +24,7 @@ show_usage()
 		To run under this mode, just start the script without any option (you can also use --live explicitly)
 
 		Second mode is the "offline" mode, where you can inspect a non-running kernel.
-		You'll need to specify the location of the vmlinux file, and if possible, the corresponding config and System.map files:
+		You'll need to specify the location of the vmlinux file, config and System.map files:
 
 		--kernel vmlinux_file		Specify a (possibly compressed) vmlinux file
 		--config kernel_config		Specify a kernel config file
@@ -34,13 +34,15 @@ show_usage()
 		--no-color			Don't use color codes
 		--verbose, -v			Increase verbosity level
 		--no-sysfs			Don't use the /sys interface even if present
+		--coreos			Special mode for CoreOS (use an ephemeral toolbox to inspect kernel)
 		--batch text			Produce machine readable output, this is the default if --batch is specified alone
 		--batch json			Produce JSON output formatted for Puppet, Ansible, Chef...
 		--batch nrpe			Produce machine readable output formatted for NRPE
 		--variant [1,2,3]		Specify which variant you'd like to check, by default all variants are checked
 						Can be specified multiple times (e.g. --variant 2 --variant 3)
-		--coreos			Special mode for CoreOS (use an ephemeral toolbox to inspect kernel)
 
+	Return codes:
+		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
 
 	IMPORTANT:
 	A false sense of security is worse than no security at all.
