@@ -1051,6 +1051,10 @@ check_variant3()
 				# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
 				_debug "kpti_enabled: found hint in /var/log/dmesg: "$(grep -E "$dmesg_grep" /var/log/dmesg)
 				kpti_enabled=1
+			elif [ -r /var/log/kern.log ] && grep -Eq "$dmesg_grep" /var/log/kern.log; then
+				# if we can't find the flag in dmesg output, grep in /var/log/kern.log when readable
+				_debug "kpti_enabled: found hint in /var/log/kern.log: "$(grep -E "$dmesg_grep" /var/log/kern.log)
+				kpti_enabled=1
 			else
 				_debug "kpti_enabled: couldn't find any hint that PTI is enabled"
 				kpti_enabled=0
@@ -1095,6 +1099,9 @@ check_variant3()
 					pstatus green YES 'Xen PV is not vulnerable'
 					xen_pv=1
 				elif [ -r /var/log/dmesg ] && grep -q 'Booting paravirtualized kernel on Xen$' /var/log/dmesg; then
+					pstatus green YES 'Xen PV is not vulnerable'
+					xen_pv=1
+				elif [ -r /var/log/kern.log ] && grep -q 'Booting paravirtualized kernel on Xen$' /var/log/kern.log; then
 					pstatus green YES 'Xen PV is not vulnerable'
 					xen_pv=1
 				else
