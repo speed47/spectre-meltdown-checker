@@ -171,7 +171,9 @@ is_cpu_vulnerable()
 		# Intel
 		# Old Atoms are not vulnerable to spectre 2 nor meltdown
 		# https://security-center.intel.com/advisory.aspx?intelid=INTEL-SA-00088&languageid=en-fr
-		if grep -qE '^model name.+ Atom\(TM\) CPU +(S|D|N|230|330)' /proc/cpuinfo; then
+		# model name : Genuine Intel(R) CPU N270 @ 1.60GHz
+		# model name : Intel(R) Atom(TM) CPU 330 @ 1.60GHz
+		if grep -qE '^model name.+ Intel\(R\) (Atom\(TM\) CPU +(S|D|230|330)|CPU N\d{3} )' /proc/cpuinfo; then
 			variant2=1
 			variant3=1
 		fi
