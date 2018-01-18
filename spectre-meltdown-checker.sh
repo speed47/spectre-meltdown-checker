@@ -438,8 +438,18 @@ vmlinux=''
 vmlinux_err=''
 check_vmlinux()
 {
-	readelf -h "$1" > /dev/null 2>&1 || return 1
-	return 0
+	readelf -h "$1" > /dev/null 2>&1 && return 0
+	# normally we would just use readelf to test for the binary, and it would be sufficient.
+	# but for some archs/distros it doesn't work well (issue #82), so we add a dumber check:
+	# uncompressed kernels always have the following string present
+	if ! which strings >/dev/null 2>&1; then
+		vmlinux_err="missing 'strings' tool, please install it, usually it's in the 'binutils' package"
+		return 0
+	else
+		strings "$1" | grep -q '^Linux version ' && return 0
+	fi
+	# not found: kernel not valid
+	return 1
 }
 
 try_decompress()
