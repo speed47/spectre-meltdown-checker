@@ -170,6 +170,16 @@ _debug()
 	_echo 3 "\033[34m(debug) $@\033[0m"
 }
 
+is_cpu_vulnerable_cached=0
+_is_cpu_vulnerable_cached()
+{
+	[ "$1" = 1 ] && return $variant1
+	[ "$1" = 2 ] && return $variant2
+	[ "$1" = 3 ] && return $variant3
+	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
+	exit 255
+}
+
 is_cpu_vulnerable()
 {
 	# param: 1, 2 or 3 (variant)
@@ -177,6 +187,11 @@ is_cpu_vulnerable()
 	# (note that in shell, a return of 0 is success)
 	# by default, everything is vulnerable, we work in a "whitelist" logic here.
 	# usage: is_cpu_vulnerable 2 && do something if vulnerable
+	if [ "$is_cpu_vulnerable_cached" = 1 ]; then
+		_is_cpu_vulnerable_cached "$1"
+		return $?
+	fi
+
 	variant1=''
 	variant2=''
 	variant3=''
@@ -260,12 +275,9 @@ is_cpu_vulnerable()
 	[ "$variant2" = "immune" ] && variant2=1 || variant2=0
 	[ "$variant3" = "immune" ] && variant3=1 || variant3=0
 	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3>"
-
-	[ "$1" = 1 ] && return $variant1
-	[ "$1" = 2 ] && return $variant2
-	[ "$1" = 3 ] && return $variant3
-	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
-	exit 255
+	is_cpu_vulnerable_cached=1
+	_is_cpu_vulnerable_cached "$1"
+	return $?
 }
 
 show_header()
