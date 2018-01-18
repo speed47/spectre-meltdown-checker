@@ -177,9 +177,9 @@ is_cpu_vulnerable()
 	# (note that in shell, a return of 0 is success)
 	# by default, everything is vulnerable, we work in a "whitelist" logic here.
 	# usage: is_cpu_vulnerable 2 && do something if vulnerable
-	variant1=0
-	variant2=0
-	variant3=0
+	variant1=''
+	variant2=''
+	variant3=''
 	# we also set a friendly name for the CPU to be used in the script if needed
 	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1)
 
@@ -191,44 +191,75 @@ is_cpu_vulnerable()
 		# model name : Intel(R) Atom(TM) CPU N270 @ 1.60GHz
 		# model name : Intel(R) Atom(TM) CPU 330 @ 1.60GHz
 		if grep -qE '^model name.+ Intel\(R\) (Atom\(TM\) CPU +(S|D|N|230|330)|CPU N[0-9]{3} )' /proc/cpuinfo; then
-			variant2=1
-			variant3=1
+			variant1=vuln
+			[ -z "$variant2" ] && variant2=immune
+			[ -z "$variant3" ] && variant3=immune
 		fi
 	elif grep -q AuthenticAMD /proc/cpuinfo; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
-		variant3=1
-	elif grep -qi 'CPU implementer\s*:\s*0x41' /proc/cpuinfo; then
+		variant1=vuln
+		variant2=vuln
+		[ -z "$variant3" ] && variant3=immune
+	elif grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' /proc/cpuinfo; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
-		cpupart=$(awk '/CPU part/         {print $4;exit}' /proc/cpuinfo)
-		cpuarch=$(awk '/CPU architecture/ {print $3;exit}' /proc/cpuinfo)
-		# some kernels report AArch64 instead of 8
-		[ "$cpuarch" = "AArch64" ] && cpuarch=8
-		if [ -n "$cpupart" -a -n "$cpuarch" ]; then
-			cpu_friendly_name="ARM v$cpuarch model $cpupart"
-			# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
-			# I can't find their CPU part number, but it's probably not that useful anyway
-			# model R7 R8 A9    A15   A17   A57   A72    A73    A75
-			# part   ?  ? 0xc09 0xc0f 0xc0e 0xd07 0xd08  0xd09  0xd0a
-			# arch  7? 7? 7     7     7     8     8      8      8
-			if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c09|c0f|c0e)$'; then
-				# armv7 vulnerable chips
-				:
-			elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(d07|d08|d09|d0a)$'; then
-				# armv8 vulnerable chips
-				:
-			else
-				# others are not vulnerable
-				variant1=1
-				variant2=1
+		# some devices (phones or other) have several ARMs and as such different part numbers,
+		# an example is "bigLITTLE". we shouldn't rely on the first CPU only, so we check the whole list
+		cpupart_list=$(awk '/CPU part/         {print $4}' /proc/cpuinfo)
+		cpuarch_list=$(awk '/CPU architecture/ {print $3}' /proc/cpuinfo)
+		i=0
+		for cpupart in $cpupart_list
+		do
+			i=$(( i + 1 ))
+			cpuarch=$(echo $cpuarch_list | awk '{ print $'$i' }')
+			_debug "checking cpu$i: <$cpupart> <$cpuarch>"
+			# some kernels report AArch64 instead of 8
+			[ "$cpuarch" = "AArch64" ] && cpuarch=8
+			if [ -n "$cpupart" -a -n "$cpuarch" ]; then
+				cpu_friendly_name="ARM v$cpuarch model $cpupart"
+				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
+				# I can't find their CPU part number, but it's probably not that useful anyway
+				# model R7 R8 A9    A15   A17   A57   A72    A73    A75
+				# part   ?  ? 0xc09 0xc0f 0xc0e 0xd07 0xd08  0xd09  0xd0a
+				# arch  7? 7? 7     7     7     8     8      8      8
+				#
+				# variant 1 & variant 2
+				if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c09|c0f|c0e)$'; then
+					# armv7 vulnerable chips
+					_debug "checking cpu$i: this armv7 vulnerable to spectre 1 & 2"
+					variant1=vuln
+					variant2=vuln
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(d07|d08|d09|d0a)$'; then
+					# armv8 vulnerable chips
+					_debug "checking cpu$i: this armv8 vulnerable to spectre 1 & 2"
+					variant1=vuln
+					variant2=vuln
+				else
+					_debug "checking cpu$i: this arm non vulnerable to 1 & 2"
+					# others are not vulnerable
+					[ -z "$variant1" ] && variant1=immune
+					[ -z "$variant2" ] && variant2=immune
+				fi
+
+				# for variant3, only A75 is vulnerable
+				if [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
+					_debug "checking cpu$i: arm A75 vulnerable to meltdown"
+					variant3=vuln
+				else
+					_debug "checking cpu$i: this arm non vulnerable to meltdown"
+					[ -z "$variant3" ] && variant3=immune
+				fi
 			fi
-			# for variant3, only A75 is vulnerable
-			if ! [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
-				variant3=1
-			fi
-		fi
+			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3>"
+		done
 	fi
+	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3>"
+	# if at least one of the cpu is vulnerable, then the system is vulnerable
+	[ "$variant1" = "immune" ] && variant1=1 || variant1=0
+	[ "$variant2" = "immune" ] && variant2=1 || variant2=0
+	[ "$variant3" = "immune" ] && variant3=1 || variant3=0
+	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3>"
 
 	[ "$1" = 1 ] && return $variant1
 	[ "$1" = 2 ] && return $variant2
