@@ -545,7 +545,7 @@ if [ "$opt_coreos" = 1 ]; then
 	load_msr
 	load_cpuid
 	mount_debugfs
-	toolbox --ephemeral --bind-ro /dev/cpu:/dev/cpu -- sh -c "dnf install -y binutils curl which && /media/root$PWD/$0 $@ --coreos-within-toolbox"
+	toolbox --ephemeral --bind-ro /dev/cpu:/dev/cpu -- sh -c "dnf install -y binutils which && /media/root$PWD/$0 $@ --coreos-within-toolbox"
 	exitcode=$?
 	mount_debugfs
 	unload_cpuid
