@@ -585,6 +585,7 @@ if [ "$opt_live" = 1 ]; then
 	fi
 	# if we didn't find a kernel, default to guessing
 	if [ ! -e "$opt_kernel" ]; then
+		[ -e /lib/modules/$(uname -r)/vmlinuz ] && opt_kernel=/lib/modules/$(uname -r)/vmlinuz
 		[ -e /boot/vmlinuz             ] && opt_kernel=/boot/vmlinuz
 		[ -e /boot/vmlinuz-linux       ] && opt_kernel=/boot/vmlinuz-linux
 		[ -e /boot/vmlinuz-linux-libre ] && opt_kernel=/boot/vmlinuz-linux-libre
@@ -598,6 +599,8 @@ if [ "$opt_live" = 1 ]; then
 	# system.map
 	if [ -e /proc/kallsyms ] ; then
 		opt_map="/proc/kallsyms"
+	elif [ -e /lib/modules/$(uname -r)/System.map ] ; then
+		opt_map=/lib/modules/$(uname -r)/System.map
 	elif [ -e /boot/System.map-$(uname -r) ] ; then
 		opt_map=/boot/System.map-$(uname -r)
 	fi
@@ -608,6 +611,8 @@ if [ "$opt_live" = 1 ]; then
 		gunzip -c /proc/config.gz > $dumped_config
 		# dumped_config will be deleted at the end of the script
 		opt_config=$dumped_config
+	elif [ -e /lib/modules/$(uname -r)/config ]; then
+		opt_config=/lib/modules/$(uname -r)/config
 	elif [ -e /boot/config-$(uname -r) ]; then
 		opt_config=/boot/config-$(uname -r)
 	fi
