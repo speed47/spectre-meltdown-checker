@@ -1032,7 +1032,10 @@ check_variant3()
 			dmesg_grep="Kernel/User page tables isolation: enabled"
 			dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
 			dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
-			if grep ^flags /proc/cpuinfo | grep -qw pti; then
+			if grep -q -e pti=off -e nopti /proc/cmdline && ! [ -e /sys/kernel/debug/x86/pti_enabled ]; then
+				_debug "kpti disabled on command line : pti=off or nopti in /proc/cmdlin"
+				kpti_enabled=0
+			elif grep ^flags /proc/cpuinfo | grep -qw pti; then
 				# vanilla PTI patch sets the 'pti' flag in cpuinfo
 				_debug "kpti_enabled: found 'pti' flag in /proc/cpuinfo"
 				kpti_enabled=1
