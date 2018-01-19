@@ -1091,19 +1091,19 @@ check_variant3()
 		fi
 
 		if [ "$opt_live" = 1 ]; then
-			# checking whether we're running under Xen PV 64 bits. If yes, we're not affected by variant3
-			_info_nol "* Checking if we're running under Xen PV (64 bits): "
+			# checking whether we're running under Xen HVM or PVH. If yes, we're not affected by variant3
+			_info_nol "* Checking if we're running under Xen HVM or PVH (64 bits): "
 			if [ "$(uname -m)" = "x86_64" ]; then
 				# XXX do we have a better way that relying on dmesg?
-				if dmesg | grep -q 'Booting paravirtualized kernel on Xen$' ; then
+				if dmesg | grep -Eq 'Booting paravirtualized kernel (with PVH extensions on Xen|on Xen HVM)$' ; then
 					pstatus green YES 'Xen PV is not vulnerable'
-					xen_pv=1
-				elif [ -r /var/log/dmesg ] && grep -q 'Booting paravirtualized kernel on Xen$' /var/log/dmesg; then
+					xen_hvm_pvh=1
+				elif [ -r /var/log/dmesg ] && grep -Eq 'Booting paravirtualized kernel (with PVH extensions on Xen|on Xen HVM)$' /var/log/dmesg; then
 					pstatus green YES 'Xen PV is not vulnerable'
-					xen_pv=1
-				elif [ -r /var/log/kern.log ] && grep -q 'Booting paravirtualized kernel on Xen$' /var/log/kern.log; then
+					xen_hvm_pvh=1
+				elif [ -r /var/log/kern.log ] && grep -Eq 'Booting paravirtualized kernel (with PVH extensions on Xen|on Xen HVM)$' /var/log/kern.log; then
 					pstatus green YES 'Xen PV is not vulnerable'
-					xen_pv=1
+					xen_hvm_pvh=1
 				else
 					pstatus blue NO
 				fi
@@ -1123,8 +1123,8 @@ check_variant3()
 		if [ "$opt_live" = 1 ]; then
 			if [ "$kpti_enabled" = 1 ]; then
 				pvulnstatus $cve OK "PTI mitigates the vulnerability"
-			elif [ "$xen_pv" = 1 ]; then
-				pvulnstatus $cve OK "Xen PV 64 bits is not vulnerable"
+			elif [ "$xen_hvm_pvh" = 1 ]; then
+				pvulnstatus $cve OK "Xen HVM/PVH 64 bits are not vulnerable"
 			else
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
 			fi
