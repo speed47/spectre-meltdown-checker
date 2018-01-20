@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.31
+VERSION=0.32
 
 show_usage()
 {
