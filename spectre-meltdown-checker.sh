@@ -1128,7 +1128,7 @@ check_variant3()
 				# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
 				_debug "kpti_enabled: found hint in /var/log/dmesg: "$(grep -E "$dmesg_grep" /var/log/dmesg)
 				kpti_enabled=1
-			elif [ -r /var/log/kern.log ] && grep -Eq "$dmesg_grep" /var/log/kern.log; then
+			elif (for log in /var/log/kern.log*; do test -r $log && zgrep -Eq "$dmesg_grep" $log && exit 0 ; done ; exit 1); then
 				# if we can't find the flag in dmesg output, grep in /var/log/kern.log when readable
 				_debug "kpti_enabled: found hint in /var/log/kern.log: "$(grep -E "$dmesg_grep" /var/log/kern.log)
 				kpti_enabled=1
