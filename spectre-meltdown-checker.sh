@@ -205,7 +205,12 @@ is_cpu_vulnerable()
 		# model name : Genuine Intel(R) CPU N270 @ 1.60GHz
 		# model name : Intel(R) Atom(TM) CPU N270 @ 1.60GHz
 		# model name : Intel(R) Atom(TM) CPU 330 @ 1.60GHz
-		if grep -qE '^model name.+ Intel\(R\) (Atom\(TM\) CPU +(S|D|N|230|330)|CPU N[0-9]{3} )' /proc/cpuinfo; then
+		#
+		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200:
+		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
+		if grep -qE -e '^model name.+ Intel\(R\) (Atom\(TM\) CPU +(S|D|N|230|330)|CPU N[0-9]{3} )'   \
+			    -e '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' \
+				/proc/cpuinfo; then
 			variant1=vuln
 			[ -z "$variant2" ] && variant2=immune
 			[ -z "$variant3" ] && variant3=immune
