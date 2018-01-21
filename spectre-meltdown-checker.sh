@@ -583,6 +583,22 @@ unload_cpuid()
 	fi
 }
 
+dmesg_grep()
+{
+	# grep for something in dmesg, ensuring that the dmesg buffer
+	# has not been truncated
+	dmesg_grepped=''
+	if ! dmesg | grep -qE '(^|\] )Linux version [0-9]'; then
+		# dmesg truncated
+		return 2
+	fi
+	dmesg_grepped=$(dmesg | grep -E "$1" | head -1)
+	# not found:
+	[ -z "$dmesg_grepped" ] && return 1
+	# found, output is in $dmesg_grepped
+	return 0
+}
+
 is_coreos()
 {
 	which coreos-install >/dev/null 2>&1 && which toolbox >/dev/null 2>&1 && return 0
@@ -1120,24 +1136,25 @@ check_variant3()
 				# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
 				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
-			elif dmesg | grep -Eq "$dmesg_grep"; then
-				# if we can't find the flag, grep dmesg output
-				_debug "kpti_enabled: found hint in dmesg: "$(dmesg | grep -E "$dmesg_grep")
-				kpti_enabled=1
-			elif [ -r /var/log/dmesg ] && grep -Eq "$dmesg_grep" /var/log/dmesg; then
-				# if we can't find the flag in dmesg output, grep in /var/log/dmesg when readable
-				_debug "kpti_enabled: found hint in /var/log/dmesg: "$(grep -E "$dmesg_grep" /var/log/dmesg)
-				kpti_enabled=1
-			elif [ -r /var/log/kern.log ] && grep -Eq "$dmesg_grep" /var/log/kern.log; then
-				# if we can't find the flag in dmesg output, grep in /var/log/kern.log when readable
-				_debug "kpti_enabled: found hint in /var/log/kern.log: "$(grep -E "$dmesg_grep" /var/log/kern.log)
-				kpti_enabled=1
-			else
+			fi
+			if [ -z "$kpti_enabled" ]; then
+				dmesg_grep "$dmesg_grep"; ret=$?
+				if [ $ret -eq 0 ]; then
+					_debug "kpti_enabled: found hint in dmesg: $dmesg_grepped"
+					kpti_enabled=1
+				elif [ $ret -eq 2 ]; then
+					_debug "kpti_enabled: dmesg truncated"
+					kpti_enabled=-1
+				fi
+			fi
+			if [ -z "$kpti_enabled" ]; then
 				_debug "kpti_enabled: couldn't find any hint that PTI is enabled"
 				kpti_enabled=0
 			fi
 			if [ "$kpti_enabled" = 1 ]; then
 				pstatus green YES
+			elif [ "$kpti_enabled" = -1 ]; then
+				pstatus yellow UNKNOWN "dmesg truncated, please reboot and relaunch this script"
 			else
 				pstatus red NO
 			fi
@@ -1172,15 +1189,12 @@ check_variant3()
 			_info_nol "* Checking if we're running under Xen PV (64 bits): "
 			if [ "$(uname -m)" = "x86_64" ]; then
 				# XXX do we have a better way that relying on dmesg?
-				if dmesg | grep -q 'Booting paravirtualized kernel on Xen$' ; then
+				dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
+				if [ $ret -eq 0 ]; then
 					pstatus green YES 'Xen PV is not vulnerable'
 					xen_pv=1
-				elif [ -r /var/log/dmesg ] && grep -q 'Booting paravirtualized kernel on Xen$' /var/log/dmesg; then
-					pstatus green YES 'Xen PV is not vulnerable'
-					xen_pv=1
-				elif [ -r /var/log/kern.log ] && grep -q 'Booting paravirtualized kernel on Xen$' /var/log/kern.log; then
-					pstatus green YES 'Xen PV is not vulnerable'
-					xen_pv=1
+				elif [ $ret -eq 2 ]; then
+					pstatus yellow UNKNOWN "dmesg truncated, please reboot and relaunch this script"
 				else
 					pstatus blue NO
 				fi
