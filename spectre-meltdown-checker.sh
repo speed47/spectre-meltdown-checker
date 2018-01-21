@@ -34,6 +34,7 @@ show_usage()
 		--no-color			Don't use color codes
 		--verbose, -v			Increase verbosity level
 		--no-sysfs			Don't use the /sys interface even if present
+		--sysfs-only			Only use the /sys interface, don't run our own checks
 		--coreos			Special mode for CoreOS (use an ephemeral toolbox to inspect kernel)
 		--batch text			Produce machine readable output, this is the default if --batch is specified alone
 		--batch json			Produce JSON output formatted for Puppet, Ansible, Chef...
@@ -91,6 +92,7 @@ opt_variant2=0
 opt_variant3=0
 opt_allvariants=1
 opt_no_sysfs=0
+opt_sysfs_only=0
 opt_coreos=0
 
 global_critical=0
@@ -343,6 +345,9 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--no-sysfs" ]; then
 		opt_no_sysfs=1
 		shift
+	elif [ "$1" = "--sysfs-only" ]; then
+		opt_sysfs_only=1
+		shift
 	elif [ "$1" = "--coreos" ]; then
 		opt_coreos=1
 		shift
@@ -403,6 +408,11 @@ while [ -n "$1" ]; do
 done
 
 show_header
+
+if [ "$opt_no_sysfs" = 1 -a "$opt_sysfs_only" = 1 ]; then
+	_warn "Incompatible options specified (--no-sysfs and --sysfs-only), aborting"
+	exit 255
+fi
 
 # print status function
 pstatus()
@@ -771,7 +781,7 @@ _info
 sys_interface_check()
 {
 	[ "$opt_live" = 1 -a "$opt_no_sysfs" = 0 -a -r "$1" ] || return 1
-	_info_nol "* Checking whether we're safe according to the /sys interface: "
+	_info_nol "* Mitigated according to the /sys interface: "
 	if grep -qi '^not affected' "$1"; then
 		# Not affected
 		status=OK
@@ -805,7 +815,7 @@ check_variant1()
 	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spectre_v1"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
-	else
+	elif [ "$opt_sysfs_only" != 1 ]; then
 		# no /sys interface (or offline mode), fallback to our own ways
 		_info_nol "* Checking count of LFENCE opcodes in kernel: "
 		if [ -n "$vmlinux_err" ]; then
@@ -835,6 +845,10 @@ check_variant1()
 				fi
 			fi
 		fi
+	else
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
 	fi
 
 	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
@@ -860,7 +874,8 @@ check_variant2()
 	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
-	else
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
 		_info     "* Mitigation 1"
 		_info     "  * Hardware support (CPU microcode)"
 		_info     "    * Indirect Branch Restricted Speculation (IBRS)"
@@ -1109,13 +1124,22 @@ check_variant2()
 		# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
 		# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
 		# *AND* if the compiler is retpoline-compliant, so look for that symbol
-		if [ -n "$opt_map" ]; then
+		if [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
+			if grep -qw Minimal /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
+				pstatus red NO "kernel reports minimal retpoline compilation"
+			elif grep -qw Full /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
+				retpoline_compiler=1
+				pstatus green YES "kernel reports full retpoline compilation"
+			else
+				pstatus yellow UNKNOWN
+			fi
+		elif [ -n "$opt_map" ]; then
 			# look for the symbol
 			if grep -qw noretpoline_setup "$opt_map"; then
 				retpoline_compiler=1
 				pstatus green YES "noretpoline_setup symbol found in System.map"
 			else
-				pstatus red NO
+				pstatus yellow UNKNOWN
 			fi
 		elif [ -n "$vmlinux" ]; then
 			# look for the symbol
@@ -1125,7 +1149,7 @@ check_variant2()
 					retpoline_compiler=1
 					pstatus green YES "noretpoline_setup found in vmlinux symbols"
 				else
-					pstatus red NO
+					pstatus yellow UNKNOWN
 				fi
 			elif grep -q noretpoline_setup "$vmlinux"; then
 				# if we don't have nm, nevermind, the symbol name is long enough to not have
@@ -1133,40 +1157,46 @@ check_variant2()
 				retpoline_compiler=1
 				pstatus green YES "noretpoline_setup found in vmlinux"
 			else
-				pstatus red NO
+				pstatus yellow UNKNOWN
 			fi
 		else
 			pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
 		fi
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
 	fi
 
+	cve='CVE-2017-5715'
 	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
 	if [ "$sys_interface_available" = 0 ] && ! is_cpu_vulnerable 2; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus CVE-2017-5715 OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
-			pvulnstatus CVE-2017-5715 OK "retpoline mitigate the vulnerability"
+			pvulnstatus $cve OK "retpoline mitigates the vulnerability"
 		elif [ "$opt_live" = 1 ]; then
 			if [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ] && [ "$ibpb_enabled" = 1 ]; then
-				pvulnstatus CVE-2017-5715 OK "IBRS/IBPB are mitigating the vulnerability"
+				pvulnstatus $cve OK "IBRS/IBPB are mitigating the vulnerability"
 			elif [ "$ibpb_enabled" = 2 ]; then
-				pvulnstatus CVE-2017-5715 OK "Full IBPB is mitigating the vulnerability"
+				pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
 			else
-				pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+				pvulnstatus $cve VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
 			fi
 		else
 			if [ "$ibrs_supported" = 1 ]; then
-				pvulnstatus CVE-2017-5715 OK "offline mode: IBRS/IBPB will mitigate the vulnerability if enabled at runtime"
+				pvulnstatus $cve OK "offline mode: IBRS/IBPB will mitigate the vulnerability if enabled at runtime"
 			elif [ "$ibrs_can_tell" = 1 ]; then
-				pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+				pvulnstatus $cve VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
 			else
-				pvulnstatus CVE-2017-5715 UNK "offline mode: not enough information"
+				pvulnstatus $cve UNK "offline mode: not enough information"
 			fi
 		fi
 	else
-		pvulnstatus CVE-2017-5715 "$status" "$msg"
+		[ "$msg" = "Vulnerable" ] && msg="IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+		pvulnstatus $cve "$status" "$msg"
 	fi
 }
 
@@ -1182,7 +1212,7 @@ check_variant3()
 	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/meltdown"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
-	else
+	elif [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* Kernel supports Page Table Isolation (PTI): "
 		kpti_support=0
 		kpti_can_tell=0
@@ -1292,7 +1322,7 @@ check_variant3()
 
 		if [ "$opt_live" = 1 ]; then
 			# checking whether we're running under Xen PV 64 bits. If yes, we're not affected by variant3
-			_info_nol "* Checking if we're running under Xen PV (64 bits): "
+			_info_nol "* Running under Xen PV (64 bits): "
 			if [ "$(uname -m)" = "x86_64" ]; then
 				# XXX do we have a better way that relying on dmesg?
 				dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
@@ -1308,6 +1338,10 @@ check_variant3()
 				pstatus blue NO
 			fi
 		fi
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
 	fi
 
 	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
@@ -1335,6 +1369,7 @@ check_variant3()
 			fi
 		fi
 	else
+		[ "$msg" = "Vulnerable" ] && msg="PTI is needed to mitigate the vulnerability"
 		pvulnstatus $cve "$status" "$msg"
 	fi
 }
