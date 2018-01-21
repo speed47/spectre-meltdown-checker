@@ -406,10 +406,10 @@ pstatus()
 		_info_nol "$2"
 	else
 		case "$1" in
-			red)    col="\033[101m\033[30m";;
-			green)  col="\033[102m\033[30m";;
-			yellow) col="\033[103m\033[30m";;
-			blue)   col="\033[104m\033[30m";;
+			red)    col="\033[41m\033[30m";;
+			green)  col="\033[42m\033[30m";;
+			yellow) col="\033[43m\033[30m";;
+			blue)   col="\033[44m\033[30m";;
 			*)      col="";;
 		esac
 		_info_nol "$col $2 \033[0m"
