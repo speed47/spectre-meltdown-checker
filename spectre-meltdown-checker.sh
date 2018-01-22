@@ -1131,7 +1131,7 @@ check_variant2()
 				retpoline_compiler=1
 				pstatus green YES "kernel reports full retpoline compilation"
 			else
-				pstatus yellow UNKNOWN
+				[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
 			fi
 		elif [ -n "$opt_map" ]; then
 			# look for the symbol
@@ -1139,7 +1139,7 @@ check_variant2()
 				retpoline_compiler=1
 				pstatus green YES "noretpoline_setup symbol found in System.map"
 			else
-				pstatus yellow UNKNOWN
+				[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
 			fi
 		elif [ -n "$vmlinux" ]; then
 			# look for the symbol
@@ -1149,7 +1149,7 @@ check_variant2()
 					retpoline_compiler=1
 					pstatus green YES "noretpoline_setup found in vmlinux symbols"
 				else
-					pstatus yellow UNKNOWN
+					[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
 				fi
 			elif grep -q noretpoline_setup "$vmlinux"; then
 				# if we don't have nm, nevermind, the symbol name is long enough to not have
@@ -1157,10 +1157,10 @@ check_variant2()
 				retpoline_compiler=1
 				pstatus green YES "noretpoline_setup found in vmlinux"
 			else
-				pstatus yellow UNKNOWN
+				[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
 			fi
 		else
-			pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
+			[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN "couldn't find your kernel image or System.map" || pstatus red NO
 		fi
 
 		_info_nol "*   Retpoline enabled: "
