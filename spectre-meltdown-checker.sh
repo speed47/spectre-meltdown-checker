@@ -851,8 +851,7 @@ check_variant1()
 		status=UNK
 	fi
 
-	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
-	if [ "$sys_interface_available" = 0 ] && ! is_cpu_vulnerable 1; then
+	if ! is_cpu_vulnerable 1; then
 		# override status & msg in case CPU is not vulnerable after all
 		msg="your CPU vendor reported your CPU model as not vulnerable"
 		status=OK
@@ -1104,7 +1103,7 @@ check_variant2()
 		unload_cpuid
 
 		_info "* Mitigation 2"
-		_info_nol "*   Kernel compiled with retpoline option: "
+		_info_nol "  * Kernel compiled with retpoline option: "
 		# We check the RETPOLINE kernel options
 		if [ -r "$opt_config" ]; then
 			if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
@@ -1118,7 +1117,7 @@ check_variant2()
 			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 		fi
 
-		_info_nol "*   Kernel compiled with a retpoline-aware compiler: "
+		_info_nol "  * Kernel compiled with a retpoline-aware compiler: "
 		# Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
 		# For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
 		# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
@@ -1163,7 +1162,7 @@ check_variant2()
 			[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN "couldn't find your kernel image or System.map" || pstatus red NO
 		fi
 
-		_info_nol "*   Retpoline enabled: "
+		_info_nol "  * Retpoline enabled: "
 		if [ "$opt_live" = 1 ]; then
 			# kernel adds this flag when retpoline is supported and enabled,
 			# regardless of the fact that it's minimal / full and generic / amd
@@ -1183,8 +1182,7 @@ check_variant2()
 	fi
 
 	cve='CVE-2017-5715'
-	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
-	if [ "$sys_interface_available" = 0 ] && ! is_cpu_vulnerable 2; then
+	if ! is_cpu_vulnerable 2; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
@@ -1359,9 +1357,8 @@ check_variant3()
 		status=UNK
 	fi
 
-	# if we have the /sys interface, don't even check is_cpu_vulnerable ourselves, the kernel already does it
 	cve='CVE-2017-5754'
-	if [ "$sys_interface_available" = 0 ] && ! is_cpu_vulnerable 3; then
+	if ! is_cpu_vulnerable 3; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
