@@ -1226,7 +1226,8 @@ check_variant3()
 	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/meltdown"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
-	elif [ "$opt_sysfs_only" != 1 ]; then
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* Kernel supports Page Table Isolation (PTI): "
 		kpti_support=0
 		kpti_can_tell=0
