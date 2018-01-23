@@ -719,14 +719,22 @@ else
 	_verbose "Will use no vmlinux image (accuracy might be reduced)"
 	bad_accuracy=1
 fi
-if [ -n "$dumped_config" ]; then
-	_verbose "Will use kconfig \033[35m/proc/config.gz\033[0m"
+
+if [ -n "$opt_config" ] && ! grep -q '^CONFIG_' "$opt_config"; then
+	# given file is invalid!
+	_warn "The kernel config file seems invalid, was expecting a plain-text file, ignoring it!"
+	opt_config=''
+fi
+
+if [ -n "$dumped_config" ] && [ -n "$opt_config" ]; then
+	_verbose "Will use kconfig \033[35m/proc/config.gz (decompressed)\033[0m"
 elif [ -n "$opt_config" ]; then
 	_verbose "Will use kconfig \033[35m$opt_config\033[0m"
 else
 	_verbose "Will use no kconfig (accuracy might be reduced)"
 	bad_accuracy=1
 fi
+
 if [ -n "$opt_map" ]; then
 	_verbose "Will use System.map file \033[35m$opt_map\033[0m"
 else
@@ -1256,7 +1264,7 @@ _info "A false sense of security is worse than no security at all, see --disclai
 umount_debugfs
 
 # cleanup the temp decompressed config
-[ -n "$dumped_config" ] && rm -f "$dumped_config"
+[ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
 
 if [ "$opt_batch" = 1 -a "$opt_batch_format" = "nrpe" ]; then
 	if [ ! -z "$nrpe_vuln" ]; then
