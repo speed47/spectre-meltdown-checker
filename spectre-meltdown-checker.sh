@@ -198,7 +198,7 @@ is_cpu_vulnerable()
 	variant2=''
 	variant3=''
 	# we also set a friendly name for the CPU to be used in the script if needed
-	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1)
+	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1 | sed -e 's/^ *//')
 
 	if grep -q GenuineIntel /proc/cpuinfo; then
 		# Intel
@@ -661,7 +661,8 @@ if [ "$opt_live" = 1 ]; then
 		_warn "To run it as root, you can try the following command: sudo $0"
 		_warn
 	fi
-	_info "Checking for vulnerabilities against running kernel \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
+	_info "Checking for vulnerabilities on current system"
+	_info "Kernel is \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
 	# call is_cpu_vulnerable to fill the cpu_friendly_name var
 	is_cpu_vulnerable 1
 	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
@@ -1319,13 +1320,13 @@ check_variant3()
 		# https://groups.google.com/forum/m/#!topic/mechanical-sympathy/L9mHTbeQLNU
 		if [ "$opt_verbose" -ge 2 ]; then
 			_info "* Performance impact if PTI is enabled"
-			_info_nol "*   CPU supports PCID: "
+			_info_nol "  * CPU supports PCID: "
 			if grep ^flags /proc/cpuinfo | grep -qw pcid; then
 				pstatus green YES 'performance degradation with PTI will be limited'
 			else
 				pstatus blue NO 'no security impact but performance will be degraded with PTI'
 			fi
-			_info_nol "*   CPU supports INVPCID: "
+			_info_nol "  * CPU supports INVPCID: "
 			if grep ^flags /proc/cpuinfo | grep -qw invpcid; then
 				pstatus green YES 'performance degradation with PTI will be limited'
 			else
