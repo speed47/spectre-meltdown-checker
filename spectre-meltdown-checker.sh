@@ -928,7 +928,9 @@ check_variant2()
 		fi
 
 		_info_nol "*   Kernel support for IBRS: "
+		ibrs_can_tell=0
 		if [ "$opt_live" = 1 ]; then
+			ibrs_can_tell=1
 			mount_debugfs
 			for ibrs_file in \
 				/sys/kernel/debug/ibrs_enabled \
@@ -962,6 +964,7 @@ check_variant2()
 			fi
 		fi
 		if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
+			ibrs_can_tell=1
 			if grep -q spec_ctrl "$opt_map"; then
 				pstatus green YES
 				ibrs_supported=1
@@ -969,7 +972,12 @@ check_variant2()
 			fi
 		fi
 		if [ "$ibrs_supported" != 1 ]; then
-			pstatus red NO
+			if [ "$ibrs_can_tell" = 1 ]; then
+				pstatus red NO
+			else
+				# if we're in offline mode without System.map, we can't really know
+				pstatus yellow UNKNOWN "in offline mode, we need System.map to be able to tell"
+			fi
 		fi
 
 		_info_nol "*   IBRS enabled for Kernel space: "
@@ -1068,8 +1076,10 @@ check_variant2()
 		else
 			if [ "$ibrs_supported" = 1 ]; then
 				pvulnstatus CVE-2017-5715 OK "offline mode: IBRS will mitigate the vulnerability if enabled at runtime"
-			else
+			elif [ "$ibrs_can_tell" = 1 ]; then
 				pvulnstatus CVE-2017-5715 VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+			else
+				pvulnstatus CVE-2017-5715 UNK "offline mode: not enough information"
 			fi
 		fi
 	else
@@ -1235,8 +1245,10 @@ check_variant3()
 		else
 			if [ "$kpti_support" = 1 ]; then
 				pvulnstatus $cve OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
-			else
+			elif [ "$kpti_can_tell" = 1 ]; then
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+			else
+				pvulnstatus $cve UNK "offline mode: not enough information"
 			fi
 		fi
 	else
