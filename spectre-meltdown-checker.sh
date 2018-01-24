@@ -99,25 +99,21 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=""
 
-echo_cmd=''
+# find a sane `echo` command
+# we'll try to avoid using shell builtins that might not take options
+if which echo >/dev/null 2>&1; then
+	echo_cmd=`which echo`
+else
+	[ -x /bin/echo        ] && echo_cmd=/bin/echo
+	[ -x /system/bin/echo ] && echo_cmd=/system/bin/echo
+fi
+# still empty ? fallback to builtin
+[ -z "$echo_cmd" ] && echo_cmd=echo
 __echo()
 {
 	opt="$1"
 	shift
 	_msg="$@"
-
-	if [ -z "$echo_cmd" ]; then
-		# find a sane `echo` command
-		# we'll try to avoid using shell builtins that might not take options
-		if which echo >/dev/null 2>&1; then
-			echo_cmd=`which echo`
-		else
-			[ -x /bin/echo        ] && echo_cmd=/bin/echo
-			[ -x /system/bin/echo ] && echo_cmd=/system/bin/echo
-		fi
-		# still empty ? fallback to builtin
-		[ -z "$echo_cmd" ] && echo_cmd=echo
-	fi
 
 	if [ "$opt_no_color" = 1 ] ; then
 		# strip ANSI color codes
