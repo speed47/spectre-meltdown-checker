@@ -1337,29 +1337,37 @@ check_variant3()
 				pstatus blue NO 'no security impact but performance will be degraded with PTI'
 			fi
 		fi
-
-		if [ "$opt_live" = 1 ]; then
-			# checking whether we're running under Xen PV 64 bits. If yes, we're not affected by variant3
-			_info_nol "* Running under Xen PV (64 bits): "
-			if [ "$(uname -m)" = "x86_64" ]; then
-				# XXX do we have a better way that relying on dmesg?
-				dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
-				if [ $ret -eq 0 ]; then
-					pstatus green YES 'Xen PV is not vulnerable'
-					xen_pv=1
-				elif [ $ret -eq 2 ]; then
-					pstatus yellow UNKNOWN "dmesg truncated, please reboot and relaunch this script"
-				else
-					pstatus blue NO
-				fi
-			else
-				pstatus blue NO
-			fi
-		fi
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
 		status=UNK
+	fi
+
+
+	# Test if the current host is a Xen PV Dom0 / DomU
+	if [ -d "/proc/xen" ]; then
+		# XXX do we have a better way that relying on dmesg?
+		dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
+		if [ $ret -eq 2 ]; then
+			_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
+		elif [ $ret -eq 0 ]; then
+			if [ -e /proc/xen/capabilities ] && grep -q "control_d" /proc/xen/capabilities; then
+				xen_pv_domo=1
+			else
+				xen_pv_domu=1
+			fi
+		fi
+	fi
+
+	if [ "$opt_live" = 1 ]; then
+		# checking whether we're running under Xen PV 64 bits. If yes, we are affected by variant3
+		# (unless we are a Dom0)
+		_info_nol "* Running as a Xen PV DomU: "
+		if [ "$xen_pv_domu" = 1 ]; then
+			pstatus red YES
+		else
+			pstatus green NO
+		fi
 	fi
 
 	cve='CVE-2017-5754'
@@ -1371,8 +1379,10 @@ check_variant3()
 		if [ "$opt_live" = 1 ]; then
 			if [ "$kpti_enabled" = 1 ]; then
 				pvulnstatus $cve OK "PTI mitigates the vulnerability"
-			elif [ "$xen_pv" = 1 ]; then
-				pvulnstatus $cve OK "Xen PV 64 bits is not vulnerable"
+			elif [ "$xen_pv_domo" = 1 ]; then
+				pvulnstatus $cve OK "Xen Dom0s are safe and do not require PTI"
+			elif [ "$xen_pv_domu" = 1 ]; then
+				pvulnstatus $cve VULN "Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM or PVH mode"
 			else
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
 			fi
@@ -1386,9 +1396,26 @@ check_variant3()
 			fi
 		fi
 	else
-		[ "$msg" = "Vulnerable" ] && msg="PTI is needed to mitigate the vulnerability"
+		if [ "$xen_pv_domo" = 1 ]; then
+			msg="Xen Dom0s are safe and do not require PTI"
+			status="OK"
+		elif [ "$xen_pv_domu" = 1 ]; then
+			msg="Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM or PVH mode"
+			status="VULN"
+		elif [ "$msg" = "Vulnerable" ]; then
+			msg="PTI is needed to mitigate the vulnerability"
+		fi
 		pvulnstatus $cve "$status" "$msg"
 	fi
+
+	# Warn the user about XSA-254 recommended mitigations
+	if [ "$xen_pv_domo" = 1 ]; then
+                _warn
+                _warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
+                _warn "in HVM, PVHVM or PVH mode to prevent any guest-to-host / host-to-guest attacks."
+                _warn
+                _warn "See https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ and XSA-254 for details."
+        fi
 }
 
 # now run the checks the user asked for
