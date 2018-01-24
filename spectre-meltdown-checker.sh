@@ -1011,6 +1011,7 @@ check_variant2()
 						ibpb_enabled=$(cat "$dir/ibpb_enabled" 2>/dev/null)
 						_debug "ibpb: found $dir/ibpb_enabled=$ibpb_enabled"
 					else
+						ibpb_enabled=-1
 						_debug "ibpb: no ibpb_enabled file in $dir"
 					fi
 					break
@@ -1193,6 +1194,9 @@ check_variant2()
 		elif [ "$opt_live" = 1 ]; then
 			if [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ] && [ "$ibpb_enabled" = 1 ]; then
 				pvulnstatus $cve OK "IBRS/IBPB are mitigating the vulnerability"
+			elif [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ] && [ "$ibpb_enabled" = -1 ]; then
+				# IBPB doesn't seem here on this kernel
+				pvulnstatus $cve OK "IBRS is mitigating the vulnerability"
 			elif [ "$ibpb_enabled" = 2 ]; then
 				pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
 			else
