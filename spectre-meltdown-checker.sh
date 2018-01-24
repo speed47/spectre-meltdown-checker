@@ -917,9 +917,9 @@ check_variant2()
 			# getting high byte of edx on leaf7 of cpuinfo in decimal
 			edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
 			_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
-			edx_bit26=$(( edx_hb & 8 ))
+			edx_bit26=$(( edx_hb & 4 ))
 			_debug "cpuid: edx_bit26=$edx_bit26"
-			if [ "$edx_bit26" -eq 8 ]; then
+			if [ "$edx_bit26" -eq 4 ]; then
 				pstatus green YES "SPEC_CTRL feature bit"
 				cpuid_spec_ctrl=1
 			else
