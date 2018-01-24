@@ -885,6 +885,7 @@ check_variant2()
 			load_msr
 		fi
 		if [ ! -e /dev/cpu/0/msr ]; then
+			spec_ctrl_msr=-1
 			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
 		else
 			# the new MSR 'SPEC_CTRL' is at offset 0x48
@@ -893,8 +894,10 @@ check_variant2()
 			# skip=9 because 8*9=72=0x48
 			dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
 			if [ $? -eq 0 ]; then
+				spec_ctrl_msr=1
 				pstatus green YES
 			else
+				spec_ctrl_msr=0
 				pstatus red NO
 			fi
 		fi
@@ -982,6 +985,41 @@ check_variant2()
 				cpuid_ibpb=1
 			elif [ "$cpuid_spec_ctrl" = 1 ]; then
 				pstatus green YES "SPEC_CTRL feature bit"
+			else
+				pstatus red NO
+			fi
+		fi
+
+		# STIBP
+		_info     "    * Single Thread Indirect Branch Predictors (STIBP)"
+		_info_nol "      * SPEC_CTRL MSR is available: "
+		if [ "$spec_ctrl_msr" = 1 ]; then
+			pstatus green YES
+		elif [ "$spec_ctrl_msr" = 0 ]; then
+			pstatus red NO
+		else
+			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+		fi
+
+		_info_nol "      * CPU indicates STIBP capability: "
+		if [ ! -e /dev/cpu/0/cpuid ]; then
+			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuidr, is cpuid support enabled in your kernel?"
+		else
+			# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
+			if [ "$opt_verbose" -ge 3 ]; then
+				dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+				_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
+				_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
+				_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+			fi
+			# getting high byte of edx on leaf7 of cpuinfo in decimal
+			edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
+			_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
+			edx_bit27=$(( edx_hb & 8 ))
+			_debug "cpuid: edx_bit27=$edx_bit27"
+			if [ "$edx_bit27" -eq 8 ]; then
+				pstatus green YES "STIBP feature bit"
+				cpuid_stibp=1
 			else
 				pstatus red NO
 			fi
