@@ -199,6 +199,8 @@ is_cpu_vulnerable()
 	variant3=''
 	# we also set a friendly name for the CPU to be used in the script if needed
 	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1 | sed -e 's/^ *//')
+	# variant 0 is just for us to fill the cpu_friendly_name var
+	[ "$1" = 0 ] && return 0
 
 	if grep -q GenuineIntel /proc/cpuinfo; then
 		# Intel
@@ -216,6 +218,13 @@ is_cpu_vulnerable()
 			variant1=vuln
 			[ -z "$variant2" ] && variant2=immune
 			[ -z "$variant3" ] && variant3=immune
+		fi
+		if [ "$capabilities_rdcl_no" = 1 ]; then
+			# capability bit for future Intel processor that will explicitly state
+			# that they're not vulnerable to Meltdown
+			# this var is set in check_cpu()
+			[ -z "$variant3" ] && variant3=immune
+			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown"
 		fi
 	elif grep -q AuthenticAMD /proc/cpuinfo; then
 		# AMD revised their statement about variant2 => vulnerable
@@ -664,7 +673,7 @@ if [ "$opt_live" = 1 ]; then
 	_info "Checking for vulnerabilities on current system"
 	_info "Kernel is \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
 	# call is_cpu_vulnerable to fill the cpu_friendly_name var
-	is_cpu_vulnerable 1
+	is_cpu_vulnerable 0
 	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
 	# try to find the image of the current running kernel
@@ -804,6 +813,230 @@ sys_interface_check()
 	return 0
 }
 
+check_cpu()
+{
+	_info "\033[1;34mHardware check\033[0m"
+
+	_info     "* Hardware support (CPU microcode) for mitigation techniques"
+	_info     "  * Indirect Branch Restricted Speculation (IBRS)"
+	_info_nol "    * SPEC_CTRL MSR is available: "
+	if [ ! -e /dev/cpu/0/msr ]; then
+		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+		load_msr
+	fi
+	if [ ! -e /dev/cpu/0/msr ]; then
+		spec_ctrl_msr=-1
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+	else
+		# the new MSR 'SPEC_CTRL' is at offset 0x48
+		# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
+		# if we get a read error, the MSR is not there. bs has to be 8 for msr
+		# skip=9 because 8*9=72=0x48
+		dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
+		if [ $? -eq 0 ]; then
+			spec_ctrl_msr=1
+			pstatus green YES
+		else
+			spec_ctrl_msr=0
+			pstatus red NO
+		fi
+	fi
+
+	_info_nol "    * CPU indicates IBRS capability: "
+	if [ ! -e /dev/cpu/0/cpuid ]; then
+		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+		load_cpuid
+	fi
+	if [ ! -e /dev/cpu/0/cpuid ]; then
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+	else
+		# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
+		if [ "$opt_verbose" -ge 3 ]; then
+			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
+			_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+		fi
+		# getting high byte of edx on leaf7 of cpuinfo in decimal
+		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
+		_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
+		edx_bit26=$(( edx_hb & 4 ))
+		_debug "cpuid: edx_bit26=$edx_bit26"
+		if [ "$edx_bit26" -eq 4 ]; then
+			pstatus green YES "SPEC_CTRL feature bit"
+			cpuid_spec_ctrl=1
+		else
+			pstatus red NO
+		fi
+	fi
+
+	# hardware support according to kernel
+	if [ "$opt_verbose" -ge 2 ]; then
+		# the spec_ctrl flag in cpuinfo is set if and only if the kernel sees
+		# that the spec_ctrl cpuinfo bit set. we already check that ourselves above
+		# but let's check it anyway (in verbose mode only)
+		_verbose_nol "    * Kernel has set the spec_ctrl flag in cpuinfo: "
+		if [ "$opt_live" = 1 ]; then
+			if grep ^flags /proc/cpuinfo | grep -qw spec_ctrl; then
+				pstatus green YES
+			else
+				pstatus blue NO
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+	fi
+
+	# IBPB
+	_info     "  * Indirect Branch Prediction Barrier (IBPB)"
+	_info_nol "    * PRED_CMD MSR is available: "
+	if [ ! -e /dev/cpu/0/msr ]; then
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+	else
+		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
+		# here we use dd, it's the same as using 'wrmsr 0x49 0' but without needing the wrmsr tool
+		# if we get a write error, the MSR is not there
+		$echo_cmd -ne "\0\0\0\0\0\0\0\0" | dd of=/dev/cpu/0/msr bs=8 count=1 seek=73 oflag=seek_bytes 2>/dev/null
+		if [ $? -eq 0 ]; then
+			pstatus green YES
+		else
+			pstatus red NO
+		fi
+	fi
+
+	_info_nol "    * CPU indicates IBPB capability: "
+	if [ ! -e /dev/cpu/0/cpuid ]; then
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+	else
+		# CPUID EAX=0x80000008, ECX=0x00 return EBX[12] indicates support for just IBPB.
+		if [ "$opt_verbose" -ge 3 ]; then
+			dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+			_debug "cpuid: reading leaf80000008 of cpuid on cpu0, ret=$?"
+			_debug "cpuid: leaf80000008 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf80000008 ebx 3rd byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -x -A n)
+		fi
+		# getting high byte of edx on leaf7 of cpuinfo in decimal
+		ebx_b3=$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
+		_debug "cpuid: leaf80000008 ebx 3rd byte: $ebx_b3 (decimal)"
+		ebx_bit12=$(( ebx_b3 & 16 ))
+		_debug "cpuid: ebx_bit12=$ebx_bit12"
+		if [ "$ebx_bit12" -eq 16 ]; then
+			pstatus green YES "IBPB_SUPPORT feature bit"
+			cpuid_ibpb=1
+		elif [ "$cpuid_spec_ctrl" = 1 ]; then
+			pstatus green YES "SPEC_CTRL feature bit"
+		else
+			pstatus red NO
+		fi
+	fi
+
+	# STIBP
+	_info     "  * Single Thread Indirect Branch Predictors (STIBP)"
+	_info_nol "    * SPEC_CTRL MSR is available: "
+	if [ "$spec_ctrl_msr" = 1 ]; then
+		pstatus green YES
+	elif [ "$spec_ctrl_msr" = 0 ]; then
+		pstatus red NO
+	else
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+	fi
+
+	_info_nol "    * CPU indicates STIBP capability: "
+	if [ ! -e /dev/cpu/0/cpuid ]; then
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+	else
+		# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
+		if [ "$opt_verbose" -ge 3 ]; then
+			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
+			_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+		fi
+		# getting high byte of edx on leaf7 of cpuinfo in decimal
+		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
+		_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
+		edx_bit27=$(( edx_hb & 8 ))
+		_debug "cpuid: edx_bit27=$edx_bit27"
+		if [ "$edx_bit27" -eq 8 ]; then
+			pstatus green YES
+			cpuid_stibp=1
+		else
+			pstatus red NO
+		fi
+	fi
+
+	_info     "  * Enhanced IBRS (IBRS_ALL)"
+	_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
+	if [ ! -e /dev/cpu/0/cpuid ]; then
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+	else
+		# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
+		if [ "$opt_verbose" -ge 3 ]; then
+			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
+			_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+		fi
+		# getting high byte of edx on leaf7 of cpuinfo in decimal
+		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
+		_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
+		edx_bit29=$(( edx_hb & 32 ))
+		_debug "cpuid: edx_bit29=$edx_bit29"
+		if [ "$edx_bit27" -eq 32 ]; then
+			pstatus green YES
+			cpuid_arch_capabilities=1
+		else
+			pstatus red NO
+		fi
+	fi
+
+	_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
+	if [ "$cpuid_arch_capabilities" != 1 ]; then
+		pstatus red NO
+	elif [ ! -e /dev/cpu/0/msr ]; then
+		spec_ctrl_msr=-1
+		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+	else
+		# the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
+		# here we use dd, it's the same as using 'rdmsr 0x10a' but without needing the rdmsr tool
+		# if we get a read error, the MSR is not there. bs has to be 8 for msr
+		capabilities=$(dd if=/dev/cpu/0/msr bs=8 count=1 skip=266 iflag=skip_bytes 2>/dev/null | od -t u1 -A n | awk '{print $8}')
+		if [ $? -eq 0 ]; then
+			_debug "capabilities MSR lower byte is $capabilities (decimal)"
+			capabilities_rdcl_no=0
+			[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
+			[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
+			_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all"
+			if [ "$capabilities_ibrs_all" = 1 ]; then
+				pstatus green YES
+			else
+				pstatus red NO
+			fi
+		else
+			pstatus yellow UNKNOWN
+		fi
+	fi
+
+	_info_nol "  * CPU explicitly indicates not being vulnerable to Meltdown (RDCL_NO): "
+	if [ "$capabilities_rdcl_no" = 1 ]; then
+		pstatus green YES
+	else
+		pstatus blue NO
+	fi
+
+	_info     "* CPU vulnerability to the three speculative execution attacks variants"
+	for v in 1 2 3; do
+		_info_nol "  * Vulnerable to Variant $v: "
+		if is_cpu_vulnerable $v; then
+			pstatus red YES
+		else
+			pstatus green NO
+		fi
+	done
+
+	_info
+}
+
 ###################
 # SPECTRE VARIANT 1
 check_variant1()
@@ -877,154 +1110,6 @@ check_variant2()
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info     "* Mitigation 1"
-		_info     "  * Hardware support (CPU microcode)"
-		_info     "    * Indirect Branch Restricted Speculation (IBRS)"
-		_info_nol "      * SPEC_CTRL MSR is available: "
-		if [ ! -e /dev/cpu/0/msr ]; then
-			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-			load_msr
-		fi
-		if [ ! -e /dev/cpu/0/msr ]; then
-			spec_ctrl_msr=-1
-			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
-		else
-			# the new MSR 'SPEC_CTRL' is at offset 0x48
-			# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
-			# if we get a read error, the MSR is not there. bs has to be 8 for msr
-			# skip=9 because 8*9=72=0x48
-			dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
-			if [ $? -eq 0 ]; then
-				spec_ctrl_msr=1
-				pstatus green YES
-			else
-				spec_ctrl_msr=0
-				pstatus red NO
-			fi
-		fi
-
-		_info_nol "      * CPU indicates IBRS capability: "
-		if [ ! -e /dev/cpu/0/cpuid ]; then
-			# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-			load_cpuid
-		fi
-		if [ ! -e /dev/cpu/0/cpuid ]; then
-			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
-		else
-			# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
-			if [ "$opt_verbose" -ge 3 ]; then
-				dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-				_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-				_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
-				_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
-			fi
-			# getting high byte of edx on leaf7 of cpuinfo in decimal
-			edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
-			_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
-			edx_bit26=$(( edx_hb & 4 ))
-			_debug "cpuid: edx_bit26=$edx_bit26"
-			if [ "$edx_bit26" -eq 4 ]; then
-				pstatus green YES "SPEC_CTRL feature bit"
-				cpuid_spec_ctrl=1
-			else
-				pstatus red NO
-			fi
-		fi
-
-		# hardware support according to kernel
-		if [ "$opt_verbose" -ge 2 ]; then
-			# the spec_ctrl flag in cpuinfo is set if and only if the kernel sees
-			# that the spec_ctrl cpuinfo bit set. we already check that ourselves above
-			# but let's check it anyway (in verbose mode only)
-			_verbose_nol "      * Kernel has set the spec_ctrl flag in cpuinfo: "
-			if [ "$opt_live" = 1 ]; then
-				if grep ^flags /proc/cpuinfo | grep -qw spec_ctrl; then
-					pstatus green YES
-				else
-					pstatus blue NO
-				fi
-			else
-				pstatus blue N/A "not testable in offline mode"
-			fi
-		fi
-
-		# IBPB
-		_info     "    * Indirect Branch Prediction Barrier (IBPB)"
-		_info_nol "      * PRED_CMD MSR is available: "
-		if [ ! -e /dev/cpu/0/msr ]; then
-			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
-		else
-			# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
-			# here we use dd, it's the same as using 'wrmsr 0x49 0' but without needing the wrmsr tool
-			# if we get a write error, the MSR is not there
-			$echo_cmd -ne "\0\0\0\0\0\0\0\0" | dd of=/dev/cpu/0/msr bs=8 count=1 seek=73 oflag=seek_bytes 2>/dev/null
-			if [ $? -eq 0 ]; then
-				pstatus green YES
-			else
-				pstatus red NO
-			fi
-		fi
-
-		_info_nol "      * CPU indicates IBPB capability: "
-		if [ ! -e /dev/cpu/0/cpuid ]; then
-			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuidr, is cpuid support enabled in your kernel?"
-		else
-			# CPUID EAX=0x80000008, ECX=0x00 return EBX[12] indicates support for just IBPB.
-			if [ "$opt_verbose" -ge 3 ]; then
-				dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-				_debug "cpuid: reading leaf80000008 of cpuid on cpu0, ret=$?"
-				_debug "cpuid: leaf80000008 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
-				_debug "cpuid: leaf80000008 ebx 3rd byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -x -A n)
-			fi
-			# getting high byte of edx on leaf7 of cpuinfo in decimal
-			ebx_b3=$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
-			_debug "cpuid: leaf80000008 ebx 3rd byte: $ebx_b3 (decimal)"
-			ebx_bit12=$(( ebx_b3 & 16 ))
-			_debug "cpuid: ebx_bit12=$ebx_bit12"
-			if [ "$ebx_bit12" -eq 16 ]; then
-				pstatus green YES "IBPB_SUPPORT feature bit"
-				cpuid_ibpb=1
-			elif [ "$cpuid_spec_ctrl" = 1 ]; then
-				pstatus green YES "SPEC_CTRL feature bit"
-			else
-				pstatus red NO
-			fi
-		fi
-
-		# STIBP
-		_info     "    * Single Thread Indirect Branch Predictors (STIBP)"
-		_info_nol "      * SPEC_CTRL MSR is available: "
-		if [ "$spec_ctrl_msr" = 1 ]; then
-			pstatus green YES
-		elif [ "$spec_ctrl_msr" = 0 ]; then
-			pstatus red NO
-		else
-			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
-		fi
-
-		_info_nol "      * CPU indicates STIBP capability: "
-		if [ ! -e /dev/cpu/0/cpuid ]; then
-			pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuidr, is cpuid support enabled in your kernel?"
-		else
-			# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
-			if [ "$opt_verbose" -ge 3 ]; then
-				dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-				_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-				_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
-				_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
-			fi
-			# getting high byte of edx on leaf7 of cpuinfo in decimal
-			edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
-			_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
-			edx_bit27=$(( edx_hb & 8 ))
-			_debug "cpuid: edx_bit27=$edx_bit27"
-			if [ "$edx_bit27" -eq 8 ]; then
-				pstatus green YES "STIBP feature bit"
-				cpuid_stibp=1
-			else
-				pstatus red NO
-			fi
-		fi
-
 		_info_nol "  * Kernel is compiled with IBRS/IBPB support: "
 		ibrs_can_tell=0
 
@@ -1429,6 +1514,7 @@ check_variant3()
 	fi
 }
 
+check_cpu
 # now run the checks the user asked for
 if [ "$opt_variant1" = 1 -o "$opt_allvariants" = 1 ]; then
 	check_variant1
