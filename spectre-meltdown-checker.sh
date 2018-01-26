@@ -1059,6 +1059,8 @@ check_cpu()
 	if [ "$cpuid_arch_capabilities" = -1 ]; then
 		pstatus yellow UNKNOWN
 	elif [ "$cpuid_arch_capabilities" != 1 ]; then
+		capabilities_rdcl_no=0
+		capabilities_ibrs_all=0
 		pstatus red NO
 	elif [ ! -e /dev/cpu/0/msr ]; then
 		spec_ctrl_msr=-1
@@ -1068,10 +1070,10 @@ check_cpu()
 		# here we use dd, it's the same as using 'rdmsr 0x10a' but without needing the rdmsr tool
 		# if we get a read error, the MSR is not there. bs has to be 8 for msr
 		capabilities=$(dd if=/dev/cpu/0/msr bs=8 count=1 skip=266 iflag=skip_bytes 2>/dev/null | od -t u1 -A n | awk '{print $8}')
+		capabilities_rdcl_no=0
+		capabilities_ibrs_all=0
 		if [ $? -eq 0 ]; then
 			_debug "capabilities MSR lower byte is $capabilities (decimal)"
-			capabilities_rdcl_no=0
-			capabilities_ibrs_all=0
 			[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 			[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
 			_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all"
