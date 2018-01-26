@@ -10,7 +10,17 @@ The script will do its best to detect mitigations, including backported non-vani
 
 ## Example of script output
 
-![checker](https://framapic.org/6O4v4AAwMenv/M6J4CFWwsB3z.png)
+- Intel Haswell CPU running under Ubuntu 16.04 LTS
+
+![haswell](https://framapic.org/1kWmNwE6ll0p/ayTRX9JRlHJ7.png)
+
+- AMD Ryzen running under OpenSUSE Tumbleweed
+
+![ryzen](https://framapic.org/TkWbuh421YQR/6MAGUP3lL6Ne.png)
+
+- Batch mode (JSON flavor)
+
+![batch](https://framapic.org/HEcWFPrLewbs/om1LdufspWTJ.png)
 
 ## Quick summary of the CVEs
 
