@@ -963,6 +963,7 @@ check_cpu()
 
 	_info     "  * Enhanced IBRS (IBRS_ALL)"
 	_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
+	cpuid_arch_capabilities=-1
 	if [ ! -e /dev/cpu/0/cpuid ]; then
 		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
 	else
@@ -983,11 +984,16 @@ check_cpu()
 			cpuid_arch_capabilities=1
 		else
 			pstatus red NO
+			cpuid_arch_capabilities=0
 		fi
 	fi
 
 	_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
-	if [ "$cpuid_arch_capabilities" != 1 ]; then
+	capabilities_rdcl_no=-1
+	capabilities_ibrs_all=-1
+	if [ "$cpuid_arch_capabilities" = -1 ]; then
+		pstatus yellow UNKNOWN
+	elif [ "$cpuid_arch_capabilities" != 1 ]; then
 		pstatus red NO
 	elif [ ! -e /dev/cpu/0/msr ]; then
 		spec_ctrl_msr=-1
@@ -1000,6 +1006,7 @@ check_cpu()
 		if [ $? -eq 0 ]; then
 			_debug "capabilities MSR lower byte is $capabilities (decimal)"
 			capabilities_rdcl_no=0
+			capabilities_ibrs_all=0
 			[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 			[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
 			_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all"
@@ -1014,7 +1021,9 @@ check_cpu()
 	fi
 
 	_info_nol "  * CPU explicitly indicates not being vulnerable to Meltdown (RDCL_NO): "
-	if [ "$capabilities_rdcl_no" = 1 ]; then
+	if [ "$capabilities_rdcl_no" = -1 ]; then
+		pstatus yellow UNKNOWN
+	elif [ "$capabilities_rdcl_no" = 1 ]; then
 		pstatus green YES
 	else
 		pstatus blue NO
@@ -1529,12 +1538,12 @@ check_variant3()
 
 	# Warn the user about XSA-254 recommended mitigations
 	if [ "$xen_pv_domo" = 1 ]; then
-                _warn
-                _warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
-                _warn "in HVM, PVHVM or PVH mode to prevent any guest-to-host / host-to-guest attacks."
-                _warn
-                _warn "See https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ and XSA-254 for details."
-        fi
+		_warn
+		_warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
+		_warn "in HVM, PVHVM or PVH mode to prevent any guest-to-host / host-to-guest attacks."
+		_warn
+		_warn "See https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ and XSA-254 for details."
+	fi
 }
 
 check_cpu
