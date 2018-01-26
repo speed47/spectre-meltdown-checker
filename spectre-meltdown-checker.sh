@@ -625,6 +625,71 @@ is_coreos()
 	return 1
 }
 
+is_ucode_blacklisted()
+{
+	# if it's not an Intel, don't bother: it's not blacklisted
+	grep -q GenuineIntel /proc/cpuinfo || return 1
+	# it also needs to be family=6
+	grep -qE '^cpu family.+ 6$' /proc/cpuinfo || return 1
+	cpu_model=$(   grep '^model'    /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
+	cpu_stepping=$(grep '^stepping' /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
+	cpu_ucode=$(grep '^microcode' /proc/cpuinfo | awk '{print $3}' | head -1)
+	# now, check each known bad microcode
+	# source: http://lkml.iu.edu/hypermail/linux/kernel/1801.2/06349.html
+	INTEL_FAM6_KABYLAKE_DESKTOP=158
+	INTEL_FAM6_KABYLAKE_MOBILE=142
+	INTEL_FAM6_SKYLAKE_X=85
+	INTEL_FAM6_SKYLAKE_MOBILE=78
+	INTEL_FAM6_SKYLAKE_DESKTOP=94
+	INTEL_FAM6_BROADWELL_CORE=61
+	INTEL_FAM6_BROADWELL_GT3E=71
+	INTEL_FAM6_HASWELL_ULT=69
+	INTEL_FAM6_HASWELL_GT3E=70
+	INTEL_FAM6_HASWELL_CORE=60
+	INTEL_FAM6_IVYBRIDGE_X=62
+	INTEL_FAM6_HASWELL_X=63
+	INTEL_FAM6_BROADWELL_XEON_D=86
+	INTEL_FAM6_BROADWELL_GT3E=71
+	INTEL_FAM6_BROADWELL_X=79
+	# model,stepping,microcode
+	for tuple in \
+		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0B,0x80      \
+		$INTEL_FAM6_KABYLAKE_MOBILE,0x0A,0x80       \
+		$INTEL_FAM6_KABYLAKE_MOBILE,0x09,0x80       \
+		$INTEL_FAM6_KABYLAKE_DESKTOP,0x09,0x80      \
+		$INTEL_FAM6_SKYLAKE_X,0x04,0x0200003C       \
+		$INTEL_FAM6_SKYLAKE_MOBILE,0x03,0x000000C2  \
+		$INTEL_FAM6_SKYLAKE_DESKTOP,0x03,0x000000C2 \
+		$INTEL_FAM6_BROADWELL_CORE,0x04,0x28        \
+		$INTEL_FAM6_BROADWELL_GT3E,0x01,0x0000001B  \
+		$INTEL_FAM6_HASWELL_ULT,0x01,0x21           \
+		$INTEL_FAM6_HASWELL_GT3E,0x01,0x18          \
+		$INTEL_FAM6_HASWELL_CORE,0x03,0x23          \
+		$INTEL_FAM6_IVYBRIDGE_X,0x04,0x42a          \
+		$INTEL_FAM6_HASWELL_X,0x02,0x3b             \
+		$INTEL_FAM6_HASWELL_X,0x04,0x10             \
+		$INTEL_FAM6_HASWELL_CORE,0x03,0x23          \
+		$INTEL_FAM6_BROADWELL_XEON_D,0x02,0x14      \
+		$INTEL_FAM6_BROADWELL_XEON_D,0x03,0x7000011 \
+		$INTEL_FAM6_BROADWELL_GT3E,0x01,0x0000001B  \
+		$INTEL_FAM6_BROADWELL_X,0x01,0x0b000025     \
+		$INTEL_FAM6_KABYLAKE_DESKTOP,0x09,0x80      \
+		$INTEL_FAM6_SKYLAKE_X,0x03,0x100013e        \
+		$INTEL_FAM6_SKYLAKE_X,0x04,0x200003c
+	do
+		model=$(echo $tuple | cut -d, -f1)
+		stepping=$(( $(echo $tuple | cut -d, -f2) ))
+		ucode=$(echo $tuple | cut -d, -f3)
+		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ] && echo "$cpu_ucode" | grep -qi "^$ucode$"; then
+			_debug "is_ucode_blacklisted: we have a match! ($model/$stepping/$ucode)"
+			bad_ucode_found="Intel CPU Family 6 Model $model Stepping $stepping with microcode $ucode"
+			return 0
+		fi
+	done
+	_debug "is_ucode_blacklisted: no ($model/$stepping/$ucode)"
+	return 1
+}
+
 # check for mode selection inconsistency
 if [ "$opt_live_explicit" = 1 ]; then
 	if [ -n "$opt_kernel" -o -n "$opt_config" -o -n "$opt_map" ]; then
@@ -1027,6 +1092,19 @@ check_cpu()
 		pstatus green YES
 	else
 		pstatus blue NO
+	fi
+
+	_info_nol "  * CPU microcode is known to cause stability problems: "
+	if is_ucode_blacklisted; then
+		pstatus red YES "$bad_ucode_found"
+		_warn
+		_warn "The microcode your CPU is running on is known to cause instability problems,"
+		_warn "such as intempestive reboots or random crashes."
+		_warn "You are advised to either revert to a previous microcode version (that might not have"
+		_warn "the mitigations for Spectre), or upgrade to a newer one if available."
+		_warn
+	else
+		pstatus green NO
 	fi
 
 	_info     "* CPU vulnerability to the three speculative execution attacks variants"
