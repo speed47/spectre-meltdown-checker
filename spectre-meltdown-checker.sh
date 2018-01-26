@@ -681,12 +681,12 @@ is_ucode_blacklisted()
 		stepping=$(( $(echo $tuple | cut -d, -f2) ))
 		ucode=$(echo $tuple | cut -d, -f3)
 		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ] && echo "$cpu_ucode" | grep -qi "^$ucode$"; then
-			_debug "is_ucode_blacklisted: we have a match! ($model/$stepping/$ucode)"
-			bad_ucode_found="Intel CPU Family 6 Model $model Stepping $stepping with microcode $ucode"
+			_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
+			bad_ucode_found="Intel CPU Family 6 Model $cpu_model Stepping $cpu_stepping with microcode $cpu_ucode"
 			return 0
 		fi
 	done
-	_debug "is_ucode_blacklisted: no ($model/$stepping/$ucode)"
+	_debug "is_ucode_blacklisted: no ($cpu_model/$cpu_stepping/$cpu_ucode)"
 	return 1
 }
 
