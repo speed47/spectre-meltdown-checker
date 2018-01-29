@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION=0.33
+VERSION='0.33+'
 
 show_usage()
 {
@@ -1281,7 +1281,12 @@ check_variant2()
 							pstatus red NO
 						fi
 						;;
-					0)     pstatus red NO "echo 1 > $ibrs_knob_dir/ibrs_enabled";;
+					0)
+						pstatus red NO
+						if [ "$opt_verbose" -ge 2 ]; then
+							_info "    - To enable, \`echo 1 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
+						fi
+						;;
 					1 | 2) pstatus green YES;;
 					*)     pstatus yellow UNKNOWN;;
 				esac
@@ -1304,7 +1309,12 @@ check_variant2()
 							pstatus red NO
 						fi
 						;;
-					0 | 1) pstatus red NO "echo 2 > $ibrs_knob_dir/ibrs_enabled";;
+					0 | 1)
+						pstatus red NO
+						if [ "$opt_verbose" -ge 2 ]; then
+							_info "    - To enable, \`echo 2 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
+						fi
+						;;
 					2) pstatus green YES;;
 					*) pstatus yellow UNKNOWN;;
 				esac
@@ -1323,7 +1333,12 @@ check_variant2()
 						pstatus red NO
 					fi
 					;;
-				0) pstatus red NO "echo 1 > $ibrs_knob_dir/ibpb_enabled";;
+				0)
+					pstatus red NO
+					if [ "$opt_verbose" -ge 2 ]; then
+						_info "    - To enable, \`echo 1 > $ibrs_knob_dir/ibpb_enabled' as root. If you don't have hardware support, you'll get an error."
+					fi
+					;;
 				1) pstatus green YES;;
 				2) pstatus green YES "IBPB used instead of IBRS in all kernel entrypoints";;
 				*) pstatus yellow UNKNOWN;;
