@@ -210,21 +210,23 @@ is_cpu_vulnerable()
 		# model name : Genuine Intel(R) CPU N270 @ 1.60GHz
 		# model name : Intel(R) Atom(TM) CPU N270 @ 1.60GHz
 		# model name : Intel(R) Atom(TM) CPU 330 @ 1.60GHz
-		#
-		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200:
-		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
-		if grep -qE -e '^model name.+ Intel\(R\) (Atom\(TM\) CPU +(S|D|N|230|330)|CPU N[0-9]{3} )'   \
-			    -e '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' \
-				/proc/cpuinfo; then
+		if grep -qE '^model name.+ Intel\(R\) (Atom\(TM\) CPU +(S|D|N|230|330)|CPU N[0-9]{3} )' /proc/cpuinfo; then
 			variant1=vuln
 			[ -z "$variant2" ] && variant2=immune
 			[ -z "$variant3" ] && variant3=immune
+		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
+		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown vulnerable
+		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
+		elif grep -qE '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' /proc/cpuinfo; then
+			variant1=vuln
+			[ -z "$variant2" ] && variant2=immune
+			variant3=vuln
 		fi
 		if [ "$capabilities_rdcl_no" = 1 ]; then
 			# capability bit for future Intel processor that will explicitly state
 			# that they're not vulnerable to Meltdown
 			# this var is set in check_cpu()
-			[ -z "$variant3" ] && variant3=immune
+			variant3=immune
 			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown"
 		fi
 	elif grep -q AuthenticAMD /proc/cpuinfo; then
