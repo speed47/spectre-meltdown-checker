@@ -12,10 +12,11 @@ VERSION=0.33
 
 show_usage()
 {
+	# shellcheck disable=SC2086
 	cat <<EOF
 	Usage:
-		Live mode:    `basename $0` [options] [--live]
-		Offline mode: `basename $0` [options] [--kernel <vmlinux_file>] [--config <kernel_config>] [--map <kernel_map_file>]
+		Live mode:    $(basename $0) [options] [--live]
+		Offline mode: $(basename $0) [options] [--kernel <vmlinux_file>] [--config <kernel_config>] [--map <kernel_map_file>]
 
 	Modes:
 		Two modes are available.
@@ -102,7 +103,7 @@ nrpe_vuln=""
 # find a sane `echo` command
 # we'll try to avoid using shell builtins that might not take options
 if which echo >/dev/null 2>&1; then
-	echo_cmd=`which echo`
+	echo_cmd=$(which echo)
 else
 	[ -x /bin/echo        ] && echo_cmd=/bin/echo
 	[ -x /system/bin/echo ] && echo_cmd=/system/bin/echo
@@ -113,66 +114,70 @@ __echo()
 {
 	opt="$1"
 	shift
-	_msg="$@"
+	_msg="$*"
 
 	if [ "$opt_no_color" = 1 ] ; then
 		# strip ANSI color codes
-		_msg=$($echo_cmd -e  "$_msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
+		_msg=$($echo_cmd -e "$_msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
 	fi
+	# shellcheck disable=SC2086
 	$echo_cmd $opt -e "$_msg"
 }
 
 _echo()
 {
-	if [ $opt_verbose -ge $1 ]; then
+	if [ "$opt_verbose" -ge "$1" ]; then
 		shift
-		__echo '' "$@"
+		__echo '' "$*"
 	fi
 }
 
 _echo_nol()
 {
-	if [ $opt_verbose -ge $1 ]; then
+	if [ "$opt_verbose" -ge "$1" ]; then
 		shift
-		__echo -n "$@"
+		__echo -n "$*"
 	fi
 }
 
 _warn()
 {
-	_echo 0 "\033[31m${@}\033[0m" >&2
+	_echo 0 "\033[31m$*\033[0m" >&2
 }
 
 _info()
 {
-	_echo 1 "$@"
+	_echo 1 "$*"
 }
 
 _info_nol()
 {
-	_echo_nol 1 "$@"
+	_echo_nol 1 "$*"
 }
 
 _verbose()
 {
-	_echo 2 "$@"
+	_echo 2 "$*"
 }
 
 _verbose_nol()
 {
-	_echo_nol 2 "$@"
+	_echo_nol 2 "$*"
 }
 
 _debug()
 {
-	_echo 3 "\033[34m(debug) $@\033[0m"
+	_echo 3 "\033[34m(debug) $*\033[0m"
 }
 
 is_cpu_vulnerable_cached=0
 _is_cpu_vulnerable_cached()
 {
+	# shellcheck disable=SC2086
 	[ "$1" = 1 ] && return $variant1
+	# shellcheck disable=SC2086
 	[ "$1" = 2 ] && return $variant2
+	# shellcheck disable=SC2086
 	[ "$1" = 3 ] && return $variant3
 	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
 	exit 255
@@ -239,11 +244,11 @@ is_cpu_vulnerable()
 		for cpupart in $cpupart_list
 		do
 			i=$(( i + 1 ))
-			cpuarch=$(echo $cpuarch_list | awk '{ print $'$i' }')
+			cpuarch=$(echo "$cpuarch_list" | awk '{ print $'$i' }')
 			_debug "checking cpu$i: <$cpupart> <$cpuarch>"
 			# some kernels report AArch64 instead of 8
 			[ "$cpuarch" = "AArch64" ] && cpuarch=8
-			if [ -n "$cpupart" -a -n "$cpuarch" ]; then
+			if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
 				cpu_friendly_name="ARM v$cpuarch model $cpupart"
 				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 				# I can't find their CPU part number, but it's probably not that useful anyway
@@ -270,7 +275,7 @@ is_cpu_vulnerable()
 				fi
 
 				# for variant3, only A75 is vulnerable
-				if [ "$cpuarch" = 8 -a "$cpupart" = 0xd0a ]; then
+				if [ "$cpuarch" = 8 ] && [ "$cpupart" = 0xd0a ]; then
 					_debug "checking cpu$i: arm A75 vulnerable to meltdown"
 					variant3=vuln
 				else
@@ -327,18 +332,18 @@ parse_opt_file()
 
 while [ -n "$1" ]; do
 	if [ "$1" = "--kernel" ]; then
-		opt_kernel=$(parse_opt_file kernel "$2")
-		[ $? -ne 0 ] && exit 255
+		opt_kernel=$(parse_opt_file kernel "$2"); ret=$?
+		[ $ret -ne 0 ] && exit 255
 		shift 2
 		opt_live=0
 	elif [ "$1" = "--config" ]; then
-		opt_config=$(parse_opt_file config "$2")
-		[ $? -ne 0 ] && exit 255
+		opt_config=$(parse_opt_file config "$2"); ret=$?
+		[ $ret -ne 0 ] && exit 255
 		shift 2
 		opt_live=0
 	elif [ "$1" = "--map" ]; then
-		opt_map=$(parse_opt_file map "$2")
-		[ $? -ne 0 ] && exit 255
+		opt_map=$(parse_opt_file map "$2"); ret=$?
+		[ $ret -ne 0 ] && exit 255
 		shift 2
 		opt_live=0
 	elif [ "$1" = "--live" ]; then
@@ -374,8 +379,8 @@ while [ -n "$1" ]; do
 				exit 255
 				;;
 		esac
-	elif [ "$1" = "-v" -o "$1" = "--verbose" ]; then
-		opt_verbose=$(expr $opt_verbose + 1)
+	elif [ "$1" = "-v" ] || [ "$1" = "--verbose" ]; then
+		opt_verbose=$(( opt_verbose + 1 ))
 		shift
 	elif [ "$1" = "--variant" ]; then
 		if [ -z "$2" ]; then
@@ -392,7 +397,7 @@ while [ -n "$1" ]; do
 				;;
 		esac
 		shift 2
-	elif [ "$1" = "-h" -o "$1" = "--help" ]; then
+	elif [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
 		show_header
 		show_usage
 		exit 0
@@ -414,7 +419,7 @@ done
 
 show_header
 
-if [ "$opt_no_sysfs" = 1 -a "$opt_sysfs_only" = 1 ]; then
+if [ "$opt_no_sysfs" = 1 ] && [ "$opt_sysfs_only" = 1 ]; then
 	_warn "Incompatible options specified (--no-sysfs and --sysfs-only), aborting"
 	exit 255
 fi
@@ -456,7 +461,7 @@ pvulnstatus()
 					VULN) is_vuln="true";;
 					OK)   is_vuln="false";;
 				esac
-				json_output="${json_output:-[}{\"NAME\":\""$aka"\",\"CVE\":\""$1"\",\"VULNERABLE\":$is_vuln,\"INFOS\":\""$3"\"},"
+				json_output="${json_output:-[}{\"NAME\":\"$aka\",\"CVE\":\"$1\",\"VULNERABLE\":$is_vuln,\"INFOS\":\"$3\"},"
 				;;
 
 			nrpe)	[ "$2" = VULN ] && nrpe_vuln="$nrpe_vuln $1";;
@@ -511,7 +516,7 @@ try_decompress()
 	# "grep" that report the byte offset of the line instead of the pattern.
 
 	# Try to find the header ($1) and decompress from here
-	for     pos in `tr "$1\n$2" "\n$2=" < "$6" | grep -abo "^$2"`
+	for     pos in $(tr "$1\n$2" "\n$2=" < "$6" | grep -abo "^$2")
 	do
 		_debug "try_decompress: magic for $3 found at offset $pos"
 		if ! which "$3" >/dev/null 2>&1; then
@@ -519,7 +524,8 @@ try_decompress()
 			return 0
 		fi
 		pos=${pos%%:*}
-		tail -c+$pos "$6" 2>/dev/null | $3 $4 > $vmlinuxtmp 2>/dev/null
+		# shellcheck disable=SC2086
+		tail -c+$pos "$6" 2>/dev/null | $3 $4 > "$vmlinuxtmp" 2>/dev/null
 		if check_vmlinux "$vmlinuxtmp"; then
 			vmlinux="$vmlinuxtmp"
 			_debug "try_decompress: decompressed with $3 successfully!"
@@ -536,7 +542,8 @@ extract_vmlinux()
 	[ -n "$1" ] || return 1
 	# Prepare temp files:
 	vmlinuxtmp="$(mktemp /tmp/vmlinux-XXXXXX)"
-	trap "rm -f $vmlinuxtmp" EXIT
+	# single quotes in trap cmd: will be expanded when signalled
+	trap 'rm -f $vmlinuxtmp' EXIT INT
 
 	# Initial attempt for uncompressed images or objects:
 	if check_vmlinux "$1"; then
@@ -692,7 +699,7 @@ is_ucode_blacklisted()
 
 # check for mode selection inconsistency
 if [ "$opt_live_explicit" = 1 ]; then
-	if [ -n "$opt_kernel" -o -n "$opt_config" -o -n "$opt_map" ]; then
+	if [ -n "$opt_kernel" ] || [ -n "$opt_config" ] || [ -n "$opt_map" ]; then
 		show_usage
 		echo "$0: error: incompatible modes specified, use either --live or --kernel/--config/--map" >&2
 		exit 255
@@ -709,7 +716,7 @@ if [ "$opt_coreos" = 1 ]; then
 	load_msr
 	load_cpuid
 	mount_debugfs
-	toolbox --ephemeral --bind-ro /dev/cpu:/dev/cpu -- sh -c "dnf install -y binutils which && /media/root$PWD/$0 $@ --coreos-within-toolbox"
+	toolbox --ephemeral --bind-ro /dev/cpu:/dev/cpu -- sh -c "dnf install -y binutils which && /media/root$PWD/$0 $* --coreos-within-toolbox"
 	exitcode=$?
 	mount_debugfs
 	unload_cpuid
@@ -732,7 +739,7 @@ if [ "$opt_live" = 1 ]; then
 		_warn
 	fi
 	_info "Checking for vulnerabilities on current system"
-	_info "Kernel is \033[35m"$(uname -s) $(uname -r) $(uname -v) $(uname -m)"\033[0m"
+	_info "Kernel is \033[35m$(uname -s) $(uname -r) $(uname -v) $(uname -m)\033[0m"
 	# call is_cpu_vulnerable to fill the cpu_friendly_name var
 	is_cpu_vulnerable 0
 	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
@@ -753,42 +760,42 @@ if [ "$opt_live" = 1 ]; then
 	# if we didn't find a kernel, default to guessing
 	if [ ! -e "$opt_kernel" ]; then
 		# Fedora:
-		[ -e /lib/modules/$(uname -r)/vmlinuz ] && opt_kernel=/lib/modules/$(uname -r)/vmlinuz
+		[ -e "/lib/modules/$(uname -r)/vmlinuz" ] && opt_kernel="/lib/modules/$(uname -r)/vmlinuz"
 		# Slackare:
-		[ -e /boot/vmlinuz             ] && opt_kernel=/boot/vmlinuz
+		[ -e "/boot/vmlinuz"             ] && opt_kernel="/boot/vmlinuz"
 		# Arch:
-		[ -e /boot/vmlinuz-linux       ] && opt_kernel=/boot/vmlinuz-linux
+		[ -e "/boot/vmlinuz-linux"       ] && opt_kernel="/boot/vmlinuz-linux"
 		# Linux-Libre:
-		[ -e /boot/vmlinuz-linux-libre ] && opt_kernel=/boot/vmlinuz-linux-libre
+		[ -e "/boot/vmlinuz-linux-libre" ] && opt_kernel="/boot/vmlinuz-linux-libre"
 		# generic:
-		[ -e /boot/vmlinuz-$(uname -r) ] && opt_kernel=/boot/vmlinuz-$(uname -r)
-		[ -e /boot/kernel-$( uname -r) ] && opt_kernel=/boot/kernel-$( uname -r)
-		[ -e /boot/bzImage-$(uname -r) ] && opt_kernel=/boot/bzImage-$(uname -r)
+		[ -e "/boot/vmlinuz-$(uname -r)" ] && opt_kernel="/boot/vmlinuz-$(uname -r)"
+		[ -e "/boot/kernel-$( uname -r)" ] && opt_kernel="/boot/kernel-$( uname -r)"
+		[ -e "/boot/bzImage-$(uname -r)" ] && opt_kernel="/boot/bzImage-$(uname -r)"
 		# Gentoo:
-		[ -e /boot/kernel-genkernel-$(uname -m)-$(uname -r) ] && opt_kernel=/boot/kernel-genkernel-$(uname -m)-$(uname -r)
+		[ -e "/boot/kernel-genkernel-$(uname -m)-$(uname -r)" ] && opt_kernel="/boot/kernel-genkernel-$(uname -m)-$(uname -r)"
 		# NixOS:
-		[ -e /run/booted-system/kernel ] && opt_kernel=/run/booted-system/kernel
+		[ -e "/run/booted-system/kernel" ] && opt_kernel="/run/booted-system/kernel"
 	fi
 
 	# system.map
 	if [ -e /proc/kallsyms ] ; then
-		opt_map="/proc/kallsyms"
-	elif [ -e /lib/modules/$(uname -r)/System.map ] ; then
-		opt_map=/lib/modules/$(uname -r)/System.map
-	elif [ -e /boot/System.map-$(uname -r) ] ; then
-		opt_map=/boot/System.map-$(uname -r)
+		opt_map=/proc/kallsyms
+	elif [ -e "/lib/modules/$(uname -r)/System.map" ] ; then
+		opt_map="/lib/modules/$(uname -r)/System.map"
+	elif [ -e "/boot/System.map-$(uname -r)" ] ; then
+		opt_map="/boot/System.map-$(uname -r)"
 	fi
 
 	# config
 	if [ -e /proc/config.gz ] ; then
 		dumped_config="$(mktemp /tmp/config-XXXXXX)"
-		gunzip -c /proc/config.gz > $dumped_config
+		gunzip -c /proc/config.gz > "$dumped_config"
 		# dumped_config will be deleted at the end of the script
-		opt_config=$dumped_config
-	elif [ -e /lib/modules/$(uname -r)/config ]; then
-		opt_config=/lib/modules/$(uname -r)/config
-	elif [ -e /boot/config-$(uname -r) ]; then
-		opt_config=/boot/config-$(uname -r)
+		opt_config="$dumped_config"
+	elif [ -e "/lib/modules/$(uname -r)/config" ]; then
+		opt_config="/lib/modules/$(uname -r)/config"
+	elif [ -e "/boot/config-$(uname -r)" ]; then
+		opt_config="/boot/config-$(uname -r)"
 	fi
 else
 	_info "Checking for vulnerabilities against specified kernel"
@@ -838,7 +845,7 @@ else
 	_debug "no opt_kernel defined"
 	vmlinux_err="couldn't find your kernel image in /boot, if you used netboot, this is normal"
 fi
-if [ -z "$vmlinux" -o ! -r "$vmlinux" ]; then
+if [ -z "$vmlinux" ] || [ ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
 fi
 
@@ -851,7 +858,7 @@ _info
 
 sys_interface_check()
 {
-	[ "$opt_live" = 1 -a "$opt_no_sysfs" = 0 -a -r "$1" ] || return 1
+	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$1" ] || return 1
 	_info_nol "* Mitigated according to the /sys interface: "
 	if grep -qi '^not affected' "$1"; then
 		# Not affected
@@ -893,8 +900,8 @@ check_cpu()
 		# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
 		# if we get a read error, the MSR is not there. bs has to be 8 for msr
 		# skip=9 because 8*9=72=0x48
-		dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null
-		if [ $? -eq 0 ]; then
+		dd if=/dev/cpu/0/msr of=/dev/null bs=8 count=1 skip=9 2>/dev/null; ret=$?
+		if [ $ret -eq 0 ]; then
 			spec_ctrl_msr=1
 			pstatus green YES
 		else
@@ -915,8 +922,8 @@ check_cpu()
 		if [ "$opt_verbose" -ge 3 ]; then
 			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
 			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
-			_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf7 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
+			_debug "cpuid: leaf7 edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)"
 		fi
 		# getting high byte of edx on leaf7 of cpuinfo in decimal
 		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
@@ -957,8 +964,8 @@ check_cpu()
 		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
 		# here we use dd, it's the same as using 'wrmsr 0x49 0' but without needing the wrmsr tool
 		# if we get a write error, the MSR is not there
-		$echo_cmd -ne "\0\0\0\0\0\0\0\0" | dd of=/dev/cpu/0/msr bs=8 count=1 seek=73 oflag=seek_bytes 2>/dev/null
-		if [ $? -eq 0 ]; then
+		$echo_cmd -ne "\0\0\0\0\0\0\0\0" | dd of=/dev/cpu/0/msr bs=8 count=1 seek=73 oflag=seek_bytes 2>/dev/null; ret=$?
+		if [ $ret -eq 0 ]; then
 			pstatus green YES
 		else
 			pstatus red NO
@@ -973,8 +980,8 @@ check_cpu()
 		if [ "$opt_verbose" -ge 3 ]; then
 			dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
 			_debug "cpuid: reading leaf80000008 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf80000008 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
-			_debug "cpuid: leaf80000008 ebx 3rd byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf80000008 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
+			_debug "cpuid: leaf80000008 ebx 3rd byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -x -A n)"
 		fi
 		# getting high byte of edx on leaf7 of cpuinfo in decimal
 		ebx_b3=$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
@@ -983,7 +990,6 @@ check_cpu()
 		_debug "cpuid: ebx_bit12=$ebx_bit12"
 		if [ "$ebx_bit12" -eq 16 ]; then
 			pstatus green YES "IBPB_SUPPORT feature bit"
-			cpuid_ibpb=1
 		elif [ "$cpuid_spec_ctrl" = 1 ]; then
 			pstatus green YES "SPEC_CTRL feature bit"
 		else
@@ -1010,8 +1016,8 @@ check_cpu()
 		if [ "$opt_verbose" -ge 3 ]; then
 			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
 			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
-			_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf7 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
+			_debug "cpuid: leaf7 edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)"
 		fi
 		# getting high byte of edx on leaf7 of cpuinfo in decimal
 		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
@@ -1020,7 +1026,6 @@ check_cpu()
 		_debug "cpuid: edx_bit27=$edx_bit27"
 		if [ "$edx_bit27" -eq 8 ]; then
 			pstatus green YES
-			cpuid_stibp=1
 		else
 			pstatus red NO
 		fi
@@ -1036,8 +1041,8 @@ check_cpu()
 		if [ "$opt_verbose" -ge 3 ]; then
 			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
 			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf7 eax-ebx-ecx-edx: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)
-			_debug "cpuid: leaf7 edx higher byte is: "$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)
+			_debug "cpuid: leaf7 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
+			_debug "cpuid: leaf7 edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)"
 		fi
 		# getting high byte of edx on leaf7 of cpuinfo in decimal
 		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
@@ -1069,10 +1074,10 @@ check_cpu()
 		# the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
 		# here we use dd, it's the same as using 'rdmsr 0x10a' but without needing the rdmsr tool
 		# if we get a read error, the MSR is not there. bs has to be 8 for msr
-		capabilities=$(dd if=/dev/cpu/0/msr bs=8 count=1 skip=266 iflag=skip_bytes 2>/dev/null | od -t u1 -A n | awk '{print $8}')
+		capabilities=$(dd if=/dev/cpu/0/msr bs=8 count=1 skip=266 iflag=skip_bytes 2>/dev/null | od -t u1 -A n | awk '{print $8}'); ret=$?
 		capabilities_rdcl_no=0
 		capabilities_ibrs_all=0
-		if [ $? -eq 0 ]; then
+		if [ $ret -eq 0 ]; then
 			_debug "capabilities MSR lower byte is $capabilities (decimal)"
 			[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 			[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
@@ -1241,7 +1246,7 @@ check_variant2()
 				fi
 			fi
 		fi
-		if [ "$ibrs_supported" != 1 -a -n "$opt_map" ]; then
+		if [ "$ibrs_supported" != 1 ] && [ -n "$opt_map" ]; then
 			ibrs_can_tell=1
 			if grep -q spec_ctrl "$opt_map"; then
 				pstatus green YES
@@ -1269,7 +1274,13 @@ check_variant2()
 				# 1 is enabled only for kernel space
 				# 2 is enabled for kernel and user space
 				case "$ibrs_enabled" in
-					"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
+					"")
+						if [ "$ibrs_supported" = 1 ]; then
+							pstatus yellow UNKNOWN
+						else
+							pstatus red NO
+						fi
+						;;
 					0)     pstatus red NO "echo 1 > $ibrs_knob_dir/ibrs_enabled";;
 					1 | 2) pstatus green YES;;
 					*)     pstatus yellow UNKNOWN;;
@@ -1286,7 +1297,13 @@ check_variant2()
 				pstatus blue NO "IBPB used instead of IBRS in all kernel entrypoints"
 			else
 				case "$ibrs_enabled" in
-					"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
+					"")
+						if [ "$ibrs_supported" = 1 ]; then
+							pstatus yellow UNKNOWN
+						else
+							pstatus red NO
+						fi
+						;;
 					0 | 1) pstatus red NO "echo 2 > $ibrs_knob_dir/ibrs_enabled";;
 					2) pstatus green YES;;
 					*) pstatus yellow UNKNOWN;;
@@ -1299,7 +1316,13 @@ check_variant2()
 		_info_nol "    * IBPB enabled: "
 		if [ "$opt_live" = 1 ]; then
 			case "$ibpb_enabled" in
-				"") [ "$ibrs_supported" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO;;
+				"")
+					if [ "$ibrs_supported" = 1 ]; then
+						pstatus yellow UNKNOWN
+					else
+						pstatus red NO
+					fi
+					;;
 				0) pstatus red NO "echo 1 > $ibrs_knob_dir/ibpb_enabled";;
 				1) pstatus green YES;;
 				2) pstatus green YES "IBPB used instead of IBRS in all kernel entrypoints";;
@@ -1319,7 +1342,8 @@ check_variant2()
 			if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
 				pstatus green YES
 				retpoline=1
-				_debug "retpoline: found "$(grep '^CONFIG_RETPOLINE' "$opt_config")" in $opt_config"
+				# shellcheck disable=SC2046
+				_debug 'retpoline: found '$(grep '^CONFIG_RETPOLINE' "$opt_config")" in $opt_config"
 			else
 				pstatus red NO
 			fi
@@ -1340,7 +1364,11 @@ check_variant2()
 				retpoline_compiler=1
 				pstatus green YES "kernel reports full retpoline compilation"
 			else
-				[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
+				if [ "$retpoline" = 1 ]; then
+					pstatus yellow UNKNOWN
+				else
+					pstatus red NO
+				fi
 			fi
 		elif [ -n "$opt_map" ]; then
 			# look for the symbol
@@ -1348,7 +1376,11 @@ check_variant2()
 				retpoline_compiler=1
 				pstatus green YES "noretpoline_setup symbol found in System.map"
 			else
-				[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
+				if [ "$retpoline" = 1 ]; then
+					pstatus yellow UNKNOWN
+				else
+					pstatus red NO
+				fi
 			fi
 		elif [ -n "$vmlinux" ]; then
 			# look for the symbol
@@ -1358,7 +1390,11 @@ check_variant2()
 					retpoline_compiler=1
 					pstatus green YES "noretpoline_setup found in vmlinux symbols"
 				else
-					[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
+					if [ "$retpoline" = 1 ]; then
+						pstatus yellow UNKNOWN
+					else
+						pstatus red NO
+					fi
 				fi
 			elif grep -q noretpoline_setup "$vmlinux"; then
 				# if we don't have nm, nevermind, the symbol name is long enough to not have
@@ -1366,10 +1402,18 @@ check_variant2()
 				retpoline_compiler=1
 				pstatus green YES "noretpoline_setup found in vmlinux"
 			else
-				[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN || pstatus red NO
+				if [ "$retpoline" = 1 ]; then
+					pstatus yellow UNKNOWN
+				else
+					pstatus red NO
+				fi
 			fi
 		else
-			[ "$retpoline" = 1 ] && pstatus yellow UNKNOWN "couldn't find your kernel image or System.map" || pstatus red NO
+			if [ "$retpoline" = 1 ]; then
+				pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
+			else
+				pstatus red NO
+			fi
 		fi
 
 		_info_nol "  * Retpoline enabled: "
@@ -1378,7 +1422,6 @@ check_variant2()
 			# regardless of the fact that it's minimal / full and generic / amd
 			if grep -qw retpoline /proc/cpuinfo; then
 				pstatus green YES
-				retpoline_enabled=1
 			else
 				pstatus red NO
 			fi
@@ -1397,12 +1440,12 @@ check_variant2()
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
-		if [ "$retpoline" = 1 -a "$retpoline_compiler" = 1 ]; then
+		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ]; then
 			pvulnstatus $cve OK "retpoline mitigates the vulnerability"
 		elif [ "$opt_live" = 1 ]; then
-			if [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ] && [ "$ibpb_enabled" = 1 ]; then
+			if ( [ "$ibrs_enabled" = 1 ] || [ "$ibrs_enabled" = 2 ] ) && [ "$ibpb_enabled" = 1 ]; then
 				pvulnstatus $cve OK "IBRS/IBPB are mitigating the vulnerability"
-			elif [ "$ibrs_enabled" = 1 -o "$ibrs_enabled" = 2 ] && [ "$ibpb_enabled" = -1 ]; then
+			elif ( [ "$ibrs_enabled" = 1 ] || [ "$ibrs_enabled" = 2 ] ) && [ "$ibpb_enabled" = -1 ]; then
 				# IBPB doesn't seem here on this kernel
 				pvulnstatus $cve OK "IBRS is mitigating the vulnerability"
 			elif [ "$ibpb_enabled" = 2 ]; then
@@ -1445,11 +1488,12 @@ check_variant3()
 		if [ -n "$opt_config" ]; then
 			kpti_can_tell=1
 			if grep -Eq '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config"; then
-				_debug "kpti_support: found option "$(grep -E '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config")" in $opt_config"
+				# shellcheck disable=SC2046
+				_debug 'kpti_support: found option '$(grep -E '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config")" in $opt_config"
 				kpti_support=1
 			fi
 		fi
-		if [ "$kpti_support" = 0 -a -n "$opt_map" ]; then
+		if [ "$kpti_support" = 0 ] && [ -n "$opt_map" ]; then
 			# it's not an elif: some backports don't have the PTI config but still include the patch
 			# so we try to find an exported symbol that is part of the PTI patch in System.map
 			kpti_can_tell=1
@@ -1458,7 +1502,7 @@ check_variant3()
 				kpti_support=1
 			fi
 		fi
-		if [ "$kpti_support" = 0 -a -n "$vmlinux" ]; then
+		if [ "$kpti_support" = 0 ] && [ -n "$vmlinux" ]; then
 			# same as above but in case we don't have System.map and only vmlinux, look for the
 			# nopti option that is part of the patch (kernel command line option)
 			kpti_can_tell=1
@@ -1628,15 +1672,15 @@ check_variant3()
 
 check_cpu
 # now run the checks the user asked for
-if [ "$opt_variant1" = 1 -o "$opt_allvariants" = 1 ]; then
+if [ "$opt_variant1" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variant1
 	_info
 fi
-if [ "$opt_variant2" = 1 -o "$opt_allvariants" = 1 ]; then
+if [ "$opt_variant2" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variant2
 	_info
 fi
-if [ "$opt_variant3" = 1 -o "$opt_allvariants" = 1 ]; then
+if [ "$opt_variant3" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variant3
 	_info
 fi
@@ -1649,7 +1693,7 @@ umount_debugfs
 # cleanup the temp decompressed config
 [ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
 
-if [ "$opt_batch" = 1 -a "$opt_batch_format" = "nrpe" ]; then
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
 	if [ ! -z "$nrpe_vuln" ]; then
 		echo "Vulnerable:$nrpe_vuln"
 	else
@@ -1657,8 +1701,8 @@ if [ "$opt_batch" = 1 -a "$opt_batch_format" = "nrpe" ]; then
 	fi
 fi
 
-if [ "$opt_batch" = 1 -a "$opt_batch_format" = "json" ]; then
-	_echo 0 ${json_output%?}']'
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+	_echo 0 "${json_output%?}]"
 fi
 
 # exit with the proper exit code
