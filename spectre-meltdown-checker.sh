@@ -1140,51 +1140,101 @@ check_variant1()
 	msg=''
 	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spectre_v1"; then
 		# this kernel has the /sys interface, trust it over everything
+		# v0.33+: don't. some kernels have backported the array_index_mask_nospec() workaround without
+		# modifying the vulnerabilities/spectre_v1 file. that's bad. we can't trust it when it says Vulnerable :(
+		# see "silent backport" detection at the bottom of this func
 		sys_interface_available=1
-	elif [ "$opt_sysfs_only" != 1 ]; then
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
 		# no /sys interface (or offline mode), fallback to our own ways
-		_info_nol "* Checking count of LFENCE opcodes in kernel: "
+		_info_nol "* Kernel has array_index_mask_nospec: "
+		# vanilla: look for the Linus' mask aka array_index_mask_nospec()
+		# that is inlined at least in raw_copy_from_user (__get_user_X symbols)
+		#mov PER_CPU_VAR(current_task), %_ASM_DX
+		#cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
+		#jae bad_get_user
+		# /* array_index_mask_nospec() are the 2 opcodes that follow */
+		#+sbb %_ASM_DX, %_ASM_DX
+		#+and %_ASM_DX, %_ASM_AX
+		#ASM_STAC
+		# x86 64bits: jae(0x0f 0x83 0x?? 0x?? 0x?? 0x??) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
+		# x86 32bits: cmp(0x3b 0x82 0x?? 0x?? 0x00 0x00) jae(0x73 0x??) sbb(0x19 0xd2) and(0x21 0xd0)
 		if [ -n "$vmlinux_err" ]; then
-			msg="couldn't check ($vmlinux_err)"
-			status=UNK
-			pstatus yellow UNKNOWN
+			pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
+		elif ! which perl >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
 		else
-			if ! which objdump >/dev/null 2>&1; then
-				msg="missing 'objdump' tool, please install it, usually it's in the binutils package"
-				status=UNK
-				pstatus yellow UNKNOWN
+			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$vmlinux"; ret=$?
+			if [ $ret -gt 0 ]; then
+				pstatus green YES "$ret occurence(s) found of 64 bits array_index_mask_nospec()"
+				v1_mask_nospec=1
 			else
-				# here we disassemble the kernel and count the number of occurrences of the LFENCE opcode
-				# in non-patched kernels, this has been empirically determined as being around 40-50
-				# in patched kernels, this is more around 70-80, sometimes way higher (100+)
-				# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
-				# so let's push the threshold to 70.
-				nb_lfence=$(objdump -d "$vmlinux" | grep -wc lfence)
-				if [ "$nb_lfence" -lt 70 ]; then
-					msg="only $nb_lfence opcodes found, should be >= 70, heuristic to be improved when official patches become available"
-					status=VULN
-					pstatus red NO
+				perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$vmlinux"; ret=$?
+				if [ $ret -gt 0 ]; then
+					pstatus green YES "$ret occurence(s) found of 32 bits array_index_mask_nospec()"
+					v1_mask_nospec=1
 				else
-					msg="$nb_lfence opcodes found, which is >= 70, heuristic to be improved when official patches become available"
-					status=OK
-					pstatus green YES
+					pstatus red NO
 				fi
 			fi
 		fi
+
+		if [ "$opt_verbose" -ge 2 ] || [ "$v1_mask_nospec" != 1 ]; then
+			# this is a slow heuristic and we don't need it if we already know the kernel is patched
+			# but still show it in verbose mode
+			_info_nol "* Checking count of LFENCE opcodes in kernel: "
+			if [ -n "$vmlinux_err" ]; then
+				pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
+			else
+				if ! which objdump >/dev/null 2>&1; then
+					pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+				else
+					# here we disassemble the kernel and count the number of occurrences of the LFENCE opcode
+					# in non-patched kernels, this has been empirically determined as being around 40-50
+					# in patched kernels, this is more around 70-80, sometimes way higher (100+)
+					# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
+					# so let's push the threshold to 70.
+					nb_lfence=$(objdump -d "$vmlinux" | grep -wc 'lfence')
+					if [ "$nb_lfence" -lt 70 ]; then
+						pstatus red NO "only $nb_lfence opcodes found, should be >= 70, heuristic to be improved when official patches become available"
+					else
+						v1_lfence=1
+						pstatus green YES "$nb_lfence opcodes found, which is >= 70, heuristic to be improved when official patches become available"
+					fi
+				fi
+			fi
+		fi
+
 	else
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
 		status=UNK
 	fi
 
+	# report status
+	cve='CVE-2017-5753'
 	if ! is_cpu_vulnerable 1; then
 		# override status & msg in case CPU is not vulnerable after all
-		msg="your CPU vendor reported your CPU model as not vulnerable"
-		status=OK
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		if [ "$v1_mask_nospec" = 1 ]; then
+			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (array_index_mask_nospec)"
+		elif [ "$v1_lfence" = 1 ]; then
+			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (LFENCE opcodes heuristic)"
+		elif [ "$vmlinux_err" ]; then
+			pvulnstatus $cve UNK "Couldn't find kernel image or tools missing to execute the checks"
+		else
+			pvulnstatus $cve VULN "Kernel source needs to be patched to mitigate the vulnerability"
+		fi
+	else
+		if [ "$msg" = "Vulnerable" ] && [ "$v1_mask_nospec" = 1 ]; then
+			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (silent backport of array_index_mask_nospec)"
+		else
+			[ "$msg" = "Vulnerable" ] && msg="Kernel source needs to be patched to mitigate the vulnerability"
+			pvulnstatus $cve "$status" "$msg"
+		fi
 	fi
-
-	# report status
-	pvulnstatus CVE-2017-5753 "$status" "$msg"
 }
 
 ###################
