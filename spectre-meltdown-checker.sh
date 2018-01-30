@@ -1192,7 +1192,7 @@ check_variant1()
 		if [ "$opt_verbose" -ge 2 ] || [ "$v1_mask_nospec" != 1 ]; then
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
 			# but still show it in verbose mode
-			_info_nol "* Checking count of LFENCE opcodes in kernel: "
+			_info_nol "* Checking count of LFENCE instructions following a jump in kernel: "
 			if [ -n "$vmlinux_err" ]; then
 				pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
 			else
@@ -1204,12 +1204,14 @@ check_variant1()
 					# in patched kernels, this is more around 70-80, sometimes way higher (100+)
 					# v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
 					# so let's push the threshold to 70.
-					nb_lfence=$(objdump -d "$vmlinux" | grep -wc 'lfence')
-					if [ "$nb_lfence" -lt 70 ]; then
-						pstatus red NO "only $nb_lfence opcodes found, should be >= 70, heuristic to be improved when official patches become available"
+					# v0.33+: now only count lfence opcodes after a jump, way less error-prone
+					# non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
+					nb_lfence=$(objdump -d "$vmlinux" | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
+					if [ "$nb_lfence" -lt 30 ]; then
+						pstatus red NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
 					else
 						v1_lfence=1
-						pstatus green YES "$nb_lfence opcodes found, which is >= 70, heuristic to be improved when official patches become available"
+						pstatus green YES "$nb_lfence jump-then-lfence instructions found, which is >= 30 (heuristic)"
 					fi
 				fi
 			fi
@@ -1231,7 +1233,7 @@ check_variant1()
 		if [ "$v1_mask_nospec" = 1 ]; then
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (array_index_mask_nospec)"
 		elif [ "$v1_lfence" = 1 ]; then
-			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (LFENCE opcodes heuristic)"
+			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
 		elif [ "$vmlinux_err" ]; then
 			pvulnstatus $cve UNK "Couldn't find kernel image or tools missing to execute the checks"
 		else
