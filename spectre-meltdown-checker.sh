@@ -204,7 +204,11 @@ is_cpu_vulnerable()
 	variant2=''
 	variant3=''
 
-	if [ "$cpu_vendor" = GenuineIntel ]; then
+	if is_cpu_specex_free; then
+		variant1=immune
+		variant2=immune
+		variant3=immune
+	elif [ "$cpu_vendor" = GenuineIntel ]; then
 		# Intel
 		# Old Atoms are not vulnerable to spectre 2 nor meltdown
 		# https://security-center.intel.com/advisory.aspx?intelid=INTEL-SA-00088&languageid=en-fr
@@ -295,6 +299,41 @@ is_cpu_vulnerable()
 	is_cpu_vulnerable_cached=1
 	_is_cpu_vulnerable_cached "$1"
 	return $?
+}
+
+is_cpu_specex_free()
+{
+	# return true (0) if the CPU doesn't do speculative execution, false (1) if it does.
+	# if it's not in the list we know, return false (1).
+	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c#n882
+	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_CEDARVIEW,   X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_CLOVERVIEW,  X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_LINCROFT,    X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_PENWELL,     X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_PINEVIEW,    X86_FEATURE_ANY },
+	# { X86_VENDOR_CENTAUR,   5 },
+	# { X86_VENDOR_INTEL,     5 },
+	# { X86_VENDOR_NSC,       5 },
+	# { X86_VENDOR_ANY,       4 },
+	set -u
+	if [ "$cpu_vendor" = GenuineIntel ]; then
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"  ]      || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT"   ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL"    ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW"   ]; then
+				set +u
+				return 0
+			fi
+		elif [ "$cpu_family" = 5 ]; then
+			set +u
+			return 0
+		fi
+	fi
+	set +u
+	[ "$cpu_family" -eq 4 ] && return 0
+	return 1
 }
 
 show_header()
