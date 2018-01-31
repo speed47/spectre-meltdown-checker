@@ -203,12 +203,8 @@ is_cpu_vulnerable()
 	variant1=''
 	variant2=''
 	variant3=''
-	# we also set a friendly name for the CPU to be used in the script if needed
-	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1 | sed -e 's/^ *//')
-	# variant 0 is just for us to fill the cpu_friendly_name var
-	[ "$1" = 0 ] && return 0
 
-	if grep -q GenuineIntel /proc/cpuinfo; then
+	if [ "$cpu_vendor" = GenuineIntel ]; then
 		# Intel
 		# Old Atoms are not vulnerable to spectre 2 nor meltdown
 		# https://security-center.intel.com/advisory.aspx?intelid=INTEL-SA-00088&languageid=en-fr
@@ -234,21 +230,19 @@ is_cpu_vulnerable()
 			variant3=immune
 			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown"
 		fi
-	elif grep -q AuthenticAMD /proc/cpuinfo; then
+	elif [ "$cpu_vendor" = AuthenticAMD ]; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
 		variant1=vuln
 		variant2=vuln
 		[ -z "$variant3" ] && variant3=immune
-	elif grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' /proc/cpuinfo; then
+	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
 		# some devices (phones or other) have several ARMs and as such different part numbers,
 		# an example is "bigLITTLE". we shouldn't rely on the first CPU only, so we check the whole list
-		cpupart_list=$(awk '/CPU part/         {print $4}' /proc/cpuinfo)
-		cpuarch_list=$(awk '/CPU architecture/ {print $3}' /proc/cpuinfo)
 		i=0
-		for cpupart in $cpupart_list
+		for cpupart in $cpu_part_list
 		do
 			i=$(( i + 1 ))
 			cpuarch=$(echo "$cpuarch_list" | awk '{ print $'$i' }')
@@ -256,7 +250,6 @@ is_cpu_vulnerable()
 			# some kernels report AArch64 instead of 8
 			[ "$cpuarch" = "AArch64" ] && cpuarch=8
 			if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
-				cpu_friendly_name="ARM v$cpuarch model $cpupart"
 				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 				# I can't find their CPU part number, but it's probably not that useful anyway
 				# model R7 R8 A9    A15   A17   A57   A72    A73    A75
@@ -639,34 +632,101 @@ is_coreos()
 	return 1
 }
 
+parse_cpu_details()
+{
+	cpu_vendor=$(  grep '^vendor_id'  /proc/cpuinfo | awk '{print $3}' | head -1)
+	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1 | sed -e 's/^ *//')
+	# special case for ARM follows
+	if grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' /proc/cpuinfo; then
+		cpu_vendor='ARM'
+		# some devices (phones or other) have several ARMs and as such different part numbers,
+		# an example is "bigLITTLE", so we need to store the whole list, this is needed for is_cpu_vulnerable
+		cpu_part_list=$(awk '/CPU part/         {print $4}' /proc/cpuinfo)
+		cpu_arch_list=$(awk '/CPU architecture/ {print $3}' /proc/cpuinfo)
+		# take the first one to fill the friendly name
+		cpu_arch=$(echo "$cpu_arch_list" | awk '{ print $1 }')
+		cpu_part=$(echo "$cpu_part_list" | awk '{ print $1 }')
+		[ "$cpu_arch" = "AArch64" ] && cpu_arch=8
+		cpu_friendly_name="ARM"
+		[ -n "$cpu_arch" ] && cpu_friendly_name="$cpu_friendly_name v$cpu_arch"
+		[ -n "$cpu_part" ] && cpu_friendly_name="$cpu_friendly_name model $cpu_part"
+	fi
+
+	cpu_family=$(  grep '^cpu family' /proc/cpuinfo | awk '{print $4}' | grep -E '^[0-9]+$' | head -1)
+	cpu_model=$(   grep '^model'      /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
+	cpu_stepping=$(grep '^stepping'   /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
+	cpu_ucode=$(  grep '^microcode'   /proc/cpuinfo | awk '{print $3}' | head -1)
+	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1 | sed -e 's/^ *//')
+
+	# also define those that we will need in other funcs
+	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
+	INTEL_FAM6_CORE_YONAH=$(( 0x0E ))
+
+	INTEL_FAM6_CORE2_MEROM=$(( 0x0F ))
+	INTEL_FAM6_CORE2_MEROM_L=$(( 0x16 ))
+	INTEL_FAM6_CORE2_PENRYN=$(( 0x17 ))
+	INTEL_FAM6_CORE2_DUNNINGTON=$(( 0x1D ))
+
+	INTEL_FAM6_NEHALEM=$(( 0x1E ))
+	INTEL_FAM6_NEHALEM_G=$(( 0x1F ))
+	INTEL_FAM6_NEHALEM_EP=$(( 0x1A ))
+	INTEL_FAM6_NEHALEM_EX=$(( 0x2E ))
+
+	INTEL_FAM6_WESTMERE=$(( 0x25 ))
+	INTEL_FAM6_WESTMERE_EP=$(( 0x2C ))
+	INTEL_FAM6_WESTMERE_EX=$(( 0x2F ))
+
+	INTEL_FAM6_SANDYBRIDGE=$(( 0x2A ))
+	INTEL_FAM6_SANDYBRIDGE_X=$(( 0x2D ))
+	INTEL_FAM6_IVYBRIDGE=$(( 0x3A ))
+	INTEL_FAM6_IVYBRIDGE_X=$(( 0x3E ))
+
+	INTEL_FAM6_HASWELL_CORE=$(( 0x3C ))
+	INTEL_FAM6_HASWELL_X=$(( 0x3F ))
+	INTEL_FAM6_HASWELL_ULT=$(( 0x45 ))
+	INTEL_FAM6_HASWELL_GT3E=$(( 0x46 ))
+
+	INTEL_FAM6_BROADWELL_CORE=$(( 0x3D ))
+	INTEL_FAM6_BROADWELL_GT3E=$(( 0x47 ))
+	INTEL_FAM6_BROADWELL_X=$(( 0x4F ))
+	INTEL_FAM6_BROADWELL_XEON_D=$(( 0x56 ))
+
+	INTEL_FAM6_SKYLAKE_MOBILE=$(( 0x4E ))
+	INTEL_FAM6_SKYLAKE_DESKTOP=$(( 0x5E ))
+	INTEL_FAM6_SKYLAKE_X=$(( 0x55 ))
+	INTEL_FAM6_KABYLAKE_MOBILE=$(( 0x8E ))
+	INTEL_FAM6_KABYLAKE_DESKTOP=$(( 0x9E ))
+
+	# /* "Small Core" Processors (Atom) */
+
+	INTEL_FAM6_ATOM_PINEVIEW=$(( 0x1C ))
+	INTEL_FAM6_ATOM_LINCROFT=$(( 0x26 ))
+	INTEL_FAM6_ATOM_PENWELL=$(( 0x27 ))
+	INTEL_FAM6_ATOM_CLOVERVIEW=$(( 0x35 ))
+	INTEL_FAM6_ATOM_CEDARVIEW=$(( 0x36 ))
+	INTEL_FAM6_ATOM_SILVERMONT1=$(( 0x37 ))
+	INTEL_FAM6_ATOM_SILVERMONT2=$(( 0x4D ))
+	INTEL_FAM6_ATOM_AIRMONT=$(( 0x4C ))
+	INTEL_FAM6_ATOM_MERRIFIELD=$(( 0x4A ))
+	INTEL_FAM6_ATOM_MOOREFIELD=$(( 0x5A ))
+	INTEL_FAM6_ATOM_GOLDMONT=$(( 0x5C ))
+	INTEL_FAM6_ATOM_DENVERTON=$(( 0x5F ))
+	INTEL_FAM6_ATOM_GEMINI_LAKE=$(( 0x7A ))
+
+	# /* Xeon Phi */
+
+	INTEL_FAM6_XEON_PHI_KNL=$(( 0x57 ))
+	INTEL_FAM6_XEON_PHI_KNM=$(( 0x85 ))
+}
+
 is_ucode_blacklisted()
 {
 	# if it's not an Intel, don't bother: it's not blacklisted
-	grep -q GenuineIntel /proc/cpuinfo || return 1
+	[ "$cpu_vendor" = GenuineIntel ] || return 1
 	# it also needs to be family=6
-	grep -qE '^cpu family.+ 6$' /proc/cpuinfo || return 1
-	cpu_model=$(   grep '^model'    /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
-	cpu_stepping=$(grep '^stepping' /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
-	cpu_ucode=$(grep '^microcode' /proc/cpuinfo | awk '{print $3}' | head -1)
+	[ "$cpu_family" = 6 ] || return 1
 	# now, check each known bad microcode
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n105
-	INTEL_FAM6_KABYLAKE_DESKTOP=158
-	INTEL_FAM6_KABYLAKE_MOBILE=142
-	INTEL_FAM6_SKYLAKE_X=85
-	INTEL_FAM6_SKYLAKE_MOBILE=78
-	INTEL_FAM6_SKYLAKE_DESKTOP=94
-	INTEL_FAM6_BROADWELL_CORE=61
-	INTEL_FAM6_BROADWELL_GT3E=71
-	INTEL_FAM6_HASWELL_ULT=69
-	INTEL_FAM6_HASWELL_GT3E=70
-	INTEL_FAM6_HASWELL_CORE=60
-	INTEL_FAM6_IVYBRIDGE_X=62
-	INTEL_FAM6_HASWELL_X=63
-	INTEL_FAM6_BROADWELL_XEON_D=86
-	INTEL_FAM6_BROADWELL_GT3E=71
-	INTEL_FAM6_BROADWELL_X=79
-	INTEL_FAM6_ATOM_GEMINI_LAKE=122
-	INTEL_FAM6_SANDYBRIDGE_X=45
 	# model,stepping,microcode
 	set -u
 	for tuple in \
@@ -743,6 +803,7 @@ fi
 
 # root check (only for live mode, for offline mode, we already checked if we could read the files)
 
+parse_cpu_details
 if [ "$opt_live" = 1 ]; then
 	if [ "$(id -u)" -ne 0 ]; then
 		_warn "Note that you should launch this script with root privileges to get accurate information."
@@ -752,8 +813,6 @@ if [ "$opt_live" = 1 ]; then
 	fi
 	_info "Checking for vulnerabilities on current system"
 	_info "Kernel is \033[35m$(uname -s) $(uname -r) $(uname -v) $(uname -m)\033[0m"
-	# call is_cpu_vulnerable to fill the cpu_friendly_name var
-	is_cpu_vulnerable 0
 	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
 	# try to find the image of the current running kernel
