@@ -791,6 +791,7 @@ is_ucode_blacklisted()
 	# now, check each known bad microcode
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n105
 	# model,stepping,microcode
+	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode"
 	set -u
 	for tuple in \
 		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0B,0x84 \
@@ -822,7 +823,6 @@ is_ucode_blacklisted()
 		ucode=$(echo $tuple | cut -d, -f3)
 		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ] && echo "$cpu_ucode" | grep -qi "^$ucode$"; then
 			_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
-			bad_ucode_found="Intel CPU Family 6 Model $cpu_model Stepping $cpu_stepping with microcode $cpu_ucode"
 			set +u
 			return 0
 		fi
@@ -1186,7 +1186,7 @@ check_cpu()
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
 	if is_ucode_blacklisted; then
-		pstatus red YES "$bad_ucode_found"
+		pstatus red YES "$ucode_found"
 		_warn
 		_warn "The microcode your CPU is running on is known to cause instability problems,"
 		_warn "such as intempestive reboots or random crashes."
@@ -1194,7 +1194,7 @@ check_cpu()
 		_warn "the mitigations for Spectre), or upgrade to a newer one if available."
 		_warn
 	else
-		pstatus green NO
+		pstatus green NO "$ucode_found"
 	fi
 
 	_info     "* CPU vulnerability to the three speculative execution attacks variants"
