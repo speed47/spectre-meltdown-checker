@@ -610,6 +610,36 @@ unload_cpuid()
 	fi
 }
 
+read_cpuid()
+{
+	_leaf="$1"
+	_bytenum="$2"
+	_and_operand="$3"
+
+	if [ ! -e /dev/cpu/0/cpuid ]; then
+		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+		load_cpuid
+	fi
+	if [ ! -e /dev/cpu/0/cpuid ]; then
+		return 2
+	fi
+
+	if [ "$opt_verbose" -ge 3 ]; then
+		dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 >/dev/null 2>/dev/null
+		_debug "cpuid: reading leaf$_leaf of cpuid on cpu0, ret=$?"
+		_debug "cpuid: leaf$_leaf eax-ebx-ecx-edx: $(   dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
+		_debug "cpuid: leaf$_leaf edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=$_bytenum count=1 2>/dev/null | od -x -A n)"
+	fi
+	# getting proper byte of edx on leaf$_leaf of cpuinfo in decimal
+	_reg_byte=$(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip="$_bytenum" count=1 2>/dev/null | od -t u1 -A n | awk '{print $1}')
+	_debug "cpuid: leaf$_leaf byte $_bytenum: $_reg_byte (decimal)"
+	_reg_bit=$(( _reg_byte & _and_operand ))
+	_debug "cpuid: leaf$_leaf byte $_bytenum & $_and_operand = $_reg_bit"
+	[ "$_reg_bit" -eq 0 ] && return 1
+	# $_reg_bit is > 0, so the bit was found: return true (aka 0)
+	return 0
+}
+
 dmesg_grep()
 {
 	# grep for something in dmesg, ensuring that the dmesg buffer
@@ -982,31 +1012,15 @@ check_cpu()
 	fi
 
 	_info_nol "    * CPU indicates IBRS capability: "
-	if [ ! -e /dev/cpu/0/cpuid ]; then
-		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-		load_cpuid
-	fi
-	if [ ! -e /dev/cpu/0/cpuid ]; then
+	# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
+	read_cpuid 7 15 4; ret=$?
+	if [ $ret -eq 0 ]; then
+		pstatus green YES "SPEC_CTRL feature bit"
+		cpuid_spec_ctrl=1
+	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
 	else
-		# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
-		if [ "$opt_verbose" -ge 3 ]; then
-			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf7 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
-			_debug "cpuid: leaf7 edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)"
-		fi
-		# getting high byte of edx on leaf7 of cpuinfo in decimal
-		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
-		_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
-		edx_bit26=$(( edx_hb & 4 ))
-		_debug "cpuid: edx_bit26=$edx_bit26"
-		if [ "$edx_bit26" -eq 4 ]; then
-			pstatus green YES "SPEC_CTRL feature bit"
-			cpuid_spec_ctrl=1
-		else
-			pstatus red NO
-		fi
+		pstatus red NO
 	fi
 
 	# hardware support according to kernel
@@ -1043,29 +1057,18 @@ check_cpu()
 		fi
 	fi
 
+
 	_info_nol "    * CPU indicates IBPB capability: "
-	if [ ! -e /dev/cpu/0/cpuid ]; then
+	# CPUID EAX=0x80000008, ECX=0x00 return EBX[12] indicates support for just IBPB.
+	read_cpuid 2147483656 5 16; ret=$?
+	if [ $ret -eq 0 ]; then
+		pstatus green YES "IBPB_SUPPORT feature bit"
+	elif [ "$cpuid_spec_ctrl" = 1 ]; then
+		pstatus green YES "SPEC_CTRL feature bit"
+	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
 	else
-		# CPUID EAX=0x80000008, ECX=0x00 return EBX[12] indicates support for just IBPB.
-		if [ "$opt_verbose" -ge 3 ]; then
-			dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-			_debug "cpuid: reading leaf80000008 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf80000008 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
-			_debug "cpuid: leaf80000008 ebx 3rd byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -x -A n)"
-		fi
-		# getting high byte of edx on leaf7 of cpuinfo in decimal
-		ebx_b3=$(dd if=/dev/cpu/0/cpuid bs=16 skip=2147483656 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=5 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
-		_debug "cpuid: leaf80000008 ebx 3rd byte: $ebx_b3 (decimal)"
-		ebx_bit12=$(( ebx_b3 & 16 ))
-		_debug "cpuid: ebx_bit12=$ebx_bit12"
-		if [ "$ebx_bit12" -eq 16 ]; then
-			pstatus green YES "IBPB_SUPPORT feature bit"
-		elif [ "$cpuid_spec_ctrl" = 1 ]; then
-			pstatus green YES "SPEC_CTRL feature bit"
-		else
-			pstatus red NO
-		fi
+		pstatus red NO
 	fi
 
 	# STIBP
@@ -1080,53 +1083,29 @@ check_cpu()
 	fi
 
 	_info_nol "    * CPU indicates STIBP capability: "
-	if [ ! -e /dev/cpu/0/cpuid ]; then
+	# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
+	read_cpuid 7 15 8; ret=$?
+	if [ $ret -eq 0 ]; then
+		pstatus green YES
+	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
 	else
-		# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
-		if [ "$opt_verbose" -ge 3 ]; then
-			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf7 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
-			_debug "cpuid: leaf7 edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)"
-		fi
-		# getting high byte of edx on leaf7 of cpuinfo in decimal
-		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
-		_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
-		edx_bit27=$(( edx_hb & 8 ))
-		_debug "cpuid: edx_bit27=$edx_bit27"
-		if [ "$edx_bit27" -eq 8 ]; then
-			pstatus green YES
-		else
-			pstatus red NO
-		fi
+		pstatus red NO
 	fi
 
 	_info     "  * Enhanced IBRS (IBRS_ALL)"
 	_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 	cpuid_arch_capabilities=-1
-	if [ ! -e /dev/cpu/0/cpuid ]; then
+	# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
+	read_cpuid 7 15 32; ret=$?
+	if [ $ret -eq 0 ]; then
+		pstatus green YES
+		cpuid_arch_capabilities=1
+	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
 	else
-		# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
-		if [ "$opt_verbose" -ge 3 ]; then
-			dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-			_debug "cpuid: reading leaf7 of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf7 eax-ebx-ecx-edx: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
-			_debug "cpuid: leaf7 edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -x -A n)"
-		fi
-		# getting high byte of edx on leaf7 of cpuinfo in decimal
-		edx_hb=$(dd if=/dev/cpu/0/cpuid bs=16 skip=7 iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=15 count=1 2>/dev/null | od -t u -A n | awk '{print $1}')
-		_debug "cpuid: leaf7 edx higher byte: $edx_hb (decimal)"
-		edx_bit29=$(( edx_hb & 32 ))
-		_debug "cpuid: edx_bit29=$edx_bit29"
-		if [ "$edx_bit27" -eq 32 ]; then
-			pstatus green YES
-			cpuid_arch_capabilities=1
-		else
-			pstatus red NO
-			cpuid_arch_capabilities=0
-		fi
+		pstatus red NO
+		cpuid_arch_capabilities=0
 	fi
 
 	_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
@@ -1469,9 +1448,6 @@ check_variant2()
 		else
 			pstatus blue N/A "not testable in offline mode"
 		fi
-
-		unload_msr
-		unload_cpuid
 
 		_info "* Mitigation 2"
 		_info_nol "  * Kernel compiled with retpoline option: "
@@ -1827,6 +1803,9 @@ _info "A false sense of security is worse than no security at all, see --disclai
 
 # this'll umount only if we mounted debugfs ourselves
 umount_debugfs
+# same for modules
+unload_msr
+unload_cpuid
 
 # cleanup the temp decompressed config
 [ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
