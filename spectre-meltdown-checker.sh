@@ -700,6 +700,7 @@ is_ucode_blacklisted()
 		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ] && echo "$cpu_ucode" | grep -qi "^$ucode$"; then
 			_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
 			bad_ucode_found="Intel CPU Family 6 Model $cpu_model Stepping $cpu_stepping with microcode $cpu_ucode"
+			set +u
 			return 0
 		fi
 	done
