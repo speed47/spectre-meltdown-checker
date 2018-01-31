@@ -240,7 +240,7 @@ is_cpu_vulnerable()
 		for cpupart in $cpu_part_list
 		do
 			i=$(( i + 1 ))
-			cpuarch=$(echo "$cpuarch_list" | awk '{ print $'$i' }')
+			cpuarch=$(echo "$cpu_arch_list" | awk '{ print $'$i' }')
 			_debug "checking cpu$i: <$cpupart> <$cpuarch>"
 			# some kernels report AArch64 instead of 8
 			[ "$cpuarch" = "AArch64" ] && cpuarch=8
@@ -658,7 +658,7 @@ read_cpuid()
 		dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 >/dev/null 2>/dev/null
 		_debug "cpuid: reading leaf$_leaf of cpuid on cpu0, ret=$?"
 		_debug "cpuid: leaf$_leaf eax-ebx-ecx-edx: $(   dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
-		_debug "cpuid: leaf$_leaf edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip=$_bytenum count=1 2>/dev/null | od -x -A n)"
+		_debug "cpuid: leaf$_leaf edx higher byte is: $(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip="$_bytenum" count=1 2>/dev/null | od -x -A n)"
 	fi
 	# getting proper byte of edx on leaf$_leaf of cpuinfo in decimal
 	_reg_byte=$(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip="$_bytenum" count=1 2>/dev/null | od -t u1 -A n | awk '{print $1}')
@@ -720,6 +720,8 @@ parse_cpu_details()
 
 	# also define those that we will need in other funcs
 	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
+	# shellcheck disable=SC2034
+	{
 	INTEL_FAM6_CORE_YONAH=$(( 0x0E ))
 
 	INTEL_FAM6_CORE2_MEROM=$(( 0x0F ))
@@ -777,6 +779,7 @@ parse_cpu_details()
 
 	INTEL_FAM6_XEON_PHI_KNL=$(( 0x57 ))
 	INTEL_FAM6_XEON_PHI_KNM=$(( 0x85 ))
+	}
 }
 
 is_ucode_blacklisted()
