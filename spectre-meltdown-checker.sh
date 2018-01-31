@@ -210,19 +210,10 @@ is_cpu_vulnerable()
 		variant3=immune
 	elif [ "$cpu_vendor" = GenuineIntel ]; then
 		# Intel
-		# Old Atoms are not vulnerable to spectre 2 nor meltdown
-		# https://security-center.intel.com/advisory.aspx?intelid=INTEL-SA-00088&languageid=en-fr
-		# model name : Genuine Intel(R) CPU N270 @ 1.60GHz
-		# model name : Intel(R) Atom(TM) CPU N270 @ 1.60GHz
-		# model name : Intel(R) Atom(TM) CPU 330 @ 1.60GHz
-		if grep -qE '^model name.+ Intel\(R\) (Atom\(TM\) CPU +(S|D|N|230|330)|CPU N[0-9]{3} )' /proc/cpuinfo; then
-			variant1=vuln
-			[ -z "$variant2" ] && variant2=immune
-			[ -z "$variant3" ] && variant3=immune
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
 		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown vulnerable
 		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
-		elif grep -qE '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' /proc/cpuinfo; then
+		if grep -qE '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' /proc/cpuinfo; then
 			variant1=vuln
 			[ -z "$variant2" ] && variant2=immune
 			variant3=vuln
