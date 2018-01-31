@@ -649,7 +649,7 @@ is_ucode_blacklisted()
 	cpu_stepping=$(grep '^stepping' /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 	cpu_ucode=$(grep '^microcode' /proc/cpuinfo | awk '{print $3}' | head -1)
 	# now, check each known bad microcode
-	# source: http://lkml.iu.edu/hypermail/linux/kernel/1801.2/06349.html
+	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n105
 	INTEL_FAM6_KABYLAKE_DESKTOP=158
 	INTEL_FAM6_KABYLAKE_MOBILE=142
 	INTEL_FAM6_SKYLAKE_X=85
@@ -665,31 +665,34 @@ is_ucode_blacklisted()
 	INTEL_FAM6_BROADWELL_XEON_D=86
 	INTEL_FAM6_BROADWELL_GT3E=71
 	INTEL_FAM6_BROADWELL_X=79
+	INTEL_FAM6_ATOM_GEMINI_LAKE=122
+	INTEL_FAM6_SANDYBRIDGE_X=45
 	# model,stepping,microcode
+	set -u
 	for tuple in \
-		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0B,0x80      \
-		$INTEL_FAM6_KABYLAKE_MOBILE,0x0A,0x80       \
-		$INTEL_FAM6_KABYLAKE_MOBILE,0x09,0x80       \
-		$INTEL_FAM6_KABYLAKE_DESKTOP,0x09,0x80      \
-		$INTEL_FAM6_SKYLAKE_X,0x04,0x0200003C       \
-		$INTEL_FAM6_SKYLAKE_MOBILE,0x03,0x000000C2  \
-		$INTEL_FAM6_SKYLAKE_DESKTOP,0x03,0x000000C2 \
-		$INTEL_FAM6_BROADWELL_CORE,0x04,0x28        \
-		$INTEL_FAM6_BROADWELL_GT3E,0x01,0x0000001B  \
-		$INTEL_FAM6_HASWELL_ULT,0x01,0x21           \
-		$INTEL_FAM6_HASWELL_GT3E,0x01,0x18          \
-		$INTEL_FAM6_HASWELL_CORE,0x03,0x23          \
-		$INTEL_FAM6_IVYBRIDGE_X,0x04,0x42a          \
-		$INTEL_FAM6_HASWELL_X,0x02,0x3b             \
-		$INTEL_FAM6_HASWELL_X,0x04,0x10             \
-		$INTEL_FAM6_HASWELL_CORE,0x03,0x23          \
-		$INTEL_FAM6_BROADWELL_XEON_D,0x02,0x14      \
-		$INTEL_FAM6_BROADWELL_XEON_D,0x03,0x7000011 \
-		$INTEL_FAM6_BROADWELL_GT3E,0x01,0x0000001B  \
-		$INTEL_FAM6_BROADWELL_X,0x01,0x0b000025     \
-		$INTEL_FAM6_KABYLAKE_DESKTOP,0x09,0x80      \
-		$INTEL_FAM6_SKYLAKE_X,0x03,0x100013e        \
-		$INTEL_FAM6_SKYLAKE_X,0x04,0x200003c
+		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0B,0x84 \
+		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0A,0x84 \
+		$INTEL_FAM6_KABYLAKE_DESKTOP,0x09,0x84 \
+		$INTEL_FAM6_KABYLAKE_MOBILE,0x0A,0x84  \
+		$INTEL_FAM6_KABYLAKE_MOBILE,0x09,0x84  \
+		$INTEL_FAM6_SKYLAKE_X,0x03,0x0100013e  \
+		$INTEL_FAM6_SKYLAKE_X,0x04,0x0200003c  \
+		$INTEL_FAM6_SKYLAKE_MOBILE,0x03,0xc2   \
+		$INTEL_FAM6_SKYLAKE_DESKTOP,0x03,0xc2  \
+		$INTEL_FAM6_BROADWELL_CORE,0x04,0x28   \
+		$INTEL_FAM6_BROADWELL_GT3E,0x01,0x1b   \
+		$INTEL_FAM6_BROADWELL_XEON_D,0x02,0x14 \
+		$INTEL_FAM6_BROADWELL_XEON_D,0x03,0x07000011 \
+		$INTEL_FAM6_BROADWELL_X,0x01,0x0b000025 \
+		$INTEL_FAM6_HASWELL_ULT,0x01,0x21      \
+		$INTEL_FAM6_HASWELL_GT3E,0x01,0x18     \
+		$INTEL_FAM6_HASWELL_CORE,0x03,0x23     \
+		$INTEL_FAM6_HASWELL_X,0x02,0x3b        \
+		$INTEL_FAM6_HASWELL_X,0x04,0x10        \
+		$INTEL_FAM6_IVYBRIDGE_X,0x04,0x42a     \
+		$INTEL_FAM6_ATOM_GEMINI_LAKE,0x01,0x22 \
+		$INTEL_FAM6_SANDYBRIDGE_X,0x06,0x61b   \
+		$INTEL_FAM6_SANDYBRIDGE_X,0x07,0x712
 	do
 		model=$(echo $tuple | cut -d, -f1)
 		stepping=$(( $(echo $tuple | cut -d, -f2) ))
@@ -700,6 +703,7 @@ is_ucode_blacklisted()
 			return 0
 		fi
 	done
+	set +u
 	_debug "is_ucode_blacklisted: no ($cpu_model/$cpu_stepping/$cpu_ucode)"
 	return 1
 }
