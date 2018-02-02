@@ -819,6 +819,32 @@ is_ucode_blacklisted()
 	return 1
 }
 
+is_skylake_cpu()
+{
+	# is this a skylake cpu?
+	# return 0 if yes, 1 otherwise
+	#if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&
+	#	    boot_cpu_data.x86 == 6) {
+	#		switch (boot_cpu_data.x86_model) {
+	#		case INTEL_FAM6_SKYLAKE_MOBILE:
+	#		case INTEL_FAM6_SKYLAKE_DESKTOP:
+	#		case INTEL_FAM6_SKYLAKE_X:
+	#		case INTEL_FAM6_KABYLAKE_MOBILE:
+	#		case INTEL_FAM6_KABYLAKE_DESKTOP:
+	#			return true;
+	parse_cpu_details
+	[ "$cpu_vendor" = GenuineIntel ] || return 1
+	[ "$cpu_family" = 6 ] || return 1
+	if [ "$cpu_model" = $INTEL_FAM6_SKYLAKE_MOBILE        ] || \
+		[ "$cpu_model" = $INTEL_FAM6_SKYLAKE_DESKTOP  ] || \
+		[ "$cpu_model" = $INTEL_FAM6_SKYLAKE_X        ] || \
+		[ "$cpu_model" = $INTEL_FAM6_KABYLAKE_MOBILE  ] || \
+		[ "$cpu_model" = $INTEL_FAM6_KABYLAKE_DESKTOP ]; then
+		return 0
+	fi
+	return 1
+}
+
 # check for mode selection inconsistency
 if [ "$opt_live_explicit" = 1 ]; then
 	if [ -n "$opt_kernel" ] || [ -n "$opt_config" ] || [ -n "$opt_map" ]; then
