@@ -996,13 +996,15 @@ if [ -z "$vmlinux" ] || [ ! -r "$vmlinux" ]; then
 else
 	vmlinux_version=$(strings "$vmlinux" 2>/dev/null | grep '^Linux version ' | head -1)
 	if [ -n "$vmlinux_version" ]; then
-		_verbose "Kernel image is \033[35m$vmlinux_version"
 		# in live mode, check if the img we found is the correct one
 		if [ "$opt_live" = 1 ]; then
+			_verbose "Kernel image is \033[35m$vmlinux_version"
 			if ! echo "$vmlinux_version" | grep -qF "$(uname -r)" || \
 				! echo "$vmlinux_version" | grep -qF "$(uname -v)"; then
 				_warn "Possible disrepancy between your running kernel and the image we found ($opt_kernel), results might be incorrect"
 			fi
+		else
+			_info "Kernel image is \033[35m$vmlinux_version"
 		fi
 	fi
 fi
