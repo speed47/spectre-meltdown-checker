@@ -8,7 +8,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='0.34'
+VERSION='0.34+'
 
 show_usage()
 {
@@ -123,7 +123,10 @@ __echo()
 
 	if [ "$opt_no_color" = 1 ] ; then
 		# strip ANSI color codes
-		_msg=$($echo_cmd -e "$_msg" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g")
+		# some sed versions (i.e. toybox) can't seem to handle
+		# \033 aka \x1B correctly, so do it for them.
+		_ctrlchar=$($echo_cmd -e "\033")
+		_msg=$($echo_cmd -e "$_msg" | sed -r "s/$_ctrlchar\[([0-9][0-9]?(;[0-9][0-9]?)?)?m//g")
 	fi
 	# shellcheck disable=SC2086
 	$echo_cmd $opt -e "$_msg"
