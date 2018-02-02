@@ -243,7 +243,9 @@ is_cpu_vulnerable()
 		for cpupart in $cpu_part_list
 		do
 			i=$(( i + 1 ))
-			cpuarch=$(echo "$cpu_arch_list" | awk '{ print $'$i' }')
+			# do NOT quote $cpu_arch_list below
+			# shellcheck disable=SC2086
+			cpuarch=$(echo $cpu_arch_list | awk '{ print $'$i' }')
 			_debug "checking cpu$i: <$cpupart> <$cpuarch>"
 			# some kernels report AArch64 instead of 8
 			[ "$cpuarch" = "AArch64" ] && cpuarch=8
@@ -706,9 +708,11 @@ parse_cpu_details()
 		# an example is "bigLITTLE", so we need to store the whole list, this is needed for is_cpu_vulnerable
 		cpu_part_list=$(awk '/CPU part/         {print $4}' /proc/cpuinfo)
 		cpu_arch_list=$(awk '/CPU architecture/ {print $3}' /proc/cpuinfo)
-		# take the first one to fill the friendly name
-		cpu_arch=$(echo "$cpu_arch_list" | awk '{ print $1 }')
-		cpu_part=$(echo "$cpu_part_list" | awk '{ print $1 }')
+		# take the first one to fill the friendly name, do NOT quote the vars below
+		# shellcheck disable=SC2086
+		cpu_arch=$(echo $cpu_arch_list | awk '{ print $1 }')
+		# shellcheck disable=SC2086
+		cpu_part=$(echo $cpu_part_list | awk '{ print $1 }')
 		[ "$cpu_arch" = "AArch64" ] && cpu_arch=8
 		cpu_friendly_name="ARM"
 		[ -n "$cpu_arch" ] && cpu_friendly_name="$cpu_friendly_name v$cpu_arch"
@@ -719,7 +723,6 @@ parse_cpu_details()
 	cpu_model=$(   grep '^model'      /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 	cpu_stepping=$(grep '^stepping'   /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 	cpu_ucode=$(  grep '^microcode'   /proc/cpuinfo | awk '{print $3}' | head -1)
-	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1 | sed -e 's/^ *//')
 
 	# also define those that we will need in other funcs
 	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
