@@ -10,6 +10,18 @@
 #
 VERSION='0.34+'
 
+trap 'exit_cleanup' EXIT
+trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
+exit_cleanup()
+{
+	# cleanup the temp decompressed config & kernel image
+	[ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
+	[ -n "$vmlinuxtmp"    ] && [ -f "$vmlinuxtmp"    ] && rm -f "$vmlinuxtmp"
+	[ "$mounted_debugfs" = 1 ] && umount /sys/kernel/debug 2>/dev/null
+	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
+	[ "$insmod_msr"      = 1 ] && rmmod msr 2>/dev/null
+}
+
 show_usage()
 {
 	# shellcheck disable=SC2086
@@ -577,8 +589,6 @@ extract_vmlinux()
 	[ -n "$1" ] || return 1
 	# Prepare temp files:
 	vmlinuxtmp="$(mktemp /tmp/vmlinux-XXXXXX)"
-	# single quotes in trap cmd: will be expanded when signalled
-	trap 'rm -f $vmlinuxtmp' EXIT INT
 
 	# Initial attempt for uncompressed images or objects:
 	if check_vmlinux "$1"; then
@@ -607,42 +617,16 @@ mount_debugfs()
 	fi
 }
 
-umount_debugfs()
-{
-	if [ "$mounted_debugfs" = 1 ]; then
-		# umount debugfs if we did mount it ourselves
-		umount /sys/kernel/debug
-	fi
-}
-
 load_msr()
 {
 	modprobe msr 2>/dev/null && insmod_msr=1
 	_debug "attempted to load module msr, insmod_msr=$insmod_msr"
 }
 
-unload_msr()
-{
-	if [ "$insmod_msr" = 1 ]; then
-		# if we used modprobe ourselves, rmmod the module
-		rmmod msr 2>/dev/null
-		_debug "attempted to unload module msr, ret=$?"
-	fi
-}
-
 load_cpuid()
 {
 	modprobe cpuid 2>/dev/null && insmod_cpuid=1
 	_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
-}
-
-unload_cpuid()
-{
-	if [ "$insmod_cpuid" = 1 ]; then
-		# if we used modprobe ourselves, rmmod the module
-		rmmod cpuid 2>/dev/null
-		_debug "attempted to unload module cpuid, ret=$?"
-	fi
 }
 
 read_cpuid()
@@ -859,9 +843,6 @@ if [ "$opt_coreos" = 1 ]; then
 	mount_debugfs
 	toolbox --ephemeral --bind-ro /dev/cpu:/dev/cpu -- sh -c "dnf install -y binutils which && /media/root$PWD/$0 $* --coreos-within-toolbox"
 	exitcode=$?
-	mount_debugfs
-	unload_cpuid
-	unload_msr
 	exit $exitcode
 else
 	if is_coreos; then
@@ -1839,15 +1820,6 @@ if [ "$opt_variant3" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 fi
 
 _info "A false sense of security is worse than no security at all, see --disclaimer"
-
-# this'll umount only if we mounted debugfs ourselves
-umount_debugfs
-# same for modules
-unload_msr
-unload_cpuid
-
-# cleanup the temp decompressed config
-[ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
 	if [ ! -z "$nrpe_vuln" ]; then
