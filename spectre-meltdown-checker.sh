@@ -982,6 +982,8 @@ if [ -e "$opt_kernel" ]; then
 	if ! which readelf >/dev/null 2>&1; then
 		_debug "readelf not found"
 		vmlinux_err="missing 'readelf' tool, please install it, usually it's in the 'binutils' package"
+	elif [ "$opt_sysfs_only" = 1 ]; then
+		vmlinux_err='kernel image decompression skipped'
 	else
 		extract_vmlinux "$opt_kernel"
 	fi
