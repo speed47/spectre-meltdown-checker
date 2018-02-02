@@ -993,6 +993,18 @@ else
 fi
 if [ -z "$vmlinux" ] || [ ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
+else
+	vmlinux_version=$(strings "$vmlinux" 2>/dev/null | grep '^Linux version ' | head -1)
+	if [ -n "$vmlinux_version" ]; then
+		_verbose "Kernel image is \033[35m$vmlinux_version"
+		# in live mode, check if the img we found is the correct one
+		if [ "$opt_live" = 1 ]; then
+			if ! echo "$vmlinux_version" | grep -qF "$(uname -r)" || \
+				! echo "$vmlinux_version" | grep -qF "$(uname -v)"; then
+				_warn "Possible disrepancy between your running kernel and the image we found ($opt_kernel), results might be incorrect"
+			fi
+		fi
+	fi
 fi
 
 _info
