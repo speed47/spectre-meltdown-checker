@@ -323,7 +323,7 @@ is_cpu_specex_free()
 	# { X86_VENDOR_INTEL,     5 },
 	# { X86_VENDOR_NSC,       5 },
 	# { X86_VENDOR_ANY,       4 },
-	set -u
+	parse_cpu_details
 	if [ "$cpu_vendor" = GenuineIntel ]; then
 		if [ "$cpu_family" = 6 ]; then
 			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"  ]      || \
@@ -331,15 +331,12 @@ is_cpu_specex_free()
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT"   ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL"    ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW"   ]; then
-				set +u
 				return 0
 			fi
 		elif [ "$cpu_family" = 5 ]; then
-			set +u
 			return 0
 		fi
 	fi
-	set +u
 	[ "$cpu_family" -eq 4 ] && return 0
 	return 1
 }
@@ -683,6 +680,7 @@ is_coreos()
 
 parse_cpu_details()
 {
+	[ "$parse_cpu_details_done" = 1 ] && return 0
 	cpu_vendor=$(  grep '^vendor_id'  /proc/cpuinfo | awk '{print $3}' | head -1)
 	cpu_friendly_name=$(grep '^model name' /proc/cpuinfo | cut -d: -f2- | head -1 | sed -e 's/^ *//')
 	# special case for ARM follows
@@ -770,10 +768,12 @@ parse_cpu_details()
 	INTEL_FAM6_XEON_PHI_KNL=$(( 0x57 ))
 	INTEL_FAM6_XEON_PHI_KNM=$(( 0x85 ))
 	}
+	parse_cpu_details_done=1
 }
 
 is_ucode_blacklisted()
 {
+	parse_cpu_details
 	# if it's not an Intel, don't bother: it's not blacklisted
 	[ "$cpu_vendor" = GenuineIntel ] || return 1
 	# it also needs to be family=6
@@ -782,7 +782,6 @@ is_ucode_blacklisted()
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n105
 	# model,stepping,microcode
 	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode"
-	set -u
 	for tuple in \
 		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0B,0x84 \
 		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0A,0x84 \
@@ -813,11 +812,9 @@ is_ucode_blacklisted()
 		ucode=$(echo $tuple | cut -d, -f3)
 		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ] && echo "$cpu_ucode" | grep -qi "^$ucode$"; then
 			_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
-			set +u
 			return 0
 		fi
 	done
-	set +u
 	_debug "is_ucode_blacklisted: no ($cpu_model/$cpu_stepping/$cpu_ucode)"
 	return 1
 }
@@ -851,10 +848,9 @@ else
 	fi
 fi
 
-# root check (only for live mode, for offline mode, we already checked if we could read the files)
-
 parse_cpu_details
 if [ "$opt_live" = 1 ]; then
+	# root check (only for live mode, for offline mode, we already checked if we could read the files)
 	if [ "$(id -u)" -ne 0 ]; then
 		_warn "Note that you should launch this script with root privileges to get accurate information."
 		_warn "We'll proceed but you might see permission denied errors."
@@ -920,6 +916,7 @@ if [ "$opt_live" = 1 ]; then
 	fi
 else
 	_info "Checking for vulnerabilities against specified kernel"
+	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 fi
 
 if [ -n "$opt_kernel" ]; then
@@ -1405,9 +1402,7 @@ check_variant2()
 						;;
 					0)
 						pstatus red NO
-						if [ "$opt_verbose" -ge 2 ]; then
-							_info "    - To enable, \`echo 1 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
-						fi
+						_verbose "    - To enable, \`echo 1 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
 						;;
 					1 | 2) pstatus green YES;;
 					*)     pstatus yellow UNKNOWN;;
@@ -1433,9 +1428,7 @@ check_variant2()
 						;;
 					0 | 1)
 						pstatus red NO
-						if [ "$opt_verbose" -ge 2 ]; then
-							_info "    - To enable, \`echo 2 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
-						fi
+						_verbose "    - To enable, \`echo 2 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
 						;;
 					2) pstatus green YES;;
 					*) pstatus yellow UNKNOWN;;
@@ -1457,9 +1450,7 @@ check_variant2()
 					;;
 				0)
 					pstatus red NO
-					if [ "$opt_verbose" -ge 2 ]; then
-						_info "    - To enable, \`echo 1 > $ibrs_knob_dir/ibpb_enabled' as root. If you don't have hardware support, you'll get an error."
-					fi
+					_verbose "    - To enable, \`echo 1 > $ibrs_knob_dir/ibpb_enabled' as root. If you don't have hardware support, you'll get an error."
 					;;
 				1) pstatus green YES;;
 				2) pstatus green YES "IBPB used instead of IBRS in all kernel entrypoints";;
