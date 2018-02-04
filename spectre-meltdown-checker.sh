@@ -1289,7 +1289,7 @@ check_variant1()
 		if [ "$opt_verbose" -ge 2 ] || [ "$v1_mask_nospec" != 1 ]; then
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
 			# but still show it in verbose mode
-			_info_nol "* Checking count of LFENCE instructions following a jump in kernel: "
+			_info_nol "* Checking count of LFENCE instructions following a jump in kernel... "
 			if [ -n "$vmlinux_err" ]; then
 				pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
 			else
