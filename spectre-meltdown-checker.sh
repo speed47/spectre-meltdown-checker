@@ -1587,7 +1587,7 @@ check_variant2()
 		if [ "$opt_live" = 1 ]; then
 			# If retpoline is enabled, the kernel sends this message to the log
 			# containing the specific mitigation type.
-			rp_msg='Spectre V2 : Mitigation:';
+			rp_msg='Spectre V2 : ';
 			dmesg_grep="$rp_msg Vulnerable: |$rp_msg Mitigation: "
 			ret=$(dmesg | grep -E "$dmesg_grep")
 			if [ ! -z "$ret" ]; then
