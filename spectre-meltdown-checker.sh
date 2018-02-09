@@ -1583,19 +1583,6 @@ check_variant2()
 				pstatus red NO
 			fi
 		fi
-
-		_info_nol "  * Retpoline enabled: "
-		if [ "$opt_live" = 1 ]; then
-			# kernel adds this flag when retpoline is supported and enabled,
-			# regardless of the fact that it's minimal / full and generic / amd
-			if grep -qw retpoline /proc/cpuinfo; then
-				pstatus green YES
-			else
-				pstatus red NO
-			fi
-		else
-			pstatus blue N/A "can't check this in offline mode"
-		fi
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
