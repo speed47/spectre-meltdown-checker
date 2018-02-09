@@ -1586,9 +1586,12 @@ check_variant2()
 
 		_info_nol "  * Retpoline enabled: "
 		if [ "$opt_live" = 1 ]; then
-			# kernel adds this flag when retpoline is supported and enabled,
-			# regardless of the fact that it's minimal / full and generic / amd
-			if grep -qw retpoline /proc/cpuinfo; then
+			# If retpoline is enabled, the kernel sends this message to the log
+			# containing the specific mitigation type.
+			rp_msg='Spectre V2 : ';
+			dmesg_grep="$rp_msg Vulnerable: |$rp_msg Mitigation: "
+			ret=$(dmesg | grep -E "$dmesg_grep")
+			if [ ! -z "$ret" ]; then
 				pstatus green YES
 			else
 				pstatus red NO
