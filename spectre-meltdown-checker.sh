@@ -780,6 +780,7 @@ is_ucode_blacklisted()
 	[ "$cpu_family" = 6 ] || return 1
 	# now, check each known bad microcode
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n105
+	# 2018-02-08 update: https://newsroom.intel.com/wp-content/uploads/sites/11/2018/02/microcode-update-guidance.pdf
 	# model,stepping,microcode
 	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode"
 	for tuple in \
@@ -789,13 +790,13 @@ is_ucode_blacklisted()
 		$INTEL_FAM6_KABYLAKE_MOBILE,0x0A,0x84  \
 		$INTEL_FAM6_KABYLAKE_MOBILE,0x09,0x84  \
 		$INTEL_FAM6_SKYLAKE_X,0x03,0x0100013e  \
+		$INTEL_FAM6_SKYLAKE_X,0x04,0x0200003a  \
 		$INTEL_FAM6_SKYLAKE_X,0x04,0x0200003c  \
-		$INTEL_FAM6_SKYLAKE_MOBILE,0x03,0xc2   \
-		$INTEL_FAM6_SKYLAKE_DESKTOP,0x03,0xc2  \
 		$INTEL_FAM6_BROADWELL_CORE,0x04,0x28   \
 		$INTEL_FAM6_BROADWELL_GT3E,0x01,0x1b   \
 		$INTEL_FAM6_BROADWELL_XEON_D,0x02,0x14 \
 		$INTEL_FAM6_BROADWELL_XEON_D,0x03,0x07000011 \
+		$INTEL_FAM6_BROADWELL_X,0x01,0x0b000023 \
 		$INTEL_FAM6_BROADWELL_X,0x01,0x0b000025 \
 		$INTEL_FAM6_HASWELL_ULT,0x01,0x21      \
 		$INTEL_FAM6_HASWELL_GT3E,0x01,0x18     \
