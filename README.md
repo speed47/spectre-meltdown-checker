@@ -22,6 +22,16 @@ The script will do its best to detect mitigations, including backported non-vani
 
 ![batch](https://framapic.org/HEcWFPrLewbs/om1LdufspWTJ.png)
 
+## Quick Run Command
+
+```bash
+curl -L https://raw.githubusercontent.com/speed47/spectre-meltdown-checker/master/spectre-meltdown-checker.sh | sudo bash
+
+# With JSON output
+curl -L https://raw.githubusercontent.com/speed47/spectre-meltdown-checker/master/spectre-meltdown-checker.sh | sudo bash -s -- --batch json 2>/dev/null | jq .
+
+```
+
 ## Quick summary of the CVEs
 
 **CVE-2017-5753** bounds check bypass (Spectre Variant 1)
