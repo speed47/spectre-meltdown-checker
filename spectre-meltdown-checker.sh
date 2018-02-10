@@ -919,6 +919,8 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/boot/kernel-genkernel-$(uname -m)-$(uname -r)" ] && opt_kernel="/boot/kernel-genkernel-$(uname -m)-$(uname -r)"
 		# NixOS:
 		[ -e "/run/booted-system/kernel" ] && opt_kernel="/run/booted-system/kernel"
+		# systemd kernel-install:
+		[ -e "/etc/machine-id" ] && [ -e "/boot/$(cat /etc/machine-id)/$(uname -r)/linux" ] && opt_kernel="/boot/$(cat /etc/machine-id)/$(uname -r)/linux"
 	fi
 
 	# system.map
