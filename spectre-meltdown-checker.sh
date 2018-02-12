@@ -343,7 +343,7 @@ is_cpu_specex_free()
 
 show_header()
 {
-	_info "\033[1;34mSpectre and Meltdown mitigation detection tool v$VERSION\033[0m"
+	_info "Spectre and Meltdown mitigation detection tool v$VERSION"
 	_info
 }
 
