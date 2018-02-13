@@ -1239,6 +1239,28 @@ check_cpu()
 	_info
 }
 
+check_redhat_canonical_spectre()
+{
+	# if we were already called, don't do it again
+	[ -n "$redhat_canonical_spectre" ] && return
+
+	if ! which strings >/dev/null 2>&1; then
+		redhat_canonical_spectre=-1
+	else
+		# Red Hat / Ubuntu specific variant1 patch is difficult to detect,
+		# let's use the same way than the official Red Hat detection script,
+		# and detect their specific variant2 patch. If it's present, it means
+		# that the variant1 patch is also present (both were merged at the same time)
+		if strings "$vmlinux" | grep -qw noibrs && strings "$vmlinux" | grep -qw noibpb; then
+			_debug "found redhat/canonical version of the variant2 patch (implies variant1)"
+			redhat_canonical_spectre=1
+		else
+			redhat_canonical_spectre=0
+		fi
+	fi
+}
+
+
 ###################
 # SPECTRE VARIANT 1
 check_variant1()
@@ -1289,7 +1311,17 @@ check_variant1()
 			fi
 		fi
 
-		if [ "$opt_verbose" -ge 2 ] || [ "$v1_mask_nospec" != 1 ]; then
+		_info_nol "* Kernel has the Red Hat/Ubuntu patch: "
+		check_redhat_canonical_spectre
+		if [ "$redhat_canonical_spectre" = -1 ]; then
+			pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
+		elif [ "$redhat_canonical_spectre" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus red NO
+		fi
+
+		if [ "$opt_verbose" -ge 2 ] || ( [ "$v1_mask_nospec" != 1 ] && [ "$redhat_canonical_spectre" != 1 ] ); then
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
 			# but still show it in verbose mode
 			_info_nol "* Checking count of LFENCE instructions following a jump in kernel... "
@@ -1332,6 +1364,8 @@ check_variant1()
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$v1_mask_nospec" = 1 ]; then
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (array_index_mask_nospec)"
+		elif [ "$redhat_canonical_spectre" = 1 ]; then
+			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
 		elif [ "$v1_lfence" = 1 ]; then
 			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
 		elif [ "$vmlinux_err" ]; then
@@ -1377,7 +1411,7 @@ check_variant2()
 				if [ -e "$dir/ibrs_enabled" ]; then
 					# if the file is there, we have IBRS compiled-in
 					# /sys/kernel/debug/ibrs_enabled: vanilla
-					# /sys/kernel/debug/x86/ibrs_enabled: RedHat (see https://access.redhat.com/articles/3311301)
+					# /sys/kernel/debug/x86/ibrs_enabled: Red Hat (see https://access.redhat.com/articles/3311301)
 					# /proc/sys/kernel/ibrs_enabled: OpenSUSE tumbleweed
 					pstatus green YES
 					ibrs_knob_dir=$dir
@@ -1416,6 +1450,13 @@ check_variant2()
 				pstatus green YES
 				ibrs_supported=1
 				_debug "ibrs: found '*spec_ctrl*' symbol in $opt_map"
+			fi
+		fi
+		if [ "$ibrs_supported" != 1 ]; then
+			check_redhat_canonical_spectre
+			if [ "$redhat_canonical_spectre" = 1 ]; then
+				pstatus green YES "Red Hat/Ubuntu patch"
+				ibrs_supported=1
 			fi
 		fi
 		if [ "$ibrs_supported" != 1 ]; then
@@ -1696,7 +1737,7 @@ check_variant3()
 				_debug "kpti_enabled: found 'kaiser' flag in /proc/cpuinfo"
 				kpti_enabled=1
 			elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
-				# RedHat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
+				# Red Hat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
 				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
 			fi
