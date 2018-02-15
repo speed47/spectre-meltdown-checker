@@ -8,6 +8,28 @@ You can also specify a kernel image on the command line, if you'd like to inspec
 
 The script will do its best to detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number.
 
+## Easy way to run the script
+
+- Get the latest version of the script using `curl` *or* `wget`
+
+```bash
+curl -L meltdown.ovh -o spectre-meltdown-checker.sh
+wget meltdown.ovh -O spectre-meltdown-checker.sh
+```
+
+- Inspect the script. You never blindly run scripts you downloaded from the Internet, do you?
+
+```bash
+vim spectre-meltdown-checker.sh
+```
+
+- When you're ready, run the script as root
+
+```bash
+chmod +x spectre-meltdown-checker.sh
+sudo ./spectre-meltdown-checker.sh
+```
+
 ## Example of script output
 
 - Intel Haswell CPU running under Ubuntu 16.04 LTS
