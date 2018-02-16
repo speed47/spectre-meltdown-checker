@@ -1223,7 +1223,7 @@ check_cpu()
 		_warn "the mitigations for Spectre), or upgrade to a newer one if available."
 		_warn
 	else
-		pstatus green NO "$ucode_found"
+		pstatus blue NO "$ucode_found"
 	fi
 
 	_info     "* CPU vulnerability to the three speculative execution attacks variants"
@@ -1648,6 +1648,8 @@ check_variant2()
 				pvulnstatus $cve OK "IBRS is mitigating the vulnerability"
 			elif [ "$ibpb_enabled" = 2 ]; then
 				pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
+			elif [ "$ibrs_supported" = 1 ] && [ "$cpuid_spec_ctrl" != 1 ]; then
+				pvulnstatus $cve VULN "Your kernel is compiled with IBRS but your CPU microcode is lacking support to successfully mitigate the vulnerability"
 			else
 				pvulnstatus $cve VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
 			fi
