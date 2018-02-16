@@ -4,11 +4,12 @@
 # Check for the latest version at:
 # https://github.com/speed47/spectre-meltdown-checker
 # git clone https://github.com/speed47/spectre-meltdown-checker.git
-# or wget https://raw.githubusercontent.com/speed47/spectre-meltdown-checker/master/spectre-meltdown-checker.sh
+# or wget meltdown.ovh -O spectre-meltdown-checker.sh
+# or curl -L meltdown.ovh -o spectre-meltdown-checker.sh
 #
 # Stephane Lesimple
 #
-VERSION='0.34+'
+VERSION='0.35'
 
 trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
