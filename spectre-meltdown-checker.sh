@@ -53,6 +53,7 @@ show_usage()
 		--batch text			Produce machine readable output, this is the default if --batch is specified alone
 		--batch json			Produce JSON output formatted for Puppet, Ansible, Chef...
 		--batch nrpe			Produce machine readable output formatted for NRPE
+		--batch prometheus              Produce output for consumption by prometheus-node-exporter
 		--variant [1,2,3]		Specify which variant you'd like to check, by default all variants are checked
 						Can be specified multiple times (e.g. --variant 2 --variant 3)
 
@@ -415,7 +416,7 @@ while [ -n "$1" ]; do
 		opt_verbose=0
 		shift
 		case "$1" in
-			text|nrpe|json) opt_batch_format="$1"; shift;;
+			text|nrpe|json|prometheus) opt_batch_format="$1"; shift;;
 			--*) ;;    # allow subsequent flags
 			'') ;;     # allow nothing at all
 			*)
@@ -493,14 +494,15 @@ pstatus()
 pvulnstatus()
 {
 	if [ "$opt_batch" = 1 ]; then
+		case "$1" in
+			CVE-2017-5753) aka="SPECTRE VARIANT 1";;
+			CVE-2017-5715) aka="SPECTRE VARIANT 2";;
+			CVE-2017-5754) aka="MELTDOWN";;
+		esac
+
 		case "$opt_batch_format" in
 			text) _echo 0 "$1: $2 ($3)";;
 			json)
-				case "$1" in
-					CVE-2017-5753) aka="SPECTRE VARIANT 1";;
-					CVE-2017-5715) aka="SPECTRE VARIANT 2";;
-					CVE-2017-5754) aka="MELTDOWN";;
-				esac
 				case "$2" in
 					UNK)  is_vuln="null";;
 					VULN) is_vuln="true";;
@@ -510,6 +512,9 @@ pvulnstatus()
 				;;
 
 			nrpe)	[ "$2" = VULN ] && nrpe_vuln="$nrpe_vuln $1";;
+			prometheus)
+				prometheus_output="${prometheus_output:+$prometheus_output\n}specex_vuln_status{name=\"$aka\",cve=\"$1\",status=\"$2\",info=\"$3\"} 1"
+				;;
 		esac
 	fi
 
@@ -1898,6 +1903,12 @@ fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
 	_echo 0 "${json_output%?}]"
+fi
+
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
+	echo "# TYPE specex_vuln_status untyped"
+	echo "# HELP specex_vuln_status Exposure of system to speculative execution vulnerabilities"
+	echo "$prometheus_output"
 fi
 
 # exit with the proper exit code
