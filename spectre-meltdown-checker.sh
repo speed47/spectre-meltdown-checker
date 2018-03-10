@@ -339,7 +339,7 @@ is_cpu_specex_free()
 			return 0
 		fi
 	fi
-	[ "$cpu_family" -eq 4 ] && return 0
+	[ "$cpu_family" = 4 ] && return 0
 	return 1
 }
 
@@ -918,6 +918,8 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/boot/vmlinuz-linux"       ] && opt_kernel="/boot/vmlinuz-linux"
 		# Linux-Libre:
 		[ -e "/boot/vmlinuz-linux-libre" ] && opt_kernel="/boot/vmlinuz-linux-libre"
+		# pine64
+		[ -e "/boot/pine64/Image"        ] && opt_kernel="/boot/pine64/Image"
 		# generic:
 		[ -e "/boot/vmlinuz-$(uname -r)" ] && opt_kernel="/boot/vmlinuz-$(uname -r)"
 		[ -e "/boot/kernel-$( uname -r)" ] && opt_kernel="/boot/kernel-$( uname -r)"
@@ -1259,6 +1261,8 @@ check_redhat_canonical_spectre()
 
 	if ! which strings >/dev/null 2>&1; then
 		redhat_canonical_spectre=-1
+	elif [ -n "$vmlinux_err" ]; then
+		redhat_canonical_spectre=-2
 	else
 		# Red Hat / Ubuntu specific variant1 patch is difficult to detect,
 		# let's use the same way than the official Red Hat detection script,
@@ -1328,6 +1332,8 @@ check_variant1()
 		check_redhat_canonical_spectre
 		if [ "$redhat_canonical_spectre" = -1 ]; then
 			pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
+		elif [ "$redhat_canonical_spectre" = -2 ]; then
+			pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
 		elif [ "$redhat_canonical_spectre" = 1 ]; then
 			pstatus green YES
 		else
