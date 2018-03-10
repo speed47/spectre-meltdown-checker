@@ -1004,6 +1004,10 @@ if [ -z "$vmlinux" ] || [ ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
 else
 	vmlinux_version=$(strings "$vmlinux" 2>/dev/null | grep '^Linux version ' | head -1)
+	if [ -z "$vmlinux_version" ]; then
+		# try harder with some kernels (such as Red Hat) that don't have ^Linux version before their version string
+		vmlinux_version=$(strings "$vmlinux" 2>/dev/null | grep -E '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' | head -1)
+	fi
 	if [ -n "$vmlinux_version" ]; then
 		# in live mode, check if the img we found is the correct one
 		if [ "$opt_live" = 1 ]; then
@@ -1015,6 +1019,8 @@ else
 		else
 			_info "Kernel image is \033[35m$vmlinux_version"
 		fi
+	else
+		_verbose "Kernel image version is unknown"
 	fi
 fi
 
