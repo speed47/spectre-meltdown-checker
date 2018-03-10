@@ -13,8 +13,8 @@ The script will do its best to detect mitigations, including backported non-vani
 - Get the latest version of the script using `curl` *or* `wget`
 
 ```bash
-curl -L meltdown.ovh -o spectre-meltdown-checker.sh
-wget meltdown.ovh -O spectre-meltdown-checker.sh
+curl -L https://meltdown.ovh -o spectre-meltdown-checker.sh
+wget https://meltdown.ovh -O spectre-meltdown-checker.sh
 ```
 
 - Inspect the script. You never blindly run scripts you downloaded from the Internet, do you?
