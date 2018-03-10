@@ -607,6 +607,7 @@ extract_vmlinux()
 	try_decompress '\135\0\0\0'       xxx   unlzma  ''      xz-utils    "$1" && return 0
 	try_decompress '\211\114\132'     xy    'lzop'  '-d'    lzop        "$1" && return 0
 	try_decompress '\002\041\114\030' xyy   'lz4'   '-d -l' liblz4-tool "$1" && return 0
+	try_decompress '\177ELF'          xxy   'cat'   ''      cat         "$1" && return 0
 	return 1
 }
 
