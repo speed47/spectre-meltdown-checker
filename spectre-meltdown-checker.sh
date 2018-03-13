@@ -1061,15 +1061,15 @@ sys_interface_check()
 
 number_of_cpus()
 {
-	n=$(cat /proc/cpuinfo | grep processor| wc -l)
-	return $n
+	n=$(grep -c ^processor /proc/cpuinfo)
+	return "$n"
 }
 
 # $1 - msr number
 # $2 - cpu index 
 check_msr_enable()
 {
-	dd if=/dev/cpu/$2/msr of=/dev/null bs=8 count=1 skip=$1 iflag=skip_bytes 2>/dev/null; ret=$?
+	dd if=/dev/cpu/"$2"/msr of=/dev/null bs=8 count=1 skip="$1" iflag=skip_bytes 2>/dev/null; ret=$?
 	return $ret
 }
 
@@ -1078,7 +1078,7 @@ check_msr_enable()
 # $3 - value
 write_to_msr()
 {
-	$echo_cmd -ne $3 | dd of=/dev/cpu/$2/msr bs=8 count=1 seek=$1 oflag=seek_bytes 2>/dev/null; ret=$?
+	$echo_cmd -ne "$3" | dd of=/dev/cpu/"$2"/msr bs=8 count=1 seek="$1" oflag=seek_bytes 2>/dev/null; ret=$?
 	return $ret
 }
 
@@ -1086,8 +1086,8 @@ write_to_msr()
 # $2 - cpu index 
 read_msr()
 {
-	msr=$(dd if=/dev/cpu/$2/msr bs=8 count=1 skip=$1 iflag=skip_bytes 2>/dev/null | od -t u1 -A n | awk '{print $8}');
-	return msr
+	msr=$(dd if=/dev/cpu/"$2"/msr bs=8 count=1 skip="$1" iflag=skip_bytes 2>/dev/null | od -t u1 -A n | awk '{print $8}');
+	return "$msr"
 }
 
 
@@ -1100,7 +1100,7 @@ check_cpu()
 	_info_nol "    * SPEC_CTRL MSR is available: "
 	number_of_cpus
 	ncpus=$?
-	idx_max_cpu=$(($ncpus-1))
+	idx_max_cpu=$((ncpus-1))
 	if [ ! -e /dev/cpu/0/msr ]; then
 		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 		load_msr
@@ -1115,14 +1115,14 @@ check_cpu()
 		# skip=9 because 8*9=72=0x48
 		val=0
 		cpu_mismatch=0
-		for i in $(seq 0 $idx_max_cpu)
+		for i in $(seq 0 "$idx_max_cpu")
 		do 
-			check_msr_enable 72 $i
+			check_msr_enable 72 "$i"
 			ret=$?
-			if [ $i -eq 0 ]; then
+			if [ "$i" -eq 0 ]; then
 				val=$ret
 			else
-				if [ $ret -eq $val ]; then
+				if [ "$ret" -eq $val ]; then
 					continue
 				else
 					cpu_mismatch=1
@@ -1135,7 +1135,7 @@ check_cpu()
 				pstatus green YES
 			else
 				spec_ctrl_msr=1
-				pstatus green YES "(But not in all CPUs)"
+				pstatus green YES "But not in all CPUs"
 			fi
 		else
 			spec_ctrl_msr=0
@@ -1183,14 +1183,14 @@ check_cpu()
 		# if we get a write error, the MSR is not there
 		val=0
 		cpu_mismatch=0
-		for i in $(seq 0 $idx_max_cpu)
+		for i in $(seq 0 "$idx_max_cpu")
 		do 
-			write_to_msr 73 $i "\0\0\0\0\0\0\0\0"
+			write_to_msr 73 "$i" "\0\0\0\0\0\0\0\0"
 			ret=$?
-			if [ $i -eq 0 ]; then
+			if [ "$i" -eq 0 ]; then
 				val=$ret
 			else
-				if [ $ret -eq $val ]; then
+				if [ "$ret" -eq $val ]; then
 					continue
 				else
 					cpu_mismatch=1
@@ -1202,7 +1202,7 @@ check_cpu()
 			if [ $cpu_mismatch -eq 0 ]; then
 				pstatus green YES
 			else
-				pstatus green YES "(But not in all CPUs)"
+				pstatus green YES "But not in all CPUs"
 			fi
 		else
 			pstatus red NO
@@ -1278,17 +1278,17 @@ check_cpu()
 		val=0
 		val_cap_msr=0
 		cpu_mismatch=0
-		for i in $(seq 0 $idx_max_cpu)
+		for i in $(seq 0 "$idx_max_cpu")
 		do 
-			check_msr_enable 266 $i
+			check_msr_enable 266 "$i"
 			ret=$?
-			read_msr 266 $i
+			read_msr 266 "$i"
 			capabilities=$?
-			if [ $i -eq 0 ]; then
+			if [ "$i" -eq 0 ]; then
 				val=$ret
 				val_cap_msr=$capabilities
 			else
-				if [ $ret -eq $val && $capabilities -eq $val_cap_msr ]; then
+				if [ "$ret" -eq "$val" -a "$capabilities" -eq "$val_cap_msr" ]; then
 					continue
 				else
 					cpu_mismatch=1
@@ -1307,7 +1307,7 @@ check_cpu()
 				if [ $cpu_mismatch -eq 0 ]; then
 					pstatus green YES
 				else:
-					pstatus green YES "(But not in all CPUs)"
+					pstatus green YES "But not in all CPUs"
 				fi
 			else
 				pstatus red NO
