@@ -1827,6 +1827,11 @@ check_variant3()
 			else
 				xen_pv_domu=1
 			fi
+			# PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
+			dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'; ret=$?
+			if [ $ret -eq 0 ]; then
+				xen_pv_domu=0
+			fi
 		fi
 	fi
 
