@@ -712,6 +712,7 @@ parse_cpu_details()
 	cpu_model=$(   grep '^model'      /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 	cpu_stepping=$(grep '^stepping'   /proc/cpuinfo | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 	cpu_ucode=$(  grep '^microcode'   /proc/cpuinfo | awk '{print $3}' | head -1)
+	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode_decimal=$(( cpu_ucode ))
 
 	# also define those that we will need in other funcs
 	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
@@ -818,9 +819,12 @@ is_ucode_blacklisted()
 		model=$(echo $tuple | cut -d, -f1)
 		stepping=$(( $(echo $tuple | cut -d, -f2) ))
 		ucode=$(echo $tuple | cut -d, -f3)
-		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ] && echo "$cpu_ucode" | grep -qi "^$ucode$"; then
-			_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
-			return 0
+		echo "$ucode" | grep -q ^0x && ucode_decimal=$(( ucode ))
+		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ]; then
+			if [ "$cpu_ucode_decimal" = "$ucode_decimal" ] || [ "$cpu_ucode" = "$ucode" ]; then
+				_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
+				return 0
+			fi
 		fi
 	done
 	_debug "is_ucode_blacklisted: no ($cpu_model/$cpu_stepping/$cpu_ucode)"
