@@ -4,8 +4,8 @@
 # Check for the latest version at:
 # https://github.com/speed47/spectre-meltdown-checker
 # git clone https://github.com/speed47/spectre-meltdown-checker.git
-# or wget meltdown.ovh -O spectre-meltdown-checker.sh
-# or curl -L meltdown.ovh -o spectre-meltdown-checker.sh
+# or wget https://meltdown.ovh -O spectre-meltdown-checker.sh
+# or curl -L https://meltdown.ovh -o spectre-meltdown-checker.sh
 #
 # Stephane Lesimple
 #
