@@ -50,6 +50,8 @@ show_usage()
 		--no-sysfs			Don't use the /sys interface even if present
 		--sysfs-only			Only use the /sys interface, don't run our own checks
 		--coreos			Special mode for CoreOS (use an ephemeral toolbox to inspect kernel)
+		--arch-prefix PREFIX		Specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
+						so that invoked tools such as objdump will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
 		--batch text			Produce machine readable output, this is the default if --batch is specified alone
 		--batch json			Produce JSON output formatted for Puppet, Ansible, Chef...
 		--batch nrpe			Produce machine readable output formatted for NRPE
@@ -114,6 +116,7 @@ opt_allvariants=1
 opt_no_sysfs=0
 opt_sysfs_only=0
 opt_coreos=0
+opt_arch_prefix=''
 
 global_critical=0
 global_unknown=0
@@ -392,6 +395,9 @@ while [ -n "$1" ]; do
 		[ $ret -ne 0 ] && exit 255
 		shift 2
 		opt_live=0
+	elif [ "$1" = "--arch-prefix" ]; then
+		opt_arch_prefix="$2"
+		shift 2
 	elif [ "$1" = "--live" ]; then
 		opt_live_explicit=1
 		shift
@@ -556,7 +562,7 @@ vmlinux=''
 vmlinux_err=''
 check_vmlinux()
 {
-	readelf -h "$1" >/dev/null 2>&1 && return 0
+	"${opt_arch_prefix}readelf" -h "$1" >/dev/null 2>&1 && return 0
 	return 1
 }
 
@@ -995,9 +1001,9 @@ if [ "$bad_accuracy" = 1 ]; then
 fi
 
 if [ -e "$opt_kernel" ]; then
-	if ! which readelf >/dev/null 2>&1; then
+	if ! which "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
 		_debug "readelf not found"
-		vmlinux_err="missing 'readelf' tool, please install it, usually it's in the 'binutils' package"
+		vmlinux_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
 	elif [ "$opt_sysfs_only" = 1 ]; then
 		vmlinux_err='kernel image decompression skipped'
 	else
@@ -1010,10 +1016,10 @@ fi
 if [ -z "$vmlinux" ] || [ ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
 else
-	vmlinux_version=$(strings "$vmlinux" 2>/dev/null | grep '^Linux version ' | head -1)
+	vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep '^Linux version ' | head -1)
 	if [ -z "$vmlinux_version" ]; then
 		# try harder with some kernels (such as Red Hat) that don't have ^Linux version before their version string
-		vmlinux_version=$(strings "$vmlinux" 2>/dev/null | grep -E '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' | head -1)
+		vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' | head -1)
 	fi
 	if [ -n "$vmlinux_version" ]; then
 		# in live mode, check if the img we found is the correct one
@@ -1292,7 +1298,7 @@ check_cpu()
 				val=$ret
 				val_cap_msr=$capabilities
 			else
-				if [ "$ret" -eq "$val" -a "$capabilities" -eq "$val_cap_msr" ]; then
+				if [ "$ret" -eq "$val" ] && [ "$capabilities" -eq "$val_cap_msr" ]; then
 					continue
 				else
 					cpu_mismatch=1
@@ -1361,7 +1367,7 @@ check_redhat_canonical_spectre()
 	# if we were already called, don't do it again
 	[ -n "$redhat_canonical_spectre" ] && return
 
-	if ! which strings >/dev/null 2>&1; then
+	if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 		redhat_canonical_spectre=-1
 	elif [ -n "$vmlinux_err" ]; then
 		redhat_canonical_spectre=-2
@@ -1370,7 +1376,7 @@ check_redhat_canonical_spectre()
 		# let's use the same way than the official Red Hat detection script,
 		# and detect their specific variant2 patch. If it's present, it means
 		# that the variant1 patch is also present (both were merged at the same time)
-		if strings "$vmlinux" | grep -qw noibrs && strings "$vmlinux" | grep -qw noibpb; then
+		if "${opt_arch_prefix}strings" "$vmlinux" | grep -qw noibrs && "${opt_arch_prefix}strings" "$vmlinux" | grep -qw noibpb; then
 			_debug "found redhat/canonical version of the variant2 patch (implies variant1)"
 			redhat_canonical_spectre=1
 		else
@@ -1433,7 +1439,7 @@ check_variant1()
 		_info_nol "* Kernel has the Red Hat/Ubuntu patch: "
 		check_redhat_canonical_spectre
 		if [ "$redhat_canonical_spectre" = -1 ]; then
-			pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
+			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 		elif [ "$redhat_canonical_spectre" = -2 ]; then
 			pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
 		elif [ "$redhat_canonical_spectre" = 1 ]; then
@@ -1449,8 +1455,8 @@ check_variant1()
 			if [ -n "$vmlinux_err" ]; then
 				pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
 			else
-				if ! which objdump >/dev/null 2>&1; then
-					pstatus yellow UNKNOWN "missing 'objdump' tool, please install it, usually it's in the binutils package"
+				if ! which "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+					pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
 				else
 					# here we disassemble the kernel and count the number of occurrences of the LFENCE opcode
 					# in non-patched kernels, this has been empirically determined as being around 40-50
@@ -1459,7 +1465,7 @@ check_variant1()
 					# so let's push the threshold to 70.
 					# v0.33+: now only count lfence opcodes after a jump, way less error-prone
 					# non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
-					nb_lfence=$(objdump -d "$vmlinux" | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
+					nb_lfence=$("${opt_arch_prefix}objdump" -d "$vmlinux" | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
 					if [ "$nb_lfence" -lt 30 ]; then
 						pstatus red NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
 					else
@@ -1716,9 +1722,9 @@ check_variant2()
 			fi
 		elif [ -n "$vmlinux" ]; then
 			# look for the symbol
-			if which nm >/dev/null 2>&1; then
+			if which "${opt_arch_prefix}nm" >/dev/null 2>&1; then
 				# the proper way: use nm and look for the symbol
-				if nm "$vmlinux" 2>/dev/null | grep -qw 'noretpoline_setup'; then
+				if "${opt_arch_prefix}nm" "$vmlinux" 2>/dev/null | grep -qw 'noretpoline_setup'; then
 					retpoline_compiler=1
 					pstatus green YES "noretpoline_setup found in vmlinux symbols"
 				else
@@ -1827,10 +1833,10 @@ check_variant3()
 			# same as above but in case we don't have System.map and only vmlinux, look for the
 			# nopti option that is part of the patch (kernel command line option)
 			kpti_can_tell=1
-			if ! which strings >/dev/null 2>&1; then
-				pstatus yellow UNKNOWN "missing 'strings' tool, please install it, usually it's in the binutils package"
+			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 			else
-				if strings "$vmlinux" | grep -qw nopti; then
+				if "${opt_arch_prefix}strings" "$vmlinux" | grep -qw nopti; then
 					_debug "kpti_support: found nopti string in $vmlinux"
 					kpti_support=1
 				fi
