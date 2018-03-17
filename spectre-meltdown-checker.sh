@@ -563,7 +563,12 @@ vmlinux=''
 vmlinux_err=''
 check_vmlinux()
 {
-	"${opt_arch_prefix}readelf" -h "$1" >/dev/null 2>&1 && return 0
+	# checking the return code of readelf -h is not enough, we could get
+	# a damaged ELF file and validate it, check for stderr warnings too
+	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$1" 2>&1 >/dev/null); ret=$?
+	if [ $ret -eq 0 ] && [ -z "$_readelf_warnings" ]; then
+		return 0
+	fi
 	return 1
 }
 
@@ -1032,6 +1037,10 @@ else
 	if [ -z "$vmlinux_version" ]; then
 		# try harder with some kernels (such as Red Hat) that don't have ^Linux version before their version string
 		vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' | head -1)
+	fi
+	if [ -z "$vmlinux_version" ]; then
+		# try even harder with some kernels (such as ARM) that split the release (uname -r) and version (uname -v) in 2 adjacent strings
+		vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E -B1 '^#[0-9]+ .+ (19|20)[0-9][0-9]$' | tr "\n" " ")
 	fi
 	if [ -n "$vmlinux_version" ]; then
 		# in live mode, check if the img we found is the correct one
