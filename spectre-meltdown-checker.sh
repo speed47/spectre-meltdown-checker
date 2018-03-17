@@ -18,6 +18,7 @@ exit_cleanup()
 	# cleanup the temp decompressed config & kernel image
 	[ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
 	[ -n "$vmlinuxtmp"    ] && [ -f "$vmlinuxtmp"    ] && rm -f "$vmlinuxtmp"
+	[ -n "$vmlinuxtmp2"   ] && [ -f "$vmlinuxtmp2"   ] && rm -f "$vmlinuxtmp2"
 	[ "$mounted_debugfs" = 1 ] && umount /sys/kernel/debug 2>/dev/null
 	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
 	[ "$insmod_msr"      = 1 ] && rmmod msr 2>/dev/null
@@ -572,6 +573,7 @@ try_decompress()
 	# "grep" that report the byte offset of the line instead of the pattern.
 
 	# Try to find the header ($1) and decompress from here
+	_debug "try_decompress: looking for $3 magic in $6"
 	for     pos in $(tr "$1\n$2" "\n$2=" < "$6" | grep -abo "^$2")
 	do
 		_debug "try_decompress: magic for $3 found at offset $pos"
@@ -581,13 +583,22 @@ try_decompress()
 		fi
 		pos=${pos%%:*}
 		# shellcheck disable=SC2086
-		tail -c+$pos "$6" 2>/dev/null | $3 $4 > "$vmlinuxtmp" 2>/dev/null
-		if check_vmlinux "$vmlinuxtmp"; then
+		tail -c+$pos "$6" 2>/dev/null | $3 $4 > "$vmlinuxtmp" 2>/dev/null; ret=$?
+		if [ ! -s "$vmlinuxtmp" ]; then
+			# don't rely on $ret, sometimes it's != 0 but worked
+			# (e.g. gunzip ret=2 just means there was trailing garbage)
+			_debug "try_decompress: decompression with $3 failed (err=$ret)"
+		elif check_vmlinux "$vmlinuxtmp"; then
 			vmlinux="$vmlinuxtmp"
 			_debug "try_decompress: decompressed with $3 successfully!"
 			return 0
+		elif [ "$3" != "cat" ]; then
+			_debug "try_decompress: decompression with $3 worked but result is not a kernel, trying with an offset"
+			[ -z "$vmlinuxtmp2" ] && vmlinuxtmp2=$(mktemp /tmp/vmlinux-XXXXXX)
+			cat "$vmlinuxtmp" > "$vmlinuxtmp2"
+			try_decompress '\177ELF' xxy 'cat' '' cat "$vmlinuxtmp2" && return 0
 		else
-			_debug "try_decompress: decompression with $3 did not work"
+			_debug "try_decompress: decompression with $3 worked but result is not a kernel"
 		fi
 	done
 	return 1
@@ -614,6 +625,7 @@ extract_vmlinux()
 	try_decompress '\211\114\132'     xy    'lzop'  '-d'    lzop        "$1" && return 0
 	try_decompress '\002\041\114\030' xyy   'lz4'   '-d -l' liblz4-tool "$1" && return 0
 	try_decompress '\177ELF'          xxy   'cat'   ''      cat         "$1" && return 0
+	_verbose "Couldn't extract the kernel image, accuracy might be reduced"
 	return 1
 }
 
