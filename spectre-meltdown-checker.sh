@@ -1126,6 +1126,10 @@ check_cpu()
 {
 	_info "\033[1;34mHardware check\033[0m"
 
+	if ! uname -m | grep -qwE 'x86_64|i[3-6]86'; then
+		return
+	fi
+
 	_info     "* Hardware support (CPU microcode) for mitigation techniques"
 	_info     "  * Indirect Branch Restricted Speculation (IBRS)"
 	_info_nol "    * SPEC_CTRL MSR is available: "
@@ -1369,7 +1373,10 @@ check_cpu()
 	else
 		pstatus blue NO "$ucode_found"
 	fi
+}
 
+check_cpu_vulnerabilities()
+{
 	_info     "* CPU vulnerability to the three speculative execution attacks variants"
 	for v in 1 2 3; do
 		_info_nol "  * Vulnerable to Variant $v: "
@@ -1379,8 +1386,6 @@ check_cpu()
 			pstatus green NO
 		fi
 	done
-
-	_info
 }
 
 check_redhat_canonical_spectre()
@@ -2024,6 +2029,9 @@ check_variant3()
 }
 
 check_cpu
+check_cpu_vulnerabilities
+_info
+
 # now run the checks the user asked for
 if [ "$opt_variant1" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variant1
