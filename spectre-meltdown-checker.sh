@@ -563,11 +563,32 @@ vmlinux=''
 vmlinux_err=''
 check_vmlinux()
 {
+	_file="$1"
+	_desperate_mode="$2"
 	# checking the return code of readelf -h is not enough, we could get
 	# a damaged ELF file and validate it, check for stderr warnings too
-	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$1" 2>&1 >/dev/null); ret=$?
-	if [ $ret -eq 0 ] && [ -z "$_readelf_warnings" ]; then
-		return 0
+	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$_file" 2>&1 >/dev/null | tr "\n" "/"); ret=$?
+	_readelf_sections=$("${opt_arch_prefix}readelf" -S "$_file" 2>/dev/null | grep -c -e data -e text -e init)
+	_vmlinux_size=$(stat -c %s "$_file")
+	_debug "check_vmlinux: ret=$? size=$_vmlinux_size sections=$_readelf_sections warnings=$_readelf_warnings"
+	if [ -n "$_desperate_mode" ]; then
+		if "${opt_arch_prefix}strings" "$_file" | grep -Eq '^Linux version '; then
+			_debug "check_vmlinux (desperate): ... matched!"
+			return 0
+		else
+			_debug "check_vmlinux (desperate): ... invalid"
+		fi
+	else
+		if [ $ret -eq 0 ] && [ -z "$_readelf_warnings" ] && [ "$_readelf_sections" -gt 0 ]; then
+			if [ "$_vmlinux_size" -ge 100000 ]; then
+				_debug "check_vmlinux: ... file is valid"
+				return 0
+			else
+				_debug "check_vmlinux: ... file seems valid but is too small, ignoring"
+			fi
+		else
+			_debug "check_vmlinux: ... file is invalid"
+		fi
 	fi
 	return 1
 }
@@ -593,7 +614,7 @@ try_decompress()
 			# don't rely on $ret, sometimes it's != 0 but worked
 			# (e.g. gunzip ret=2 just means there was trailing garbage)
 			_debug "try_decompress: decompression with $3 failed (err=$ret)"
-		elif check_vmlinux "$vmlinuxtmp"; then
+		elif check_vmlinux "$vmlinuxtmp" "$7"; then
 			vmlinux="$vmlinuxtmp"
 			_debug "try_decompress: decompressed with $3 successfully!"
 			return 0
@@ -623,13 +644,15 @@ extract_vmlinux()
 	fi
 
 	# That didn't work, so retry after decompression.
-	try_decompress '\037\213\010'     xy    gunzip  ''      gunzip      "$1" && return 0
-	try_decompress '\3757zXZ\000'     abcde unxz    ''      xz-utils    "$1" && return 0
-	try_decompress 'BZh'              xy    bunzip2 ''      bzip2       "$1" && return 0
-	try_decompress '\135\0\0\0'       xxx   unlzma  ''      xz-utils    "$1" && return 0
-	try_decompress '\211\114\132'     xy    'lzop'  '-d'    lzop        "$1" && return 0
-	try_decompress '\002\041\114\030' xyy   'lz4'   '-d -l' liblz4-tool "$1" && return 0
-	try_decompress '\177ELF'          xxy   'cat'   ''      cat         "$1" && return 0
+	for mode in '' 'desperate'; do
+		try_decompress '\037\213\010'     xy    gunzip  ''      gunzip      "$1" "$mode" && return 0
+		try_decompress '\3757zXZ\000'     abcde unxz    ''      xz-utils    "$1" "$mode" && return 0
+		try_decompress 'BZh'              xy    bunzip2 ''      bzip2       "$1" "$mode" && return 0
+		try_decompress '\135\0\0\0'       xxx   unlzma  ''      xz-utils    "$1" "$mode" && return 0
+		try_decompress '\211\114\132'     xy    'lzop'  '-d'    lzop        "$1" "$mode" && return 0
+		try_decompress '\002\041\114\030' xyy   'lz4'   '-d -l' liblz4-tool "$1" "$mode" && return 0
+		try_decompress '\177ELF'          xxy   'cat'   ''      cat         "$1" "$mode" && return 0
+	done
 	_verbose "Couldn't extract the kernel image, accuracy might be reduced"
 	return 1
 }
@@ -1399,12 +1422,17 @@ check_redhat_canonical_spectre()
 		redhat_canonical_spectre=-2
 	else
 		# Red Hat / Ubuntu specific variant1 patch is difficult to detect,
-		# let's use the same way than the official Red Hat detection script,
-		# and detect their specific variant2 patch. If it's present, it means
-		# that the variant1 patch is also present (both were merged at the same time)
+		# let's use the two same tricks than the official Red Hat detection script uses:
 		if "${opt_arch_prefix}strings" "$vmlinux" | grep -qw noibrs && "${opt_arch_prefix}strings" "$vmlinux" | grep -qw noibpb; then
+			# 1) detect their specific variant2 patch. If it's present, it means
+			# that the variant1 patch is also present (both were merged at the same time)
 			_debug "found redhat/canonical version of the variant2 patch (implies variant1)"
 			redhat_canonical_spectre=1
+		elif "${opt_arch_prefix}strings" "$vmlinux" | grep -q 'x86/pti:'; then
+			# 2) detect their specific variant3 patch. If it's present, but the variant2
+			# is not, it means that only variant1 is present in addition to variant3
+			_debug "found redhat/canonical version of the variant3 patch (implies variant1 but not variant2)"
+			redhat_canonical_spectre=2
 		else
 			redhat_canonical_spectre=0
 		fi
@@ -1470,11 +1498,13 @@ check_variant1()
 			pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
 		elif [ "$redhat_canonical_spectre" = 1 ]; then
 			pstatus green YES
+		elif [ "$redhat_canonical_spectre" = 2 ]; then
+			pstatus green YES "but without IBRS"
 		else
 			pstatus red NO
 		fi
 
-		if [ "$opt_verbose" -ge 2 ] || ( [ "$v1_mask_nospec" != 1 ] && [ "$redhat_canonical_spectre" != 1 ] ); then
+		if [ "$opt_verbose" -ge 2 ] || ( [ "$v1_mask_nospec" != 1 ] && [ "$redhat_canonical_spectre" != 1 ] && [ "$redhat_canonical_spectre" != 2 ] ); then
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
 			# but still show it in verbose mode
 			_info_nol "* Checking count of LFENCE instructions following a jump in kernel... "
@@ -1491,7 +1521,7 @@ check_variant1()
 					# so let's push the threshold to 70.
 					# v0.33+: now only count lfence opcodes after a jump, way less error-prone
 					# non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
-					nb_lfence=$("${opt_arch_prefix}objdump" -d "$vmlinux" | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
+					nb_lfence=$("${opt_arch_prefix}objdump" -d "$vmlinux" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
 					if [ "$nb_lfence" -lt 30 ]; then
 						pstatus red NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
 					else
@@ -1517,7 +1547,7 @@ check_variant1()
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$v1_mask_nospec" = 1 ]; then
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (array_index_mask_nospec)"
-		elif [ "$redhat_canonical_spectre" = 1 ]; then
+		elif [ "$redhat_canonical_spectre" = 1 ] || [ "$redhat_canonical_spectre" = 2 ]; then
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
 		elif [ "$v1_lfence" = 1 ]; then
 			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
