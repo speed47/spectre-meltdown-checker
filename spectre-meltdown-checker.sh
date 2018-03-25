@@ -43,24 +43,27 @@ show_usage()
 		Second mode is the "offline" mode, where you can inspect a non-running kernel.
 		You'll need to specify the location of the vmlinux file, config and System.map files:
 
-		--kernel kernel_file		Specify a (possibly compressed) Linux or BSD kernel file
-		--config kernel_config		Specify a kernel config file (Linux only)
-		--map	 kernel_map_file	Specify a kernel System.map file (Linux only)
+		--kernel kernel_file	specify a (possibly compressed) Linux or BSD kernel file
+		--config kernel_config	specify a kernel config file (Linux only)
+		--map kernel_map_file	specify a kernel System.map file (Linux only)
 
 	Options:
-		--no-color			Don't use color codes
-		--verbose, -v			Increase verbosity level
-		--no-sysfs			Don't use the /sys interface even if present
-		--sysfs-only			Only use the /sys interface, don't run our own checks
-		--coreos			Special mode for CoreOS (use an ephemeral toolbox to inspect kernel)
-		--arch-prefix PREFIX		Specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
-						so that invoked tools such as objdump will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
-		--batch text			Produce machine readable output, this is the default if --batch is specified alone
-		--batch json			Produce JSON output formatted for Puppet, Ansible, Chef...
-		--batch nrpe			Produce machine readable output formatted for NRPE
-		--batch prometheus              Produce output for consumption by prometheus-node-exporter
-		--variant [1,2,3]		Specify which variant you'd like to check, by default all variants are checked
-						Can be specified multiple times (e.g. --variant 2 --variant 3)
+		--no-color		don't use color codes
+		--verbose, -v		increase verbosity level, possibly several times
+
+		--no-sysfs		don't use the /sys interface even if present [Linux]
+		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
+		--coreos		special mode for CoreOS (use an ephemeral toolbox to inspect kernel) [Linux]
+
+		--arch-prefix PREFIX	specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
+					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
+		--batch text		produce machine readable output, this is the default if --batch is specified alone
+		--batch json		produce JSON output formatted for Puppet, Ansible, Chef...
+		--batch nrpe		produce machine readable output formatted for NRPE
+		--batch prometheus      produce output for consumption by prometheus-node-exporter
+
+		--variant [1,2,3]	specify which variant you'd like to check, by default all variants are checked,
+					can be specified multiple times (e.g. --variant 2 --variant 3)
 
 	Return codes:
 		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
@@ -1313,7 +1316,7 @@ check_cpu()
 	fi
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		spec_ctrl_msr=-1
-		pstatus yellow UNKNOWN "couldn't read MSR, is MSR support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is msr kernel module available?"
 	else
 		# the new MSR 'SPEC_CTRL' is at offset 0x48
 		# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
@@ -1355,7 +1358,7 @@ check_cpu()
 		pstatus green YES "SPEC_CTRL feature bit"
 		cpuid_spec_ctrl=1
 	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
 		pstatus red NO
 	fi
@@ -1381,7 +1384,7 @@ check_cpu()
 	_info     "  * Indirect Branch Prediction Barrier (IBPB)"
 	_info_nol "    * PRED_CMD MSR is available: "
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is msr kernel module available?"
 	else
 		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
 		# here we use dd, it's the same as using 'wrmsr 0x49 0' but without needing the wrmsr tool
@@ -1421,7 +1424,7 @@ check_cpu()
 	elif [ "$cpuid_spec_ctrl" = 1 ]; then
 		pstatus green YES "SPEC_CTRL feature bit"
 	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
 		pstatus red NO
 	fi
@@ -1434,7 +1437,7 @@ check_cpu()
 	elif [ "$spec_ctrl_msr" = 0 ]; then
 		pstatus red NO
 	else
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	fi
 
 	_info_nol "    * CPU indicates STIBP capability: "
@@ -1443,7 +1446,7 @@ check_cpu()
 	if [ $ret -eq 0 ]; then
 		pstatus green YES
 	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
 		pstatus red NO
 	fi
@@ -1457,7 +1460,7 @@ check_cpu()
 		pstatus green YES
 		cpuid_arch_capabilities=1
 	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/cpuid, is cpuid support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
 		pstatus red NO
 		cpuid_arch_capabilities=0
@@ -1474,7 +1477,7 @@ check_cpu()
 		pstatus red NO
 	elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		spec_ctrl_msr=-1
-		pstatus yellow UNKNOWN "couldn't read /dev/cpu/0/msr, is msr support enabled in your kernel?"
+		pstatus yellow UNKNOWN "is msr kernel module available?"
 	else
 		# the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
 		# here we use dd, it's the same as using 'rdmsr 0x10a' but without needing the rdmsr tool
@@ -1544,7 +1547,7 @@ check_cpu()
 
 check_cpu_vulnerabilities()
 {
-	_info     "* CPU vulnerability to the three speculative execution attacks variants"
+	_info     "* CPU vulnerability to the three speculative execution attack variants"
 	for v in 1 2 3; do
 		_info_nol "  * Vulnerable to Variant $v: "
 		if is_cpu_vulnerable $v; then
@@ -2225,7 +2228,7 @@ check_variant3_linux()
 		if [ "$xen_pv_domu" = 1 ]; then
 			pstatus red YES
 		else
-			pstatus green NO
+			pstatus blue NO
 		fi
 	fi
 
