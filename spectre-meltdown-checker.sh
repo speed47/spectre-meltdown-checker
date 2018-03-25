@@ -1198,18 +1198,16 @@ fi
 if [ -z "$vmlinux" ] || [ ! -r "$vmlinux" ]; then
 	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
 else
-	vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep '^Linux version ' | head -1)
-	if [ -z "$vmlinux_version" ]; then
-		# try harder with some kernels (such as Red Hat) that don't have ^Linux version before their version string
-		vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' | head -1)
-	fi
+	# vanilla kernels have with ^Linux version
+	# also try harder with some kernels (such as Red Hat) that don't have ^Linux version before their version string
+	# and check for FreeBSD
+	vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E \
+		-e '^Linux version ' \
+		-e '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' \
+		-e '^FreeBSD [0-9]' | head -1)
 	if [ -z "$vmlinux_version" ]; then
 		# try even harder with some kernels (such as ARM) that split the release (uname -r) and version (uname -v) in 2 adjacent strings
 		vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E -B1 '^#[0-9]+ .+ (19|20)[0-9][0-9]$' | tr "\n" " ")
-	fi
-	if [ -z "$vmlinux_version" ]; then
-		# FreeBSD?
-		vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E '^FreeBSD [0-9]' | head -1)
 	fi
 	if [ -n "$vmlinux_version" ]; then
 		# in live mode, check if the img we found is the correct one
@@ -1248,10 +1246,10 @@ sys_interface_check()
 	elif grep -qi '^vulnerable' "$1"; then
 		# Vulnerable
 		status=VULN
-		pstatus red NO "kernel confirms your system is vulnerable"
+		pstatus yellow NO "kernel confirms your system is vulnerable"
 	else
 		status=UNK
-		pstatus yellow UNKNOWN "unknown value reported by kernel"
+		pstatus blue UNKNOWN "unknown value reported by kernel"
 	fi
 	msg=$(cat "$1")
 	_debug "sys_interface_check: $1=$msg"
@@ -1333,7 +1331,7 @@ check_cpu()
 	fi
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		spec_ctrl_msr=-1
-		pstatus yellow UNKNOWN "is msr kernel module available?"
+		pstatus blue UNKNOWN "is msr kernel module available?"
 	else
 		# the new MSR 'SPEC_CTRL' is at offset 0x48
 		# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
@@ -1364,7 +1362,7 @@ check_cpu()
 			fi
 		else
 			spec_ctrl_msr=0
-			pstatus red NO
+			pstatus yellow NO
 		fi
 	fi
 
@@ -1375,9 +1373,9 @@ check_cpu()
 		pstatus green YES "SPEC_CTRL feature bit"
 		cpuid_spec_ctrl=1
 	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		pstatus blue UNKNOWN "is cpuid kernel module available?"
 	else
-		pstatus red NO
+		pstatus yellow NO
 	fi
 
 	# hardware support according to kernel
@@ -1429,7 +1427,7 @@ check_cpu()
 				pstatus green YES "But not in all CPUs"
 			fi
 		else
-			pstatus red NO
+			pstatus yellow NO
 		fi
 	fi
 
@@ -1443,7 +1441,7 @@ check_cpu()
 	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
-		pstatus red NO
+		pstatus yellow NO
 	fi
 
 	# STIBP
@@ -1452,7 +1450,7 @@ check_cpu()
 	if [ "$spec_ctrl_msr" = 1 ]; then
 		pstatus green YES
 	elif [ "$spec_ctrl_msr" = 0 ]; then
-		pstatus red NO
+		pstatus yellow NO
 	else
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	fi
@@ -1465,7 +1463,7 @@ check_cpu()
 	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
-		pstatus red NO
+		pstatus yellow NO
 	fi
 
 	_info     "  * Enhanced IBRS (IBRS_ALL)"
@@ -1479,7 +1477,7 @@ check_cpu()
 	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
-		pstatus red NO
+		pstatus yellow NO
 		cpuid_arch_capabilities=0
 	fi
 
@@ -1491,7 +1489,7 @@ check_cpu()
 	elif [ "$cpuid_arch_capabilities" != 1 ]; then
 		capabilities_rdcl_no=0
 		capabilities_ibrs_all=0
-		pstatus red NO
+		pstatus yellow NO
 	elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		spec_ctrl_msr=-1
 		pstatus yellow UNKNOWN "is msr kernel module available?"
@@ -1532,7 +1530,7 @@ check_cpu()
 					pstatus green YES "But not in all CPUs"
 				fi
 			else
-				pstatus red NO
+				pstatus yellow NO
 			fi
 		else
 			pstatus yellow UNKNOWN
@@ -1659,7 +1657,7 @@ check_variant1_linux()
 					pstatus green YES "$ret occurence(s) found of 32 bits array_index_mask_nospec()"
 					v1_mask_nospec=1
 				else
-					pstatus red NO
+					pstatus yellow NO
 				fi
 			fi
 		fi
@@ -1675,7 +1673,7 @@ check_variant1_linux()
 		elif [ "$redhat_canonical_spectre" = 2 ]; then
 			pstatus green YES "but without IBRS"
 		else
-			pstatus red NO
+			pstatus yellow NO
 		fi
 
 		if [ "$opt_verbose" -ge 2 ] || ( [ "$v1_mask_nospec" != 1 ] && [ "$redhat_canonical_spectre" != 1 ] && [ "$redhat_canonical_spectre" != 2 ] ); then
@@ -1697,7 +1695,7 @@ check_variant1_linux()
 					# non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
 					nb_lfence=$("${opt_arch_prefix}objdump" -d "$vmlinux" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
 					if [ "$nb_lfence" -lt 30 ]; then
-						pstatus red NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
+						pstatus yellow NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
 					else
 						v1_lfence=1
 						pstatus green YES "$nb_lfence jump-then-lfence instructions found, which is >= 30 (heuristic)"
@@ -1840,7 +1838,7 @@ check_variant2_linux()
 		fi
 		if [ "$ibrs_supported" != 1 ]; then
 			if [ "$ibrs_can_tell" = 1 ]; then
-				pstatus red NO
+				pstatus yellow NO
 			else
 				# if we're in offline mode without System.map, we can't really know
 				pstatus yellow UNKNOWN "in offline mode, we need System.map to be able to tell"
@@ -1862,11 +1860,11 @@ check_variant2_linux()
 						if [ "$ibrs_supported" = 1 ]; then
 							pstatus yellow UNKNOWN
 						else
-							pstatus red NO
+							pstatus yellow NO
 						fi
 						;;
 					0)
-						pstatus red NO
+						pstatus yellow NO
 						_verbose "    - To enable, \`echo 1 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
 						;;
 					1 | 2) pstatus green YES;;
@@ -1888,11 +1886,11 @@ check_variant2_linux()
 						if [ "$ibrs_supported" = 1 ]; then
 							pstatus yellow UNKNOWN
 						else
-							pstatus red NO
+							pstatus yellow NO
 						fi
 						;;
 					0 | 1)
-						pstatus red NO
+						pstatus yellow NO
 						_verbose "    - To enable, \`echo 2 > $ibrs_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
 						;;
 					2) pstatus green YES;;
@@ -1910,11 +1908,11 @@ check_variant2_linux()
 					if [ "$ibrs_supported" = 1 ]; then
 						pstatus yellow UNKNOWN
 					else
-						pstatus red NO
+						pstatus yellow NO
 					fi
 					;;
 				0)
-					pstatus red NO
+					pstatus yellow NO
 					_verbose "    - To enable, \`echo 1 > $ibrs_knob_dir/ibpb_enabled' as root. If you don't have hardware support, you'll get an error."
 					;;
 				1) pstatus green YES;;
@@ -1935,7 +1933,7 @@ check_variant2_linux()
 				# shellcheck disable=SC2046
 				_debug 'retpoline: found '$(grep '^CONFIG_RETPOLINE' "$opt_config")" in $opt_config"
 			else
-				pstatus red NO
+				pstatus yellow NO
 			fi
 		else
 			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
@@ -1949,7 +1947,7 @@ check_variant2_linux()
 		# *AND* if the compiler is retpoline-compliant, so look for that symbol
 		if [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
 			if grep -qw Minimal /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
-				pstatus red NO "kernel reports minimal retpoline compilation"
+				pstatus yellow NO "kernel reports minimal retpoline compilation"
 			elif grep -qw Full /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
 				retpoline_compiler=1
 				pstatus green YES "kernel reports full retpoline compilation"
@@ -1957,7 +1955,7 @@ check_variant2_linux()
 				if [ "$retpoline" = 1 ]; then
 					pstatus yellow UNKNOWN
 				else
-					pstatus red NO
+					pstatus yellow NO
 				fi
 			fi
 		elif [ -n "$opt_map" ]; then
@@ -1969,7 +1967,7 @@ check_variant2_linux()
 				if [ "$retpoline" = 1 ]; then
 					pstatus yellow UNKNOWN
 				else
-					pstatus red NO
+					pstatus yellow NO
 				fi
 			fi
 		elif [ -n "$vmlinux" ]; then
@@ -1983,7 +1981,7 @@ check_variant2_linux()
 					if [ "$retpoline" = 1 ]; then
 						pstatus yellow UNKNOWN
 					else
-						pstatus red NO
+						pstatus yellow NO
 					fi
 				fi
 			elif grep -q noretpoline_setup "$vmlinux"; then
@@ -1995,14 +1993,14 @@ check_variant2_linux()
 				if [ "$retpoline" = 1 ]; then
 					pstatus yellow UNKNOWN
 				else
-					pstatus red NO
+					pstatus yellow NO
 				fi
 			fi
 		else
 			if [ "$retpoline" = 1 ]; then
 				pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
 			else
-				pstatus red NO
+				pstatus yellow NO
 			fi
 		fi
 	elif [ "$sys_interface_available" = 0 ]; then
@@ -2052,7 +2050,7 @@ check_variant2_bsd()
 	_info_nol "* Kernel supports IBRS: "
 	ibrs_disabled=$(sysctl -n hw.ibrs_disable 2>/dev/null)
 	if [ -z "$ibrs_disabled" ]; then
-		pstatus red NO
+		pstatus yellow NO
 	else
 		pstatus green YES
 	fi
@@ -2062,7 +2060,7 @@ check_variant2_bsd()
 	if [ "$ibrs_active" = 1 ]; then
 		pstatus green YES
 	else
-		pstatus red NO
+		pstatus yellow NO
 	fi
 
 	cve='CVE-2017-5715'
@@ -2141,7 +2139,7 @@ check_variant3_linux()
 		if [ "$kpti_support" = 1 ]; then
 			pstatus green YES
 		elif [ "$kpti_can_tell" = 1 ]; then
-			pstatus red NO
+			pstatus yellow NO
 		else
 			pstatus yellow UNKNOWN "couldn't read your kernel configuration nor System.map file"
 		fi
@@ -2184,7 +2182,7 @@ check_variant3_linux()
 			elif [ "$kpti_enabled" = -1 ]; then
 				pstatus yellow UNKNOWN "dmesg truncated, please reboot and relaunch this script"
 			else
-				pstatus red NO
+				pstatus yellow NO
 			fi
 		else
 			pstatus blue N/A "can't verify if PTI is enabled in offline mode"
@@ -2302,7 +2300,7 @@ check_variant3_bsd()
 	_info_nol "* Kernel supports Page Table Isolation (PTI): "
 	kpti_enabled=$(sysctl -n vm.pmap.pti 2>/dev/null)
 	if [ -z "$kpti_enabled" ]; then
-		pstatus red NO
+		pstatus yellow NO
 	else
 		pstatus green YES
 	fi
@@ -2311,7 +2309,7 @@ check_variant3_bsd()
 	if [ "$kpti_enabled" = 1 ]; then
 		pstatus green YES
 	else
-		pstatus red NO
+		pstatus yellow NO
 	fi
 
 	cve='CVE-2017-5754'
