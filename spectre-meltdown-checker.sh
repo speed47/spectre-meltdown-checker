@@ -1249,7 +1249,7 @@ sys_interface_check()
 		pstatus yellow NO "kernel confirms your system is vulnerable"
 	else
 		status=UNK
-		pstatus blue UNKNOWN "unknown value reported by kernel"
+		pstatus yellow UNKNOWN "unknown value reported by kernel"
 	fi
 	msg=$(cat "$1")
 	_debug "sys_interface_check: $1=$msg"
@@ -1278,7 +1278,11 @@ write_msr()
 	else
 		# convert to decimal
 		_msrindex=$(( $1 ))
-		dd if=/dev/zero of=/dev/cpu/"$2"/msr bs=8 count=1 seek="$_msrindex" oflag=seek_bytes 2>/dev/null; ret=$?
+		if [ ! -w /dev/cpu/"$2"/msr ]; then
+			ret=200 # permission error
+		else
+			dd if=/dev/zero of=/dev/cpu/"$2"/msr bs=8 count=1 seek="$_msrindex" oflag=seek_bytes 2>/dev/null; ret=$?
+		fi
 	fi
 	_debug "write_msr: for cpu $2 on msr $1 ($_msrindex), ret=$ret"
 	return $ret
@@ -1301,6 +1305,9 @@ read_msr()
 	else
 		# convert to decimal
 		_msrindex=$(( $1 ))
+		if [ ! -r /dev/cpu/"$2"/msr ]; then
+			return 200 # permission error
+		fi
 		if ! dd if=/dev/cpu/"$2"/msr bs=8 count=1 skip="$_msrindex" iflag=skip_bytes 2>/dev/null; then
 			return 1
 		fi
@@ -1331,7 +1338,7 @@ check_cpu()
 	fi
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		spec_ctrl_msr=-1
-		pstatus blue UNKNOWN "is msr kernel module available?"
+		pstatus yellow UNKNOWN "is msr kernel module available?"
 	else
 		# the new MSR 'SPEC_CTRL' is at offset 0x48
 		# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
@@ -1360,6 +1367,9 @@ check_cpu()
 				spec_ctrl_msr=1
 				pstatus green YES "But not in all CPUs"
 			fi
+		elif [ $val -eq 200 ]; then
+			pstatus yellow UNKNOWN "is msr kernel module available?"
+			spec_ctrl_msr=-1
 		else
 			spec_ctrl_msr=0
 			pstatus yellow NO
@@ -1373,7 +1383,7 @@ check_cpu()
 		pstatus green YES "SPEC_CTRL feature bit"
 		cpuid_spec_ctrl=1
 	elif [ $ret -eq 2 ]; then
-		pstatus blue UNKNOWN "is cpuid kernel module available?"
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 	else
 		pstatus yellow NO
 	fi
@@ -1386,7 +1396,7 @@ check_cpu()
 		_verbose_nol "    * Kernel has set the spec_ctrl flag in cpuinfo: "
 		if [ "$opt_live" = 1 ]; then
 			if grep ^flags "$procfs/cpuinfo" | grep -qw spec_ctrl; then
-				pstatus green YES
+				pstatus blue YES
 			else
 				pstatus blue NO
 			fi
@@ -1426,6 +1436,8 @@ check_cpu()
 			else
 				pstatus green YES "But not in all CPUs"
 			fi
+		elif [ $val -eq 200 ]; then
+			pstatus yellow UNKNOWN "is msr kernel module available?"
 		else
 			pstatus yellow NO
 		fi
@@ -1452,7 +1464,7 @@ check_cpu()
 	elif [ "$spec_ctrl_msr" = 0 ]; then
 		pstatus yellow NO
 	else
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		pstatus yellow UNKNOWN "is msr kernel module available?"
 	fi
 
 	_info_nol "    * CPU indicates STIBP capability: "
@@ -1532,8 +1544,10 @@ check_cpu()
 			else
 				pstatus yellow NO
 			fi
+		elif [ $val -eq 200 ]; then
+			pstatus yellow UNKNOWN "is msr kernel module available?"
 		else
-			pstatus yellow UNKNOWN
+			pstatus yellow NO
 		fi
 	fi
 
@@ -1543,7 +1557,7 @@ check_cpu()
 	elif [ "$capabilities_rdcl_no" = 1 ]; then
 		pstatus green YES
 	else
-		pstatus blue NO
+		pstatus yellow NO
 	fi
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
@@ -1566,7 +1580,7 @@ check_cpu_vulnerabilities()
 	for v in 1 2 3; do
 		_info_nol "  * Vulnerable to Variant $v: "
 		if is_cpu_vulnerable $v; then
-			pstatus red YES
+			pstatus yellow YES
 		else
 			pstatus green NO
 		fi
@@ -2241,7 +2255,7 @@ check_variant3_linux()
 		# (unless we are a Dom0)
 		_info_nol "* Running as a Xen PV DomU: "
 		if [ "$xen_pv_domu" = 1 ]; then
-			pstatus red YES
+			pstatus yellow YES
 		else
 			pstatus blue NO
 		fi
