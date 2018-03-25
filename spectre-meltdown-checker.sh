@@ -601,7 +601,7 @@ check_vmlinux()
 	# a damaged ELF file and validate it, check for stderr warnings too
 	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$_file" 2>&1 >/dev/null | tr "\n" "/"); ret=$?
 	_readelf_sections=$("${opt_arch_prefix}readelf" -S "$_file" 2>/dev/null | grep -c -e data -e text -e init)
-	_vmlinux_size=$(stat -c %s "$_file")
+	_vmlinux_size=$(stat -c %s "$_file" 2>/dev/null || stat -f %z "$_file" 2>/dev/null || echo 10000)
 	_debug "check_vmlinux: ret=$? size=$_vmlinux_size sections=$_readelf_sections warnings=$_readelf_warnings"
 	if [ -n "$_desperate_mode" ]; then
 		if "${opt_arch_prefix}strings" "$_file" | grep -Eq '^Linux version '; then
@@ -1260,7 +1260,7 @@ sys_interface_check()
 
 number_of_cpus()
 {
-	if echo "$os" | grep BSD; then
+	if echo "$os" | grep -q BSD; then
 		n=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
 	elif [ -e "$procfs/cpuinfo" ]; then
 		n=$(grep -c ^processor "$procfs/cpuinfo" 2>/dev/null || echo 1)
@@ -1317,7 +1317,7 @@ check_cpu()
 {
 	_info "\033[1;34mHardware check\033[0m"
 
-	if ! uname -m | grep -qwE 'x86_64|i[3-6]86'; then
+	if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
 		return
 	fi
 
