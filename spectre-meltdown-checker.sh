@@ -64,6 +64,7 @@ show_usage()
 
 		--variant [1,2,3]	specify which variant you'd like to check, by default all variants are checked,
 					can be specified multiple times (e.g. --variant 2 --variant 3)
+		--hw-only		only check for CPU informations, don't check for any variant
 
 	Return codes:
 		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
@@ -125,6 +126,7 @@ opt_no_sysfs=0
 opt_sysfs_only=0
 opt_coreos=0
 opt_arch_prefix=''
+opt_hw_only=0
 
 global_critical=0
 global_unknown=0
@@ -444,6 +446,9 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--coreos-within-toolbox" ]; then
 		# don't use directly: used internally by --coreos
 		opt_coreos=0
+		shift
+	elif [ "$1" = "--hw-only" ]; then
+		opt_hw_only=1
 		shift
 	elif [ "$1" = "--batch" ]; then
 		opt_batch=1
@@ -1011,6 +1016,18 @@ if [ "$opt_live_explicit" = 1 ]; then
 		show_usage
 		echo "$0: error: incompatible modes specified, use either --live or --kernel/--config/--map" >&2
 		exit 255
+	fi
+fi
+if [ "$opt_hw_only" = 1 ]; then
+	if [ "$opt_allvariants" = 0 ]; then
+		show_usage
+		echo "$0: error: incompatible modes specified, --hw-only vs --variant" >&2
+		exit 255
+	else
+		opt_allvariants=0
+		opt_variant1=0
+		opt_variant2=0
+		opt_variant3=0
 	fi
 fi
 
