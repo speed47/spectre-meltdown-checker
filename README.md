@@ -9,7 +9,9 @@ Supported systems:
 - NetBSD
 - DragonFlyBSD
 
-The script will do its best to detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number.
+For Linux systems, the script will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel.
+
+For BSD systems, the detection will work as long as the BSD you're using supports `cpuctl` and `linprocfs` (this is not the case of OpenBSD for example).
 
 ## Easy way to run the script
 
