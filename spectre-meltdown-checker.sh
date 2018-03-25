@@ -1280,7 +1280,7 @@ write_msr()
 	else
 		# convert to decimal
 		_msrindex=$(( $1 ))
-		_echo_nol -9 "\0\0\0\0\0\0\0\0" | dd of=/dev/cpu/"$2"/msr bs=8 count=1 seek="$_msrindex" oflag=seek_bytes 2>/dev/null; ret=$?
+		dd if=/dev/zero of=/dev/cpu/"$2"/msr bs=8 count=1 seek="$_msrindex" oflag=seek_bytes 2>/dev/null; ret=$?
 	fi
 	_debug "write_msr: for cpu $2 on msr $1 ($_msrindex), ret=$ret"
 	return $ret
