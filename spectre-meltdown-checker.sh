@@ -1938,6 +1938,31 @@ check_variant2_linux()
 		fi
 
 		_info "* Mitigation 2"
+		_info_nol "  * Kernel has branch predictor hardening (ARM): "
+		if [ -r "$opt_config" ]; then
+			bp_harden_can_tell=1
+			bp_harden=$(grep -w 'CONFIG_HARDEN_BRANCH_PREDICTOR=y' "$opt_config")
+			if [ -n "$bp_harden" ]; then
+				pstatus green YES
+				_debug "bp_harden: found '$bp_harden' in $opt_config"
+			fi
+		fi
+		if [ -z "$bp_harden" ] && [ -n "$opt_map" ]; then
+			bp_harden_can_tell=1
+			bp_harden=$(grep -w bp_hardening_data "$opt_map")
+			if [ -n "$bp_harden" ]; then
+				pstatus green YES
+				_debug "bp_harden: found '$bp_harden' in $opt_map"
+			fi
+		fi
+		if [ -z "$bp_harden" ]; then
+			if [ "$bp_harden_can_tell" = 1 ]; then
+				pstatus yellow NO
+			else
+				pstatus yellow UNKNOWN
+			fi
+		fi
+
 		_info_nol "  * Kernel compiled with retpoline option: "
 		# We check the RETPOLINE kernel options
 		if [ -r "$opt_config" ]; then
@@ -2031,6 +2056,8 @@ check_variant2_linux()
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ]; then
 			pvulnstatus $cve OK "retpoline mitigates the vulnerability"
+		elif [ -n "$bp_harden" ]; then
+			pvulnstatus $cve OK 'branch predictor hardening mitigates the vulnerability for ARM'
 		elif [ "$opt_live" = 1 ]; then
 			if ( [ "$ibrs_enabled" = 1 ] || [ "$ibrs_enabled" = 2 ] ) && [ "$ibpb_enabled" = 1 ]; then
 				pvulnstatus $cve OK "IBRS/IBPB are mitigating the vulnerability"
@@ -2138,41 +2165,42 @@ check_variant3_linux()
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* Kernel supports Page Table Isolation (PTI): "
-		kpti_support=0
+		kpti_support=''
 		kpti_can_tell=0
 		if [ -n "$opt_config" ]; then
 			kpti_can_tell=1
-			if grep -Eq '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config"; then
-				# shellcheck disable=SC2046
-				_debug 'kpti_support: found option '$(grep -E '^(CONFIG_PAGE_TABLE_ISOLATION|CONFIG_KAISER)=y' "$opt_config")" in $opt_config"
-				kpti_support=1
+			kpti_support=$(grep -w -e CONFIG_PAGE_TABLE_ISOLATION=y -e CONFIG_KAISER=y -e CONFIG_UNMAP_KERNEL_AT_EL0=y "$opt_config")
+			if [ -n "$kpti_support" ]; then
+				_debug "kpti_support: found option '$kpti_support' in $opt_config"
 			fi
 		fi
-		if [ "$kpti_support" = 0 ] && [ -n "$opt_map" ]; then
+		if [ -z "$kpti_support" ] && [ -n "$opt_map" ]; then
 			# it's not an elif: some backports don't have the PTI config but still include the patch
 			# so we try to find an exported symbol that is part of the PTI patch in System.map
+			# parse_kpti: arm
 			kpti_can_tell=1
-			if grep -qw kpti_force_enabled "$opt_map"; then
-				_debug "kpti_support: found kpti_force_enabled in $opt_map"
-				kpti_support=1
+			kpti_support=$(grep -w -e kpti_force_enabled -e parse_kpti "$opt_map")
+			if [ -n "$kpti_support" ]; then
+				_debug "kpti_support: found '$kpti_support' in $opt_map"
 			fi
 		fi
-		if [ "$kpti_support" = 0 ] && [ -n "$kernel" ]; then
+		if [ -z "$kpti_support" ] && [ -n "$kernel" ]; then
 			# same as above but in case we don't have System.map and only kernel, look for the
 			# nopti option that is part of the patch (kernel command line option)
+			# 'kpti=': arm
 			kpti_can_tell=1
 			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 			else
-				if "${opt_arch_prefix}strings" "$kernel" | grep -qw nopti; then
-					_debug "kpti_support: found nopti string in $kernel"
-					kpti_support=1
+				kpti_support=$("${opt_arch_prefix}strings" "$kernel" | grep -w -e nopti -e kpti=)
+				if [ -n "$kpti_support" ]; then
+					_debug "kpti_support: found '$kpti_support' in $kernel"
 				fi
 			fi
 		fi
 
-		if [ "$kpti_support" = 1 ]; then
-			pstatus green YES
+		if [ -n "$kpti_support" ]; then
+			pstatus green YES "found '$kpti_support'"
 		elif [ "$kpti_can_tell" = 1 ]; then
 			pstatus yellow NO
 		else
@@ -2299,7 +2327,7 @@ check_variant3_linux()
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
 			fi
 		else
-			if [ "$kpti_support" = 1 ]; then
+			if [ -n "$kpti_support" ]; then
 				pvulnstatus $cve OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
 			elif [ "$kpti_can_tell" = 1 ]; then
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
