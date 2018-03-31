@@ -2291,7 +2291,7 @@ check_variant3_linux()
 			msg="Xen Dom0s are safe and do not require PTI"
 			status="OK"
 		elif [ "$xen_pv_domu" = 1 ]; then
-			msg="Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM or PVH mode"
+			msg="Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM, PVH mode, or the Xen hypervisor must have the Xen's own PTI patch"
 			status="VULN"
 		elif [ "$msg" = "Vulnerable" ]; then
 			msg="PTI is needed to mitigate the vulnerability"
