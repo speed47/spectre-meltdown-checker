@@ -17,8 +17,8 @@ exit_cleanup()
 {
 	# cleanup the temp decompressed config & kernel image
 	[ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
-	[ -n "$vmlinuxtmp"    ] && [ -f "$vmlinuxtmp"    ] && rm -f "$vmlinuxtmp"
-	[ -n "$vmlinuxtmp2"   ] && [ -f "$vmlinuxtmp2"   ] && rm -f "$vmlinuxtmp2"
+	[ -n "$kerneltmp"     ] && [ -f "$kerneltmp"     ] && rm -f "$kerneltmp"
+	[ -n "$kerneltmp2"    ] && [ -f "$kerneltmp2"    ] && rm -f "$kerneltmp2"
 	[ "$mounted_debugfs" = 1 ] && umount /sys/kernel/debug 2>/dev/null
 	[ "$mounted_procfs"  = 1 ] && umount "$procfs" 2>/dev/null
 	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
@@ -32,7 +32,7 @@ show_usage()
 	cat <<EOF
 	Usage:
 		Live mode:    $(basename $0) [options] [--live]
-		Offline mode: $(basename $0) [options] [--kernel <vmlinux_file>] [--config <kernel_config>] [--map <kernel_map_file>]
+		Offline mode: $(basename $0) [options] [--kernel <kernel_file>] [--config <kernel_config>] [--map <kernel_map_file>]
 
 	Modes:
 		Two modes are available.
@@ -41,7 +41,7 @@ show_usage()
 		To run under this mode, just start the script without any option (you can also use --live explicitly)
 
 		Second mode is the "offline" mode, where you can inspect a non-running kernel.
-		You'll need to specify the location of the vmlinux file, config and System.map files:
+		You'll need to specify the location of the kernel file, config and System.map files:
 
 		--kernel kernel_file	specify a (possibly compressed) Linux or BSD kernel file
 		--config kernel_config	specify a kernel config file (Linux only)
@@ -591,9 +591,9 @@ pvulnstatus()
 # Licensed under the GNU General Public License, version 2 (GPLv2).
 # ----------------------------------------------------------------------
 
-vmlinux=''
-vmlinux_err=''
-check_vmlinux()
+kernel=''
+kernel_err=''
+check_kernel()
 {
 	_file="$1"
 	_desperate_mode="$2"
@@ -601,25 +601,25 @@ check_vmlinux()
 	# a damaged ELF file and validate it, check for stderr warnings too
 	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$_file" 2>&1 >/dev/null | tr "\n" "/"); ret=$?
 	_readelf_sections=$("${opt_arch_prefix}readelf" -S "$_file" 2>/dev/null | grep -c -e data -e text -e init)
-	_vmlinux_size=$(stat -c %s "$_file" 2>/dev/null || stat -f %z "$_file" 2>/dev/null || echo 10000)
-	_debug "check_vmlinux: ret=$? size=$_vmlinux_size sections=$_readelf_sections warnings=$_readelf_warnings"
+	_kernel_size=$(stat -c %s "$_file" 2>/dev/null || stat -f %z "$_file" 2>/dev/null || echo 10000)
+	_debug "check_kernel: ret=$? size=$_kernel_size sections=$_readelf_sections warnings=$_readelf_warnings"
 	if [ -n "$_desperate_mode" ]; then
 		if "${opt_arch_prefix}strings" "$_file" | grep -Eq '^Linux version '; then
-			_debug "check_vmlinux (desperate): ... matched!"
+			_debug "check_kernel (desperate): ... matched!"
 			return 0
 		else
-			_debug "check_vmlinux (desperate): ... invalid"
+			_debug "check_kernel (desperate): ... invalid"
 		fi
 	else
 		if [ $ret -eq 0 ] && [ -z "$_readelf_warnings" ] && [ "$_readelf_sections" -gt 0 ]; then
-			if [ "$_vmlinux_size" -ge 100000 ]; then
-				_debug "check_vmlinux: ... file is valid"
+			if [ "$_kernel_size" -ge 100000 ]; then
+				_debug "check_kernel: ... file is valid"
 				return 0
 			else
-				_debug "check_vmlinux: ... file seems valid but is too small, ignoring"
+				_debug "check_kernel: ... file seems valid but is too small, ignoring"
 			fi
 		else
-			_debug "check_vmlinux: ... file is invalid"
+			_debug "check_kernel: ... file is invalid"
 		fi
 	fi
 	return 1
@@ -636,25 +636,25 @@ try_decompress()
 	do
 		_debug "try_decompress: magic for $3 found at offset $pos"
 		if ! which "$3" >/dev/null 2>&1; then
-			vmlinux_err="missing '$3' tool, please install it, usually it's in the '$5' package"
+			kernel_err="missing '$3' tool, please install it, usually it's in the '$5' package"
 			return 0
 		fi
 		pos=${pos%%:*}
 		# shellcheck disable=SC2086
-		tail -c+$pos "$6" 2>/dev/null | $3 $4 > "$vmlinuxtmp" 2>/dev/null; ret=$?
-		if [ ! -s "$vmlinuxtmp" ]; then
+		tail -c+$pos "$6" 2>/dev/null | $3 $4 > "$kerneltmp" 2>/dev/null; ret=$?
+		if [ ! -s "$kerneltmp" ]; then
 			# don't rely on $ret, sometimes it's != 0 but worked
 			# (e.g. gunzip ret=2 just means there was trailing garbage)
 			_debug "try_decompress: decompression with $3 failed (err=$ret)"
-		elif check_vmlinux "$vmlinuxtmp" "$7"; then
-			vmlinux="$vmlinuxtmp"
+		elif check_kernel "$kerneltmp" "$7"; then
+			kernel="$kerneltmp"
 			_debug "try_decompress: decompressed with $3 successfully!"
 			return 0
 		elif [ "$3" != "cat" ]; then
 			_debug "try_decompress: decompression with $3 worked but result is not a kernel, trying with an offset"
-			[ -z "$vmlinuxtmp2" ] && vmlinuxtmp2=$(mktemp /tmp/vmlinux-XXXXXX)
-			cat "$vmlinuxtmp" > "$vmlinuxtmp2"
-			try_decompress '\177ELF' xxy 'cat' '' cat "$vmlinuxtmp2" && return 0
+			[ -z "$kerneltmp2" ] && kerneltmp2=$(mktemp /tmp/kernel-XXXXXX)
+			cat "$kerneltmp" > "$kerneltmp2"
+			try_decompress '\177ELF' xxy 'cat' '' cat "$kerneltmp2" && return 0
 		else
 			_debug "try_decompress: decompression with $3 worked but result is not a kernel"
 		fi
@@ -662,16 +662,16 @@ try_decompress()
 	return 1
 }
 
-extract_vmlinux()
+extract_kernel()
 {
 	[ -n "$1" ] || return 1
 	# Prepare temp files:
-	vmlinuxtmp="$(mktemp /tmp/vmlinux-XXXXXX)"
+	kerneltmp="$(mktemp /tmp/kernel-XXXXXX)"
 
 	# Initial attempt for uncompressed images or objects:
-	if check_vmlinux "$1"; then
-		cat "$1" > "$vmlinuxtmp"
-		vmlinux=$vmlinuxtmp
+	if check_kernel "$1"; then
+		cat "$1" > "$kerneltmp"
+		kernel=$kerneltmp
 		return 0
 	fi
 
@@ -1148,9 +1148,9 @@ else
 fi
 
 if [ -n "$opt_kernel" ]; then
-	_verbose "Will use vmlinux image \033[35m$opt_kernel\033[0m"
+	_verbose "Will use kernel image \033[35m$opt_kernel\033[0m"
 else
-	_verbose "Will use no vmlinux image (accuracy might be reduced)"
+	_verbose "Will use no kernel image (accuracy might be reduced)"
 	bad_accuracy=1
 fi
 
@@ -1185,39 +1185,39 @@ fi
 if [ -e "$opt_kernel" ]; then
 	if ! which "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
 		_debug "readelf not found"
-		vmlinux_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
+		kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
 	elif [ "$opt_sysfs_only" = 1 ]; then
-		vmlinux_err='kernel image decompression skipped'
+		kernel_err='kernel image decompression skipped'
 	else
-		extract_vmlinux "$opt_kernel"
+		extract_kernel "$opt_kernel"
 	fi
 else
 	_debug "no opt_kernel defined"
-	vmlinux_err="couldn't find your kernel image in /boot, if you used netboot, this is normal"
+	kernel_err="couldn't find your kernel image in /boot, if you used netboot, this is normal"
 fi
-if [ -z "$vmlinux" ] || [ ! -r "$vmlinux" ]; then
-	[ -z "$vmlinux_err" ] && vmlinux_err="couldn't extract your kernel from $opt_kernel"
+if [ -z "$kernel" ] || [ ! -r "$kernel" ]; then
+	[ -z "$kernel_err" ] && kernel_err="couldn't extract your kernel from $opt_kernel"
 else
 	# vanilla kernels have with ^Linux version
 	# also try harder with some kernels (such as Red Hat) that don't have ^Linux version before their version string
 	# and check for FreeBSD
-	vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E \
+	kernel_version=$("${opt_arch_prefix}strings" "$kernel" 2>/dev/null | grep -E \
 		-e '^Linux version ' \
 		-e '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' \
 		-e '^FreeBSD [0-9]' | head -1)
-	if [ -z "$vmlinux_version" ]; then
+	if [ -z "$kernel_version" ]; then
 		# try even harder with some kernels (such as ARM) that split the release (uname -r) and version (uname -v) in 2 adjacent strings
-		vmlinux_version=$("${opt_arch_prefix}strings" "$vmlinux" 2>/dev/null | grep -E -B1 '^#[0-9]+ .+ (19|20)[0-9][0-9]$' | tr "\n" " ")
+		kernel_version=$("${opt_arch_prefix}strings" "$kernel" 2>/dev/null | grep -E -B1 '^#[0-9]+ .+ (19|20)[0-9][0-9]$' | tr "\n" " ")
 	fi
-	if [ -n "$vmlinux_version" ]; then
+	if [ -n "$kernel_version" ]; then
 		# in live mode, check if the img we found is the correct one
 		if [ "$opt_live" = 1 ]; then
-			_verbose "Kernel image is \033[35m$vmlinux_version"
-			if ! echo "$vmlinux_version" | grep -qF "$(uname -r)"; then
-				_warn "Possible disrepancy between your running kernel '$(uname -r)' and the image '$vmlinux_version' we found ($opt_kernel), results might be incorrect"
+			_verbose "Kernel image is \033[35m$kernel_version"
+			if ! echo "$kernel_version" | grep -qF "$(uname -r)"; then
+				_warn "Possible disrepancy between your running kernel '$(uname -r)' and the image '$kernel_version' we found ($opt_kernel), results might be incorrect"
 			fi
 		else
-			_info "Kernel image is \033[35m$vmlinux_version"
+			_info "Kernel image is \033[35m$kernel_version"
 		fi
 	else
 		_verbose "Kernel image version is unknown"
@@ -1594,17 +1594,17 @@ check_redhat_canonical_spectre()
 
 	if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 		redhat_canonical_spectre=-1
-	elif [ -n "$vmlinux_err" ]; then
+	elif [ -n "$kernel_err" ]; then
 		redhat_canonical_spectre=-2
 	else
 		# Red Hat / Ubuntu specific variant1 patch is difficult to detect,
 		# let's use the two same tricks than the official Red Hat detection script uses:
-		if "${opt_arch_prefix}strings" "$vmlinux" | grep -qw noibrs && "${opt_arch_prefix}strings" "$vmlinux" | grep -qw noibpb; then
+		if "${opt_arch_prefix}strings" "$kernel" | grep -qw noibrs && "${opt_arch_prefix}strings" "$kernel" | grep -qw noibpb; then
 			# 1) detect their specific variant2 patch. If it's present, it means
 			# that the variant1 patch is also present (both were merged at the same time)
 			_debug "found redhat/canonical version of the variant2 patch (implies variant1)"
 			redhat_canonical_spectre=1
-		elif "${opt_arch_prefix}strings" "$vmlinux" | grep -q 'x86/pti:'; then
+		elif "${opt_arch_prefix}strings" "$kernel" | grep -q 'x86/pti:'; then
 			# 2) detect their specific variant3 patch. If it's present, but the variant2
 			# is not, it means that only variant1 is present in addition to variant3
 			_debug "found redhat/canonical version of the variant3 patch (implies variant1 but not variant2)"
@@ -1656,17 +1656,17 @@ check_variant1_linux()
 		#ASM_STAC
 		# x86 64bits: jae(0x0f 0x83 0x?? 0x?? 0x?? 0x??) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
 		# x86 32bits: cmp(0x3b 0x82 0x?? 0x?? 0x00 0x00) jae(0x73 0x??) sbb(0x19 0xd2) and(0x21 0xd0)
-		if [ -n "$vmlinux_err" ]; then
-			pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
+		if [ -n "$kernel_err" ]; then
+			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 		elif ! which perl >/dev/null 2>&1; then
 			pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
 		else
-			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$vmlinux"; ret=$?
+			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 			if [ $ret -gt 0 ]; then
 				pstatus green YES "$ret occurence(s) found of 64 bits array_index_mask_nospec()"
 				v1_mask_nospec=1
 			else
-				perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$vmlinux"; ret=$?
+				perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 				if [ $ret -gt 0 ]; then
 					pstatus green YES "$ret occurence(s) found of 32 bits array_index_mask_nospec()"
 					v1_mask_nospec=1
@@ -1681,7 +1681,7 @@ check_variant1_linux()
 		if [ "$redhat_canonical_spectre" = -1 ]; then
 			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 		elif [ "$redhat_canonical_spectre" = -2 ]; then
-			pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
+			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 		elif [ "$redhat_canonical_spectre" = 1 ]; then
 			pstatus green YES
 		elif [ "$redhat_canonical_spectre" = 2 ]; then
@@ -1694,8 +1694,8 @@ check_variant1_linux()
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
 			# but still show it in verbose mode
 			_info_nol "* Checking count of LFENCE instructions following a jump in kernel... "
-			if [ -n "$vmlinux_err" ]; then
-				pstatus yellow UNKNOWN "couldn't check ($vmlinux_err)"
+			if [ -n "$kernel_err" ]; then
+				pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 			else
 				if ! which "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
 					pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
@@ -1707,7 +1707,7 @@ check_variant1_linux()
 					# so let's push the threshold to 70.
 					# v0.33+: now only count lfence opcodes after a jump, way less error-prone
 					# non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
-					nb_lfence=$("${opt_arch_prefix}objdump" -d "$vmlinux" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
+					nb_lfence=$("${opt_arch_prefix}objdump" -d "$kernel" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
 					if [ "$nb_lfence" -lt 30 ]; then
 						pstatus yellow NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
 					else
@@ -1737,7 +1737,7 @@ check_variant1_linux()
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
 		elif [ "$v1_lfence" = 1 ]; then
 			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
-		elif [ "$vmlinux_err" ]; then
+		elif [ "$kernel_err" ]; then
 			pvulnstatus $cve UNK "Couldn't find kernel image or tools missing to execute the checks"
 		else
 			pvulnstatus $cve VULN "Kernel source needs to be patched to mitigate the vulnerability"
@@ -1984,13 +1984,13 @@ check_variant2_linux()
 					pstatus yellow NO
 				fi
 			fi
-		elif [ -n "$vmlinux" ]; then
+		elif [ -n "$kernel" ]; then
 			# look for the symbol
 			if which "${opt_arch_prefix}nm" >/dev/null 2>&1; then
 				# the proper way: use nm and look for the symbol
-				if "${opt_arch_prefix}nm" "$vmlinux" 2>/dev/null | grep -qw 'noretpoline_setup'; then
+				if "${opt_arch_prefix}nm" "$kernel" 2>/dev/null | grep -qw 'noretpoline_setup'; then
 					retpoline_compiler=1
-					pstatus green YES "noretpoline_setup found in vmlinux symbols"
+					pstatus green YES "noretpoline_setup found in kernel symbols"
 				else
 					if [ "$retpoline" = 1 ]; then
 						pstatus yellow UNKNOWN
@@ -1998,11 +1998,11 @@ check_variant2_linux()
 						pstatus yellow NO
 					fi
 				fi
-			elif grep -q noretpoline_setup "$vmlinux"; then
+			elif grep -q noretpoline_setup "$kernel"; then
 				# if we don't have nm, nevermind, the symbol name is long enough to not have
 				# any false positive using good old grep directly on the binary
 				retpoline_compiler=1
-				pstatus green YES "noretpoline_setup found in vmlinux"
+				pstatus green YES "noretpoline_setup found in kernel"
 			else
 				if [ "$retpoline" = 1 ]; then
 					pstatus yellow UNKNOWN
@@ -2061,7 +2061,8 @@ check_variant2_linux()
 
 check_variant2_bsd()
 {
-	_info_nol "* Kernel supports IBRS: "
+	_info     "* Mitigation 1"
+	_info_nol "  * Kernel supports IBRS: "
 	ibrs_disabled=$(sysctl -n hw.ibrs_disable 2>/dev/null)
 	if [ -z "$ibrs_disabled" ]; then
 		pstatus yellow NO
@@ -2069,7 +2070,7 @@ check_variant2_bsd()
 		pstatus green YES
 	fi
 
-	_info_nol "* IBRS enabled and active: "
+	_info_nol "  * IBRS enabled and active: "
 	ibrs_active=$(sysctl -n hw.ibrs_active 2>/dev/null)
 	if [ "$ibrs_active" = 1 ]; then
 		pstatus green YES
@@ -2077,10 +2078,30 @@ check_variant2_bsd()
 		pstatus yellow NO
 	fi
 
+	_info     "* Mitigation 2"
+	_info_nol "  * Kernel compiled with RETPOLINE: "
+	if [ -n "$kernel_err" ]; then
+		pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
+	else
+		if ! which "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the binutils package"
+		else
+			nb_thunks=$("${opt_arch_prefix}readelf" -s "$kernel" | grep -c -e __llvm_retpoline_ -e __llvm_external_retpoline_ -e __x86_indirect_thunk_)
+			if [ "$nb_thunks" -gt 0 ]; then
+				retpoline=1
+				pstatus green YES "found $nb_thunks thunk(s)"
+			else
+				pstatus yellow NO
+			fi
+		fi
+	fi
+
 	cve='CVE-2017-5715'
 	if ! is_cpu_vulnerable 2; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ "$retpoline" = 1 ]; then
+		pvulnstatus $cve OK "Retpoline mitigates the vulnerability"
 	elif [ "$ibrs_active" = 1 ]; then
 		pvulnstatus $cve OK "IBRS mitigates the vulnerability"
 	elif [ "$ibrs_disabled" = 0 ]; then
@@ -2136,15 +2157,15 @@ check_variant3_linux()
 				kpti_support=1
 			fi
 		fi
-		if [ "$kpti_support" = 0 ] && [ -n "$vmlinux" ]; then
-			# same as above but in case we don't have System.map and only vmlinux, look for the
+		if [ "$kpti_support" = 0 ] && [ -n "$kernel" ]; then
+			# same as above but in case we don't have System.map and only kernel, look for the
 			# nopti option that is part of the patch (kernel command line option)
 			kpti_can_tell=1
 			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 			else
-				if "${opt_arch_prefix}strings" "$vmlinux" | grep -qw nopti; then
-					_debug "kpti_support: found nopti string in $vmlinux"
+				if "${opt_arch_prefix}strings" "$kernel" | grep -qw nopti; then
+					_debug "kpti_support: found nopti string in $kernel"
 					kpti_support=1
 				fi
 			fi
