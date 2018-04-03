@@ -2016,7 +2016,7 @@ check_variant2_linux()
 		# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
 		# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
 		# *AND* if the compiler is retpoline-compliant, so look for that symbol
-		if [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
+		if [ "$opt_live" = 1 ] && [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
 			if grep -qw Minimal /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
 				pstatus yellow NO "kernel reports minimal retpoline compilation"
 			elif grep -qw Full /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
