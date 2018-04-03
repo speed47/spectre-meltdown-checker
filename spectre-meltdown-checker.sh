@@ -65,6 +65,7 @@ show_usage()
 		--variant [1,2,3]	specify which variant you'd like to check, by default all variants are checked,
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--hw-only		only check for CPU informations, don't check for any variant
+		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 
 	Return codes:
 		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
@@ -127,6 +128,7 @@ opt_sysfs_only=0
 opt_coreos=0
 opt_arch_prefix=''
 opt_hw_only=0
+opt_no_hw=0
 
 global_critical=0
 global_unknown=0
@@ -450,6 +452,9 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--hw-only" ]; then
 		opt_hw_only=1
 		shift
+	elif [ "$1" = "--no-hw" ]; then
+		opt_no_hw=1
+		shift
 	elif [ "$1" = "--batch" ]; then
 		opt_batch=1
 		opt_verbose=0
@@ -506,6 +511,11 @@ show_header
 
 if [ "$opt_no_sysfs" = 1 ] && [ "$opt_sysfs_only" = 1 ]; then
 	_warn "Incompatible options specified (--no-sysfs and --sysfs-only), aborting"
+	exit 255
+fi
+
+if [ "$opt_no_hw" = 1 ] && [ "$opt_hw_only" = 1 ]; then
+	_warn "Incompatible options specified (--no-hw and --hw-only), aborting"
 	exit 255
 fi
 
@@ -2422,9 +2432,11 @@ check_variant3_bsd()
 	fi
 }
 
-check_cpu
-check_cpu_vulnerabilities
-_info
+if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+	check_cpu
+	check_cpu_vulnerabilities
+	_info
+fi
 
 # now run the checks the user asked for
 if [ "$opt_variant1" = 1 ] || [ "$opt_allvariants" = 1 ]; then
