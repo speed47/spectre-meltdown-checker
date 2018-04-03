@@ -3,11 +3,15 @@ Spectre & Meltdown Checker
 
 A shell script to tell if your system is vulnerable against the 3 "speculative execution" CVEs that were made public early 2018.
 
-Supported systems:
-- Linux (all versions and flavors)
-- FreeBSD
-- NetBSD
-- DragonFlyBSD
+Supported operating systems:
+- Linux (all versions, flavors and distros)
+- BSD (FreeBSD, NetBSD, DragonFlyBSD)
+
+Supported architectures:
+- x86 (32 bits)
+- amd64/x86_64 (64 bits)
+- ARM and ARM64
+- other architectures will work, but mitigations (if they exist) might not always be detected
 
 For Linux systems, the script will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel.
 
