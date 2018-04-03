@@ -1644,7 +1644,7 @@ check_variant1_linux()
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
 		# no /sys interface (or offline mode), fallback to our own ways
-		_info_nol "* Kernel has array_index_mask_nospec: "
+		_info_nol "* Kernel has array_index_mask_nospec (x86): "
 		# vanilla: look for the Linus' mask aka array_index_mask_nospec()
 		# that is inlined at least in raw_copy_from_user (__get_user_X symbols)
 		#mov PER_CPU_VAR(current_task), %_ASM_DX
@@ -1664,12 +1664,12 @@ check_variant1_linux()
 			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 			if [ $ret -gt 0 ]; then
 				pstatus green YES "$ret occurence(s) found of 64 bits array_index_mask_nospec()"
-				v1_mask_nospec=1
+				v1_mask_nospec="64 bits array_index_mask_nospec"
 			else
 				perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 				if [ $ret -gt 0 ]; then
 					pstatus green YES "$ret occurence(s) found of 32 bits array_index_mask_nospec()"
-					v1_mask_nospec=1
+					v1_mask_nospec="32 bits array_index_mask_nospec"
 				else
 					pstatus yellow NO
 				fi
@@ -1690,7 +1690,39 @@ check_variant1_linux()
 			pstatus yellow NO
 		fi
 
-		if [ "$opt_verbose" -ge 2 ] || ( [ "$v1_mask_nospec" != 1 ] && [ "$redhat_canonical_spectre" != 1 ] && [ "$redhat_canonical_spectre" != 2 ] ); then
+		_info_nol "* Kernel has mask_nospec64 (arm): "
+		#.macro	mask_nospec64, idx, limit, tmp
+		#sub	\tmp, \idx, \limit
+		#bic	\tmp, \tmp, \idx
+		#and	\idx, \idx, \tmp, asr #63
+		#csdb
+		#.endm
+		#$ aarch64-linux-gnu-objdump -d vmlinux | grep -w bic -A1 -B1 | grep -w sub -A2 | grep -w and -B2
+		#ffffff8008082e44:       cb190353        sub     x19, x26, x25
+		#ffffff8008082e48:       8a3a0273        bic     x19, x19, x26
+		#ffffff8008082e4c:       8a93ff5a        and     x26, x26, x19, asr #63
+		#ffffff8008082e50:       d503229f        hint    #0x14
+		# if we have v1_mask_nospec or redhat_canonical_spectre>0, don't bother disassembling the kernel, the answer is no.
+		if [ -n "$v1_mask_nospec" ] || [ "$redhat_canonical_spectre" -gt 0 ]; then
+			pstatus yellow NO
+		elif [ -n "$kernel_err" ]; then
+			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
+		elif ! which perl >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
+		elif ! which "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+		else
+			"${opt_arch_prefix}objdump" -d "$kernel" | perl -ne 'push @r, $_; /\shint\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'; ret=$?
+			if [ "$ret" -eq 9 ]; then
+				pstatus green YES "mask_nospec64 macro is present and used"
+				v1_mask_nospec="arm mask_nospec64"
+			else
+				pstatus yellow NO
+			fi
+		fi
+
+
+		if [ "$opt_verbose" -ge 2 ] || ( [ -z "$v1_mask_nospec" ] && [ "$redhat_canonical_spectre" != 1 ] && [ "$redhat_canonical_spectre" != 2 ] ); then
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
 			# but still show it in verbose mode
 			_info_nol "* Checking count of LFENCE instructions following a jump in kernel... "
@@ -1731,8 +1763,8 @@ check_variant1_linux()
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
-		if [ "$v1_mask_nospec" = 1 ]; then
-			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (array_index_mask_nospec)"
+		if [ -n "$v1_mask_nospec" ]; then
+			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability ($v1_mask_nospec)"
 		elif [ "$redhat_canonical_spectre" = 1 ] || [ "$redhat_canonical_spectre" = 2 ]; then
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
 		elif [ "$v1_lfence" = 1 ]; then
@@ -1743,7 +1775,7 @@ check_variant1_linux()
 			pvulnstatus $cve VULN "Kernel source needs to be patched to mitigate the vulnerability"
 		fi
 	else
-		if [ "$msg" = "Vulnerable" ] && [ "$v1_mask_nospec" = 1 ]; then
+		if [ "$msg" = "Vulnerable" ] && [ -n "$v1_mask_nospec" ]; then
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (silent backport of array_index_mask_nospec)"
 		else
 			[ "$msg" = "Vulnerable" ] && msg="Kernel source needs to be patched to mitigate the vulnerability"
@@ -1938,7 +1970,7 @@ check_variant2_linux()
 		fi
 
 		_info "* Mitigation 2"
-		_info_nol "  * Kernel has branch predictor hardening (ARM): "
+		_info_nol "  * Kernel has branch predictor hardening (arm): "
 		if [ -r "$opt_config" ]; then
 			bp_harden_can_tell=1
 			bp_harden=$(grep -w 'CONFIG_HARDEN_BRANCH_PREDICTOR=y' "$opt_config")
