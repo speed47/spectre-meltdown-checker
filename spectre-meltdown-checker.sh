@@ -2323,6 +2323,8 @@ check_variant3_linux()
 				pvulnstatus $cve OK "Xen Dom0s are safe and do not require PTI"
 			elif [ "$xen_pv_domu" = 1 ]; then
 				pvulnstatus $cve VULN "Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM, PVH mode, or the Xen hypervisor must have the Xen's own PTI patch"
+			elif [ "$kpti_enabled" = -1 ]; then
+				pvulnstatus $cve UNK "couldn't find any clue of PTI activation due to a truncated dmesg, please reboot and relaunch this script"
 			else
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
 			fi
