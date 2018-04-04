@@ -755,10 +755,19 @@ load_cpuid()
 
 read_cpuid()
 {
+	# leaf is the value of the eax register when calling the cpuid instruction:
 	_leaf="$1"
-	_bytenum="$2"
-	_and_operand="$3"
+	# eax=1 ebx=2 ecx=3 edx=4:
+	_register="$2"
+	# number of bits to shift the register right to:
+	_shift="$3"
+	# mask to apply as an AND operand to the shifted register value
+	_mask="$4"
+	# wanted value (optional), if present we return 0(true) if the obtained value is equal, 1 otherwise:
+	_wanted="$5"
+	# in any case, the read value is globally available in $read_cpuid_value
 
+	read_cpuid_value=''
 	if [ ! -e /dev/cpu/0/cpuid ] && [ ! -e /dev/cpuctl0 ]; then
 		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 		load_cpuid
@@ -768,61 +777,39 @@ read_cpuid()
 		# Linux
 		# we need _leaf to be converted to decimal for dd
 		_leaf=$(( _leaf ))
-		if [ "$opt_verbose" -ge 3 ]; then
-			dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 >/dev/null 2>/dev/null
-			_debug "cpuid: reading leaf$_leaf of cpuid on cpu0, ret=$?"
-			_debug "cpuid: leaf$_leaf eax-ebx-ecx-edx: $(   dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | od -x -A n)"
-		fi
-		# getting proper byte of edx on leaf$_leaf of cpuinfo in decimal
-		_reg_byte=$(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | dd bs=1 skip="$_bytenum" count=1 2>/dev/null | od -t u1 -A n | awk '{print $1}')
-		_debug "cpuid: leaf$_leaf byte $_bytenum: $_reg_byte (decimal)"
-		_reg_bit=$(( _reg_byte & _and_operand ))
-		_debug "cpuid: leaf$_leaf byte $_bytenum & $_and_operand = $_reg_bit"
-		[ "$_reg_bit" -eq 0 ] && return 1
-		# $_reg_bit is > 0, so the bit was found: return true (aka 0)
-		return 0
-
+		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | od -A n -t u4)
 	elif [ -e /dev/cpuctl0 ]; then
 		# BSD
 		_cpuid=$(cpucontrol -i "$_leaf" /dev/cpuctl0 2>/dev/null | awk '{print $4,$5,$6,$7}')
 		# cpuid level 0x1: 0x000306d4 0x00100800 0x4dfaebbf 0xbfebfbff
-		_debug "cpuid: got $_cpuid for leaf $_leaf"
-		if [ "$_bytenum" -lt 4 ]; then
-			_reg_byte=$(echo "$_cpuid" | awk '{print $1}')
-			_debug "cpuid: $_bytenum is part of EAX ($_reg_byte)"
-		elif [ "$_bytenum" -lt 8 ]; then
-			_reg_byte=$(echo "$_cpuid" | awk '{print $2}')
-			_debug "cpuid: $_bytenum is part of EBX ($_reg_byte)"
-		elif [ "$_bytenum" -lt 12 ]; then
-			_reg_byte=$(echo "$_cpuid" | awk '{print $3}')
-			_debug "cpuid: $_bytenum is part of ECX ($_reg_byte)"
-		elif [ "$_bytenum" -lt 16 ]; then
-			_reg_byte=$(echo "$_cpuid" | awk '{print $4}')
-			_debug "cpuid: $_bytenum is part of EDX ($_reg_byte)"
-		else
-			_warn "read_cpuid: error in the program, please report to the developer ($_leaf/$_bytenum/$_and_operand)"
-			exit 1
-		fi
-		_bytenum=$(( _bytenum % 4 ))
-		case "$_bytenum" in
-			0) _reg_byte=0x$(echo "$_reg_byte" | cut -c9-10) ;;
-			1) _reg_byte=0x$(echo "$_reg_byte" | cut -c7-8) ;;
-			2) _reg_byte=0x$(echo "$_reg_byte" | cut -c5-6) ;;
-			3) _reg_byte=0x$(echo "$_reg_byte" | cut -c3-4) ;;
-			*) exit 8;
-		esac
-		_debug "cpuid: wanted byte is $_reg_byte"
-		# convert to decimal
-		_reg_byte=$(( _reg_byte ))
-		_debug "cpuid: decimal value is $_reg_byte"
-		_reg_bit=$(( _reg_byte & _and_operand ))
-		_debug "cpuid: leaf$_leaf byte $_bytenum & $_and_operand = $_reg_bit"
-		[ "$_reg_bit" -eq 0 ] && return 1
-		# $_reg_bit is > 0, so the bit was found: return true (aka 0)
-		return 0
+	else
+		return 2
 	fi
 
-	return 2
+	_debug "cpuid: leaf$_leaf on cpu0, eax-ebx-ecx-edx: $_cpuid"
+	[ -z "$_cpuid" ] && return 2
+	# get the value of the register we want
+	_reg=$(echo "$_cpuid" | awk '{print $'"$_register"'}')
+	# Linux returns it as decimal, BSD as hex, normalize to decimal
+	_reg=$(( _reg ))
+	# shellcheck disable=SC2046
+	_debug "cpuid: wanted register ($_register) has value $_reg aka "$(printf "%08x" "$_reg")
+	_reg_shifted=$(( _reg >> _shift ))
+	# shellcheck disable=SC2046
+	_debug "cpuid: shifted value by $_shift is $_reg_shifted aka "$(printf "%x" "$_reg_shifted")
+	read_cpuid_value=$(( _reg_shifted & _mask ))
+	# shellcheck disable=SC2046
+	_debug "cpuid: after AND $_mask, final value is $read_cpuid_value aka "$(printf "%x" "$read_cpuid_value")
+	if [ -n "$_wanted" ]; then
+		_debug "cpuid: wanted $_wanted and got $read_cpuid_value"
+		if [ "$read_cpuid_value" = "$_wanted" ]; then
+			return 0
+		else
+			return 1
+		fi
+	fi
+
+	return 0
 }
 
 dmesg_grep()
@@ -1312,13 +1299,15 @@ write_msr()
 	return $ret
 }
 
-# $1 - msr number
-# $2 - cpu index 
 read_msr()
 {
+	# _msr must be in hex, in the form 0x1234:
+	_msr="$1"
+	# cpu index, starting from 0:
+	_cpu="$2"
 	read_msr_value=''
 	if [ "$os" != Linux ]; then
-		_msr=$(cpucontrol -m "$1" "/dev/cpuctl$2" 2>/dev/null); ret=$?
+		_msr=$(cpucontrol -m "$_msr" "/dev/cpuctl$_cpu" 2>/dev/null); ret=$?
 		[ $ret -ne 0 ] && return 1
 		# MSR 0x10: 0x000003e1 0xb106dded
 		_msr_h=$(echo "$_msr" | awk '{print $3}');
@@ -1328,14 +1317,15 @@ read_msr()
 		read_msr_value="$_msr_h $_msr_l"
 	else
 		# convert to decimal
-		_msrindex=$(( $1 ))
-		if [ ! -r /dev/cpu/"$2"/msr ]; then
+		_msr=$(( _msr ))
+		if [ ! -r /dev/cpu/"$_cpu"/msr ]; then
 			return 200 # permission error
 		fi
-		if ! dd if=/dev/cpu/"$2"/msr bs=8 count=1 skip="$_msrindex" iflag=skip_bytes >/dev/null 2>&1; then
+		read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null | od -t u1 -A n)
+		if [ -z "$read_msr_value" ]; then
+			# MSR doesn't exist, don't check for $? because some versions of dd still return 0!
 			return 1
 		fi
-		read_msr_value=$(dd if=/dev/cpu/"$2"/msr bs=8 count=1 skip="$_msrindex" iflag=skip_bytes 2>/dev/null | od -t u1 -A n)
 	fi
 	_debug "read_msr: MSR=$1 value is $read_msr_value"
 	return 0
@@ -1402,7 +1392,7 @@ check_cpu()
 
 	_info_nol "    * CPU indicates IBRS capability: "
 	# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
-	read_cpuid 0x7 15 4; ret=$?
+	read_cpuid 0x7 4 26 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
 		pstatus green YES "SPEC_CTRL feature bit"
 		cpuid_spec_ctrl=1
@@ -1469,7 +1459,7 @@ check_cpu()
 
 	_info_nol "    * CPU indicates IBPB capability: "
 	# CPUID EAX=0x80000008, ECX=0x00 return EBX[12] indicates support for just IBPB.
-	read_cpuid 0x80000008 5 16; ret=$?
+	read_cpuid 0x80000008 2 12 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
 		pstatus green YES "IBPB_SUPPORT feature bit"
 	elif [ "$cpuid_spec_ctrl" = 1 ]; then
@@ -1493,7 +1483,7 @@ check_cpu()
 
 	_info_nol "    * CPU indicates STIBP capability: "
 	# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
-	read_cpuid 0x7 15 8; ret=$?
+	read_cpuid 0x7 4 27 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
 		pstatus green YES
 	elif [ $ret -eq 2 ]; then
@@ -1505,8 +1495,8 @@ check_cpu()
 	_info     "  * Enhanced IBRS (IBRS_ALL)"
 	_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 	cpuid_arch_capabilities=-1
-	# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
-	read_cpuid 0x7 15 32; ret=$?
+	# A processor supports the ARCH_CAPABILITIES MSR if it enumerates CPUID (EAX=7H,ECX=0):EDX[29] as 1
+	read_cpuid 0x7 4 29 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
 		pstatus green YES
 		cpuid_arch_capabilities=1
