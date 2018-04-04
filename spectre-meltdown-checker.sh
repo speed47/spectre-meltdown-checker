@@ -868,6 +868,28 @@ parse_cpu_details()
 		cpu_friendly_name=$(sysctl -n hw.model)
 	fi
 
+	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
+	if read_cpuid 0x1 1 0 0xFFFFFFFF; then
+		cpuid="$read_cpuid_value"
+	fi
+
+	# under BSD, linprocfs often doesn't export ucode information, so fetch it ourselves the good old way
+	if [ -z "$cpu_ucode" ] && [ "$os" != Linux ]; then
+		load_cpuid
+		if [ -e /dev/cpuctl0 ]; then
+			# init MSR with NULLs
+			cpucontrol -m 0x8b=0 /dev/cpuctl0
+			# call CPUID
+			cpucontrol -i 1 /dev/cpuctl0 >/dev/null
+			# read MSR
+			cpu_ucode=$(cpucontrol -m 0x8b /dev/cpuctl0 | awk '{print $3}')
+			# convert to decimal
+			cpu_ucode=$(( cpu_ucode ))
+			# convert back to hex
+			cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+		fi
+	fi
+
 	# also define those that we will need in other funcs
 	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
 	# shellcheck disable=SC2034
@@ -944,7 +966,7 @@ is_ucode_blacklisted()
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n105
 	# 2018-02-08 update: https://newsroom.intel.com/wp-content/uploads/sites/11/2018/02/microcode-update-guidance.pdf
 	# model,stepping,microcode
-	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode"
+	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode cpuid "$(printf "0x%x" "$cpuid")
 	for tuple in \
 		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0B,0x80 \
 		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0A,0x80 \
