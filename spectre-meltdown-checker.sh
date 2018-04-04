@@ -50,6 +50,7 @@ show_usage()
 	Options:
 		--no-color		don't use color codes
 		--verbose, -v		increase verbosity level, possibly several times
+		--no-explain		don't produce a human-readable explanation of actions to take to mitigate a vulnerability
 
 		--no-sysfs		don't use the /sys interface even if present [Linux]
 		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
@@ -129,6 +130,7 @@ opt_coreos=0
 opt_arch_prefix=''
 opt_hw_only=0
 opt_no_hw=0
+opt_no_explain=0
 
 global_critical=0
 global_unknown=0
@@ -225,6 +227,14 @@ _verbose_nol()
 _debug()
 {
 	_echo 3 "\033[34m(debug) $*\033[0m"
+}
+
+explain()
+{
+	if [ "$opt_no_explain" != 1 ] ; then
+		_info ''
+		_info "> \033[41m\033[30mWhat you need to do:\033[0m $*"
+	fi
 }
 
 is_cpu_vulnerable_cached=0
@@ -454,6 +464,9 @@ while [ -n "$1" ]; do
 		shift
 	elif [ "$1" = "--no-hw" ]; then
 		opt_no_hw=1
+		shift
+	elif [ "$1" = "--no-explain" ]; then
+		opt_no_explain=1
 		shift
 	elif [ "$1" = "--batch" ]; then
 		opt_batch=1
@@ -1769,6 +1782,7 @@ check_variant1_linux()
 
 	# report status
 	cve='CVE-2017-5753'
+
 	if ! is_cpu_vulnerable 1; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
@@ -1782,15 +1796,22 @@ check_variant1_linux()
 			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
 		elif [ "$kernel_err" ]; then
 			pvulnstatus $cve UNK "Couldn't find kernel image or tools missing to execute the checks"
+			explain "Re-run this script with root privileges, after installing the missing tools indicated above"
 		else
 			pvulnstatus $cve VULN "Kernel source needs to be patched to mitigate the vulnerability"
+			explain "Your kernel is too old to have the mitigation for Variant 1, you should upgrade to a newer kernel. If you're using a Linux distro and didn't compile the kernel yourself, you should upgrade your distro to get a newer kernel."
 		fi
 	else
 		if [ "$msg" = "Vulnerable" ] && [ -n "$v1_mask_nospec" ]; then
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (silent backport of array_index_mask_nospec)"
 		else
-			[ "$msg" = "Vulnerable" ] && msg="Kernel source needs to be patched to mitigate the vulnerability"
+			if [ "$msg" = "Vulnerable" ]; then
+				msg="Kernel source needs to be patched to mitigate the vulnerability"
+				_explain="Your kernel is too old to have the mitigation for Variant 1, you should upgrade to a newer kernel. If you're using a Linux distro and didn't compile the kernel yourself, you should upgrade your distro to get a newer kernel."
+			fi
 			pvulnstatus $cve "$status" "$msg"
+			[ -n "$_explain" ] && explain "$_explain"
+			unset _explain
 		fi
 	fi
 }
@@ -2153,6 +2174,20 @@ check_variant2_linux()
 			fi
 		fi
 
+		# only for information, in verbose mode
+		if [ "$opt_verbose" -ge 2 ]; then
+			_info_nol "    * Local gcc is retpoline-aware: "
+			if which gcc >/dev/null 2>&1; then
+				if [ -n "$(gcc -mindirect-branch=thunk-extern --version 2>&1 >/dev/null)" ]; then
+					pstatus blue NO "your version of gcc doesn't support retpoline"
+				else
+					pstatus green YES "your version of gcc supports retpoline"
+				fi
+			else
+				pstatus blue NO "gcc is not installed"
+			fi
+		fi
+
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
@@ -2160,6 +2195,7 @@ check_variant2_linux()
 	fi
 
 	cve='CVE-2017-5715'
+	_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor."
 	if ! is_cpu_vulnerable 2; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
@@ -2171,7 +2207,7 @@ check_variant2_linux()
 			pvulnstatus $cve OK 'branch predictor hardening mitigates the vulnerability for ARM'
 		elif [ "$opt_live" = 1 ]; then
 			if ( [ "$ibrs_enabled" = 1 ] || [ "$ibrs_enabled" = 2 ] ) && [ "$ibpb_enabled" = 1 ]; then
-				pvulnstatus $cve OK "IBRS/IBPB are mitigating the vulnerability"
+				pvulnstatus $cve OK "IBRS+IBPB are mitigating the vulnerability"
 			elif ( [ "$ibrs_enabled" = 1 ] || [ "$ibrs_enabled" = 2 ] ) && [ "$ibpb_enabled" = -1 ]; then
 				# IBPB doesn't seem here on this kernel
 				pvulnstatus $cve OK "IBRS is mitigating the vulnerability"
@@ -2179,8 +2215,10 @@ check_variant2_linux()
 				pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
 			elif [ "$ibrs_supported" = 1 ] && [ "$cpuid_spec_ctrl" != 1 ]; then
 				pvulnstatus $cve VULN "Your kernel is compiled with IBRS but your CPU microcode is lacking support to successfully mitigate the vulnerability"
+				explain "The microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
 			else
 				pvulnstatus $cve VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+				explain "Your kernel doesn't have IBRS-based mitigation nor retpoline-based mitigation. If you're using a distro, you might want to upgrade it to get the most recent kernel. Even when the kernel has IBRS-based mitigation compiled-in, the microcode of your CPU needs to be upgraded to be able to use it. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
 			fi
 		else
 			if [ -n "$ibrs_supported" ]; then
@@ -2189,14 +2227,59 @@ check_variant2_linux()
 				pvulnstatus $cve OK "retpoline mitigates the vulnerability"
 			elif [ "$ibrs_can_tell" = 1 ]; then
 				pvulnstatus $cve VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+				explain "Your kernel doesn't have IBRS-based mitigation nor retpoline-based mitigation. If you're using a distro, you might want to upgrade it to get the most recent kernel. Even when the kernel has IBRS-based mitigation compiled-in, the microcode of your CPU needs to be upgraded to be able to use it. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
 			else
 				pvulnstatus $cve UNK "offline mode: not enough information"
+				explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
 			fi
 		fi
 	else
-		[ "$msg" = "Vulnerable" ] && msg="IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+		#1 "Vulnerable"
+		#2 "Vulnerable: Minimal generic ASM retpoline"
+		#2 "Vulnerable: Minimal AMD ASM retpoline"
+		# "Mitigation: Full generic retpoline"
+		# "Mitigation: Full AMD retpoline"
+		# $MITIGATION + ", IBPB"
+		# $MITIGATION + ", IBRS_FW"
+		#5 $MITIGATION + " - vulnerable module loaded"
+		# Red Hat only:
+		#2 "Vulnerable: Minimal ASM retpoline",
+		#3 "Vulnerable: Retpoline without IBPB",
+		#4 "Vulnerable: Retpoline on Skylake+",
+		#5 "Vulnerable: Retpoline with unsafe module(s)",
+		# "Mitigation: Full retpoline",
+		# "Mitigation: Full retpoline and IBRS (user space)",
+		# "Mitigation: IBRS (kernel)",
+		# "Mitigation: IBRS (kernel and user space)",
+		# "Mitigation: IBP disabled",
+		if [ "$msg" = "Vulnerable" ]; then
+			# 1
+			if [ "$ibrs_supported" = 1 ] && [ "$cpuid_spec_ctrl" != 1 ]; then
+				msg="Your kernel is compiled with IBRS but your CPU microcode is lacking support to successfully mitigate the vulnerability"
+				_explain="The microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
+			else
+				msg="IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
+				_explain="Your kernel doesn't have IBRS-based mitigation nor retpoline-based mitigation. If you're using a distro, you might want to upgrade it to get the most recent kernel. Even when the kernel has IBRS-based mitigation compiled-in, the microcode of your CPU needs to be upgraded to be able to use it. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
+			fi
+		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -i -w retpoline && echo "$msg" | grep -q -i -w minimal; then
+			# 2
+			msg="Retpoline compiled without a retpoline-aware compiler ($msg)"
+			_explain="Your kernel has retpoline-based mitigation enabled (CONFIG_RETPOLINE), but has not been compiled with a retpoline-aware compiler, hence producing an incomplete mitigation. If you're using a distro kernel, you should upgrade it to get the latest kernel available. Otherwise, you should recompile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
+		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -w 'Retpoline without IBPB'; then
+			# 3
+			_explain="Your kernel has retpoline-based mitigation, but to get a complete mitigation, IBPB has to be enabled in addition to retpoline. To use IBPB, the microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. $_explain_hypervisor"
+		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -w 'Retpoline on Skylake'; then
+			# 4
+			_explain="Your kernel has retpoline-based mitigation, but it is not efficient for Skylake-era or more recent Intel CPU models. To get a completely working mitigation, you should use the IBRS-based one instead. Note that the performance degradation of IBRS that can be observed on most CPUs are greatly reduced for Skylake+, so this is a viable alternative. To use IBRS, the microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. $_explain_hypervisor"
+		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -w -e 'unsafe module' -e 'vulnerable module'; then
+			# 5
+			_explain="Your kernel has retpoline-based mitigation, but non-retpoline kernel modules where loaded, and as they share the same memory space than the kernel itself, they could compromise the kernel. Check \`dmesg\` to see which module(s) are concerned."
+		fi
 		pvulnstatus $cve "$status" "$msg"
+		[ -n "$_explain" ] && explain "$_explain"
+		unset _explain
 	fi
+	unset _explain_hypervisor
 }
 
 check_variant2_bsd()
@@ -2370,20 +2453,15 @@ check_variant3_linux()
 		# refs:
 		# https://marc.info/?t=151532047900001&r=1&w=2
 		# https://groups.google.com/forum/m/#!topic/mechanical-sympathy/L9mHTbeQLNU
-		if [ "$opt_verbose" -ge 2 ]; then
-			_info "* Performance impact if PTI is enabled"
-			_info_nol "  * CPU supports PCID: "
-			if grep ^flags "$procfs/cpuinfo" | grep -qw pcid; then
-				pstatus green YES 'performance degradation with PTI will be limited'
-			else
-				pstatus blue NO 'no security impact but performance will be degraded with PTI'
-			fi
-			_info_nol "  * CPU supports INVPCID: "
-			if grep ^flags "$procfs/cpuinfo" | grep -qw invpcid; then
-				pstatus green YES 'performance degradation with PTI will be limited'
-			else
-				pstatus blue NO 'no security impact but performance will be degraded with PTI'
-			fi
+		_info_nol "  * Reduced performance impact of PTI: "
+		grep ^flags "$procfs/cpuinfo" | grep -qw pcid    && cpu_pcid=1
+		grep ^flags "$procfs/cpuinfo" | grep -qw invpcid && cpu_invpcid=1
+		if [ "$cpu_invpcid" = 1 ]; then
+			pstatus green YES 'CPU supports INVPCID, performance impact of PTI will be greatly reduced'
+		elif [ "$cpu_pcid" = 1 ]; then
+			pstatus green YES 'CPU supports PCID, performance impact o PTI will be reduced'
+		else
+			pstatus blue NO 'PCID and INVPCID not supported, no security impact but performance impact of PTI will be measurable'
 		fi
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
@@ -2436,18 +2514,32 @@ check_variant3_linux()
 				pvulnstatus $cve OK "Xen Dom0s are safe and do not require PTI"
 			elif [ "$xen_pv_domu" = 1 ]; then
 				pvulnstatus $cve VULN "Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM, PVH mode, or the Xen hypervisor must have the Xen's own PTI patch"
+				explain "Go to https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ for more information"
 			elif [ "$kpti_enabled" = -1 ]; then
 				pvulnstatus $cve UNK "couldn't find any clue of PTI activation due to a truncated dmesg, please reboot and relaunch this script"
 			else
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+				if [ -n "$kpti_support" ]; then
+					if [ -e "/sys/kernel/debug/x86/pti_enabled" ]; then
+						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > /sys/kernel/debug/x86/pti_enabled\`"
+					elif grep -q -w nopti -w pti=off /proc/cmdline; then
+						explain "Your kernel supports PTI but it has been disabled on command-line, remove the nopti or pti=off option from your bootloader configuration"
+					else
+						explain "Your kernel supports PTI but it has been disabled, check \`dmesg\` right after boot to find clues why the system disabled it"
+					fi
+				else
+					explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+				fi
 			fi
 		else
 			if [ -n "$kpti_support" ]; then
 				pvulnstatus $cve OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
 			elif [ "$kpti_can_tell" = 1 ]; then
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+				explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 			else
 				pvulnstatus $cve UNK "offline mode: not enough information"
+				explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
 			fi
 		fi
 	else
@@ -2457,10 +2549,15 @@ check_variant3_linux()
 		elif [ "$xen_pv_domu" = 1 ]; then
 			msg="Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM, PVH mode, or the Xen hypervisor must have the Xen's own PTI patch"
 			status="VULN"
+			_explain="Go to https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ for more information"
 		elif [ "$msg" = "Vulnerable" ]; then
 			msg="PTI is needed to mitigate the vulnerability"
+			_explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 		fi
 		pvulnstatus $cve "$status" "$msg"
+		[ -z "$_explain" ] && [ "$msg" = "Vulnerable" ] && _explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+		[ -n "$_explain" ] && explain "$_explain"
+		unset _explain
 	fi
 
 	# Warn the user about XSA-254 recommended mitigations
