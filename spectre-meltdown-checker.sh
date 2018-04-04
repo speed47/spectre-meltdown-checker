@@ -536,6 +536,7 @@ pstatus()
 	fi
 	[ -n "$3" ] && _info_nol " ($3)"
 	_info
+	unset col
 }
 
 # Print the final status of a vulnerability (incl. batch mode)
@@ -1318,7 +1319,7 @@ read_msr()
 		if [ ! -r /dev/cpu/"$2"/msr ]; then
 			return 200 # permission error
 		fi
-		if ! dd if=/dev/cpu/"$2"/msr bs=8 count=1 skip="$_msrindex" iflag=skip_bytes 2>/dev/null; then
+		if ! dd if=/dev/cpu/"$2"/msr bs=8 count=1 skip="$_msrindex" iflag=skip_bytes >/dev/null 2>&1; then
 			return 1
 		fi
 		read_msr_value=$(dd if=/dev/cpu/"$2"/msr bs=8 count=1 skip="$_msrindex" iflag=skip_bytes 2>/dev/null | od -t u1 -A n)
@@ -2451,6 +2452,9 @@ if [ "$opt_variant3" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variant3
 	_info
 fi
+
+_vars=$(set | grep -Ev '^[A-Z_[:space:]]' | sort | tr "\n" '|')
+_debug "variables at end of script: $_vars"
 
 _info "A false sense of security is worse than no security at all, see --disclaimer"
 
