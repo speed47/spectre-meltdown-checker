@@ -863,7 +863,6 @@ parse_cpu_details()
 		cpu_model=$(   grep '^model'      "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 		cpu_ucode=$(  grep '^microcode'   "$procfs/cpuinfo" | awk '{print $3}' | head -1)
-		echo "$cpu_ucode" | grep -q ^0x && cpu_ucode_decimal=$(( cpu_ucode ))
 	else
 		cpu_friendly_name=$(sysctl -n hw.model)
 	fi
@@ -889,6 +888,9 @@ parse_cpu_details()
 			cpu_ucode=$(printf "0x%x" "$cpu_ucode")
 		fi
 	fi
+
+	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode_decimal=$(( cpu_ucode ))
+	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode cpuid "$(printf "0x%x" "$cpuid")
 
 	# also define those that we will need in other funcs
 	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
@@ -966,7 +968,6 @@ is_ucode_blacklisted()
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n105
 	# 2018-02-08 update: https://newsroom.intel.com/wp-content/uploads/sites/11/2018/02/microcode-update-guidance.pdf
 	# model,stepping,microcode
-	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode cpuid "$(printf "0x%x" "$cpuid")
 	for tuple in \
 		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0B,0x80 \
 		$INTEL_FAM6_KABYLAKE_DESKTOP,0x0A,0x80 \
