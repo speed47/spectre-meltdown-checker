@@ -1993,7 +1993,11 @@ check_variant2_linux()
 				pstatus yellow UNKNOWN "in offline mode, we need the kernel image and System.map to be able to tell"
 			fi
 		else
-			pstatus green YES "$ibrs_supported"
+			if [ "$opt_verbose" -ge 2 ]; then
+				pstatus green YES "$ibrs_supported"
+			else
+				pstatus green YES
+			fi
 		fi
 
 		_info_nol "    * IBRS enabled and active: "
@@ -2036,7 +2040,11 @@ check_variant2_linux()
 				pstatus yellow UNKNOWN "in offline mode, we need the kernel image to be able to tell"
 			fi
 		else
-			pstatus green YES "$ibpb_supported"
+			if [ "$opt_verbose" -ge 2 ]; then
+				pstatus green YES "$ibpb_supported"
+			else
+				pstatus green YES
+			fi
 		fi
 
 		_info_nol "    * IBPB enabled and active: "
@@ -2192,9 +2200,9 @@ check_variant2_linux()
 			_info_nol "    * Local gcc is retpoline-aware: "
 			if which gcc >/dev/null 2>&1; then
 				if [ -n "$(gcc -mindirect-branch=thunk-extern --version 2>&1 >/dev/null)" ]; then
-					pstatus blue NO "your version of gcc doesn't support retpoline"
+					pstatus blue NO
 				else
-					pstatus green YES "your version of gcc supports retpoline"
+					pstatus green YES
 				fi
 			else
 				pstatus blue NO "gcc is not installed"
@@ -2409,7 +2417,11 @@ check_variant3_linux()
 		fi
 
 		if [ -n "$kpti_support" ]; then
-			pstatus green YES "found '$kpti_support'"
+			if [ "$opt_verbose" -ge 2 ]; then
+				pstatus green YES "found '$kpti_support'"
+			else
+				pstatus green YES
+			fi
 		elif [ "$kpti_can_tell" = 1 ]; then
 			pstatus yellow NO
 		else
