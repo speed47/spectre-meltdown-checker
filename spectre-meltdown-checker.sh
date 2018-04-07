@@ -233,7 +233,7 @@ explain()
 {
 	if [ "$opt_no_explain" != 1 ] ; then
 		_info ''
-		_info "> \033[41m\033[30mWhat you need to do:\033[0m $*"
+		_info "> \033[41m\033[30mHow to fix:\033[0m $*"
 	fi
 }
 
@@ -556,6 +556,7 @@ pstatus()
 # Arguments are: CVE UNK/OK/VULN description
 pvulnstatus()
 {
+	pvulnstatus_last_cve="$1"
 	if [ "$opt_batch" = 1 ]; then
 		case "$1" in
 			CVE-2017-5753) aka="SPECTRE VARIANT 1";;
@@ -1269,23 +1270,23 @@ sys_interface_check()
 {
 	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$1" ] || return 1
 	_info_nol "* Mitigated according to the /sys interface: "
+	msg=$(cat "$1")
 	if grep -qi '^not affected' "$1"; then
 		# Not affected
 		status=OK
-		pstatus green YES "kernel confirms that your CPU is unaffected"
+		pstatus green YES "$msg"
 	elif grep -qi '^mitigation' "$1"; then
 		# Mitigation: PTI
 		status=OK
-		pstatus green YES "kernel confirms that the mitigation is active"
+		pstatus green YES "$msg"
 	elif grep -qi '^vulnerable' "$1"; then
 		# Vulnerable
 		status=VULN
-		pstatus yellow NO "kernel confirms your system is vulnerable"
+		pstatus yellow NO "$msg"
 	else
 		status=UNK
-		pstatus yellow UNKNOWN "unknown value reported by kernel"
+		pstatus yellow UNKNOWN "$msg"
 	fi
-	msg=$(cat "$1")
 	_debug "sys_interface_check: $1=$msg"
 	return 0
 }
@@ -1484,8 +1485,10 @@ check_cpu()
 	# CPUID EAX=0x80000008, ECX=0x00 return EBX[12] indicates support for just IBPB.
 	read_cpuid 0x80000008 2 12 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
+		cpu_ibpb_supported='IBPB_SUPPORT'
 		pstatus green YES "IBPB_SUPPORT feature bit"
 	elif [ "$cpuid_spec_ctrl" = 1 ]; then
+		cpu_ibpb_supported='SPEC_CTRL'
 		pstatus green YES "SPEC_CTRL feature bit"
 	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
@@ -2016,9 +2019,6 @@ check_variant2_linux()
 							pstatus green YES "for firmware code"
 						else
 							pstatus yellow NO
-							if [ -e "$specex_knob_dir/ibrs_enabled" ]; then
-								_verbose "    - To enable, \`echo 1 > $specex_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
-							fi
 						fi
 						;;
 					1)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel space and firmware code"; else pstatus green YES "for kernel space"; fi;;
@@ -2059,7 +2059,6 @@ check_variant2_linux()
 					;;
 				0)
 					pstatus yellow NO
-					_verbose "    - To enable, \`echo 1 > $specex_knob_dir/ibpb_enabled' as root. If you don't have hardware support, you'll get an error."
 					;;
 				1) pstatus green YES;;
 				2) pstatus green YES "IBPB used instead of IBRS in all kernel entrypoints";;
@@ -2216,91 +2215,127 @@ check_variant2_linux()
 	fi
 
 	cve='CVE-2017-5715'
-	_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor."
 	if ! is_cpu_vulnerable 2; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ -z "$msg" ]; then
-		# if msg is empty, sysfs check didn't fill it, rely on our own test
-		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ]; then
-			pvulnstatus $cve OK "retpoline mitigates the vulnerability"
+	else
+		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$ibpb_enabled" -ge 1 ] && ! is_cpu_skylake; then
+			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
+		elif [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
+			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
 		elif [ -n "$bp_harden" ]; then
-			pvulnstatus $cve OK 'branch predictor hardening mitigates the vulnerability for ARM'
-		elif [ "$opt_live" = 1 ]; then
-			if ( [ "$ibrs_enabled" = 1 ] || [ "$ibrs_enabled" = 2 ] ) && [ "$ibpb_enabled" = 1 ]; then
-				pvulnstatus $cve OK "IBRS+IBPB are mitigating the vulnerability"
-			elif ( [ "$ibrs_enabled" = 1 ] || [ "$ibrs_enabled" = 2 ] ) && [ "$ibpb_enabled" = -1 ]; then
-				# IBPB doesn't seem here on this kernel
-				pvulnstatus $cve OK "IBRS is mitigating the vulnerability"
-			elif [ "$ibpb_enabled" = 2 ]; then
-				pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
-			elif [ "$ibrs_supported" = 1 ] && [ "$cpuid_spec_ctrl" != 1 ]; then
-				pvulnstatus $cve VULN "Your kernel is compiled with IBRS but your CPU microcode is lacking support to successfully mitigate the vulnerability"
-				explain "The microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
-			else
-				pvulnstatus $cve VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
-				explain "Your kernel doesn't have IBRS-based mitigation nor retpoline-based mitigation. If you're using a distro, you might want to upgrade it to get the most recent kernel. Even when the kernel has IBRS-based mitigation compiled-in, the microcode of your CPU needs to be upgraded to be able to use it. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
-			fi
-		else
-			if [ -n "$ibrs_supported" ]; then
-				pvulnstatus $cve OK "offline mode: IBRS/IBPB will mitigate the vulnerability if enabled at runtime"
-			elif [ "$retpoline" = 1 ]; then
-				pvulnstatus $cve OK "retpoline mitigates the vulnerability"
-			elif [ "$ibrs_can_tell" = 1 ]; then
-				pvulnstatus $cve VULN "IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
-				explain "Your kernel doesn't have IBRS-based mitigation nor retpoline-based mitigation. If you're using a distro, you might want to upgrade it to get the most recent kernel. Even when the kernel has IBRS-based mitigation compiled-in, the microcode of your CPU needs to be upgraded to be able to use it. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
-			else
+			pvulnstatus $cve OK "Branch predictor hardening mitigates the vulnerability"
+		elif [ -z "$bp_harden" ] && [ "$cpu_vendor" = ARM ]; then
+			pvulnstatus $cve VULN "Branch predictor hardening is needed to mitigate the vulnerability"
+			explain "Your kernel has not been compiled with the CONFIG_UNMAP_KERNEL_AT_EL0 option, recompile it with this option enabled."
+		elif [ "$opt_live" != 1 ]; then
+			if [ "$retpoline" = 1 ] && [ -n "$ibpb_supported" ]; then
+				pvulnstatus $cve OK "offline mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
+			elif [ -n "$ibrs_supported" ] && [ -n "$ibpb_supported" ]; then
+				pvulnstatus $cve OK "offline mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
+			elif [ "$ibrs_can_tell" != 1 ]; then
 				pvulnstatus $cve UNK "offline mode: not enough information"
 				explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
 			fi
 		fi
-	else
-		#1 "Vulnerable"
-		#2 "Vulnerable: Minimal generic ASM retpoline"
-		#2 "Vulnerable: Minimal AMD ASM retpoline"
-		# "Mitigation: Full generic retpoline"
-		# "Mitigation: Full AMD retpoline"
-		# $MITIGATION + ", IBPB"
-		# $MITIGATION + ", IBRS_FW"
-		#5 $MITIGATION + " - vulnerable module loaded"
-		# Red Hat only:
-		#2 "Vulnerable: Minimal ASM retpoline",
-		#3 "Vulnerable: Retpoline without IBPB",
-		#4 "Vulnerable: Retpoline on Skylake+",
-		#5 "Vulnerable: Retpoline with unsafe module(s)",
-		# "Mitigation: Full retpoline",
-		# "Mitigation: Full retpoline and IBRS (user space)",
-		# "Mitigation: IBRS (kernel)",
-		# "Mitigation: IBRS (kernel and user space)",
-		# "Mitigation: IBP disabled",
-		if [ "$msg" = "Vulnerable" ]; then
-			# 1
-			if [ "$ibrs_supported" = 1 ] && [ "$cpuid_spec_ctrl" != 1 ]; then
-				msg="Your kernel is compiled with IBRS but your CPU microcode is lacking support to successfully mitigate the vulnerability"
-				_explain="The microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
+
+		# if we arrive here and didn't already call pvulnstatus, then it's VULN, let's explain why
+		if [ "$pvulnstatus_last_cve" != "$cve" ]; then
+			# explain what's needed for this CPU
+			if [ "$cpu_vendor" = GenuineIntel ]; then
+				if is_skylake_cpu; then
+					pvulnstatus $cve VULN "IBRS+IBPB is needed to mitigate the vulnerability"
+					explain "To mitigate this vulnerability, you need IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support. The retpoline approach doesn't work on your CPU, as this is a Skylake+ model."
+				else
+					pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
+					explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. The retpoline + IBPB approach is generally preferred as the performance impact is lower. More information about those two possible mitigations on your system follow."
+				fi
+			elif [ "$cpu_vendor" = AuthenticAMD ]; then
+				pvulnstatus $cve VULN "retpoline+IBPB is needed to mitigate the vulnerability"
+				explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
 			else
-				msg="IBRS hardware + kernel support OR kernel with retpoline are needed to mitigate the vulnerability"
-				_explain="Your kernel doesn't have IBRS-based mitigation nor retpoline-based mitigation. If you're using a distro, you might want to upgrade it to get the most recent kernel. Even when the kernel has IBRS-based mitigation compiled-in, the microcode of your CPU needs to be upgraded to be able to use it. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. If an up-to-date CPU microcode is not available for your model, you might want to use a retpoline-enabled kernel instead. Most recent distros have both IBRS-based mitigation (if the microcode is up to date) and automatically fall-back to retpoline-based mitigation otherwise. If yours doesn't, try a more recent one, or compile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware). $_explain_hypervisor"
+				# in that case, we might want to trust sysfs if it's there
+				if [ -n "$msg" ]; then
+					[ "$msg" = Vulnerable ] && msg="no known mitigation exists for your CPU vendor ($cpu_vendor)"
+					pvulnstatus $cve $status "$msg"
+				else
+					pvulnstatus $cve VULN "no known mitigation exists for your CPU vendor ($cpu_vendor)"
+				fi
 			fi
-		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -i -w retpoline && echo "$msg" | grep -q -i -w minimal; then
-			# 2
-			msg="Retpoline compiled without a retpoline-aware compiler ($msg)"
-			_explain="Your kernel has retpoline-based mitigation enabled (CONFIG_RETPOLINE), but has not been compiled with a retpoline-aware compiler, hence producing an incomplete mitigation. If you're using a distro kernel, you should upgrade it to get the latest kernel available. Otherwise, you should recompile your own kernel with retpoline and a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
-		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -w 'Retpoline without IBPB'; then
-			# 3
-			_explain="Your kernel has retpoline-based mitigation, but to get a complete mitigation, IBPB has to be enabled in addition to retpoline. To use IBPB, the microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. $_explain_hypervisor"
-		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -w 'Retpoline on Skylake'; then
-			# 4
-			_explain="Your kernel has retpoline-based mitigation, but it is not efficient for Skylake-era or more recent Intel CPU models. To get a completely working mitigation, you should use the IBRS-based one instead. Note that the performance degradation of IBRS that can be observed on most CPUs are greatly reduced for Skylake+, so this is a viable alternative. To use IBRS, the microcode of your CPU needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. $_explain_hypervisor"
-		elif [ "$status" = "VULN" ] && echo "$msg" | grep -q -w -e 'unsafe module' -e 'vulnerable module'; then
-			# 5
-			_explain="Your kernel has retpoline-based mitigation, but non-retpoline kernel modules where loaded, and as they share the same memory space than the kernel itself, they could compromise the kernel. Check \`dmesg\` to see which module(s) are concerned."
 		fi
-		pvulnstatus $cve "$status" "$msg"
-		[ -n "$_explain" ] && explain "$_explain"
-		unset _explain
+
+		# if we are in live mode, we can check for a lot more stuff and explain further
+		if [ "$opt_live" = 1 ]; then
+			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor."
+			# IBPB (amd & intel)
+			if [ "$ibpb_enabled" = 0 ] && ( [ "$cpu_vendor" = GenuineIntel ] || [ "$cpu_vendor" = AuthenticAMD ] ); then
+				if [ -z "$cpu_ibpb_supported" ]; then
+					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
+				fi
+				if [ -z "$ibpb_supported" ]; then
+					explain "Your kernel doesn't have IBPB support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
+				fi
+				if [ -n "$cpu_ibpb_supported" ] && [ -n "$ibpb_supported" ]; then
+					if [ -e "$specex_knob_dir/ibpb_enabled" ]; then
+						explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it with \`echo 1 > $specex_knob_dir/ibpb_enabled\`."
+					else
+						explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it. Check in your distro's documentation on how to do this."
+					fi
+				fi
+			fi
+			# /IBPB
+
+			# IBRS (intel only)
+			if [ "$ibrs_enabled" = 0 ] && [ "$cpu_vendor" = GenuineIntel ]; then
+				if [ "$cpuid_spec_ctrl" != 1 ]; then
+					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
+				fi
+				if [ -z "$ibrs_supported" ]; then
+					explain "Your kernel doesn't have IBRS support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
+				fi
+				if [ "$cpuid_spec_ctrl" = 1 ] && [ -n "$ibrs_supported" ]; then
+					if [ -e "$specex_knob_dir/ibrs_enabled" ]; then
+						explain "Both your CPU and your kernel have IBRS support, but it is currently disabled. You may enable it with \`echo 1 > $specex_knob_dir/ibrs_enabled\`."
+					else
+						explain "Both your CPU and your kernel have IBRS support, but it is currently disabled. You may enable it. Check in your distro's documentation on how to do this."
+					fi
+				fi
+			fi
+			# /IBRS
+			unset _explain_hypervisor
+
+			# RETPOLINE (intel non-skylake and amd)
+			if [ "$cpu_vendor" = AuthenticAMD ] || ( [ "$cpu_vendor" = GenuineIntel ] && ! is_skylake_cpu ); then
+				if [ "$retpoline" = 0 ]; then
+					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with  a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
+				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" != 1 ]; then
+					explain "Your kernel is compiled with retpoline, but without a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
+				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" = 0 ]; then
+					explain "Your kernel has retpoline support and has been compiled with a retpoline-aware compiler, but retpoline is disabled. You should enable it with \`echo 1 > $specex_knob_dir/retp_enabled\`."
+				fi
+			fi
+			# /RETPOLINE
+		fi
 	fi
-	unset _explain_hypervisor
+	# sysfs msgs:
+	#1 "Vulnerable"
+	#2 "Vulnerable: Minimal generic ASM retpoline"
+	#2 "Vulnerable: Minimal AMD ASM retpoline"
+	# "Mitigation: Full generic retpoline"
+	# "Mitigation: Full AMD retpoline"
+	# $MITIGATION + ", IBPB"
+	# $MITIGATION + ", IBRS_FW"
+	#5 $MITIGATION + " - vulnerable module loaded"
+	# Red Hat only:
+	#2 "Vulnerable: Minimal ASM retpoline",
+	#3 "Vulnerable: Retpoline without IBPB",
+	#4 "Vulnerable: Retpoline on Skylake+",
+	#5 "Vulnerable: Retpoline with unsafe module(s)",
+	# "Mitigation: Full retpoline",
+	# "Mitigation: Full retpoline and IBRS (user space)",
+	# "Mitigation: IBRS (kernel)",
+	# "Mitigation: IBRS (kernel and user space)",
+	# "Mitigation: IBP disabled",
 }
 
 check_variant2_bsd()
