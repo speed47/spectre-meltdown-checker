@@ -2341,7 +2341,7 @@ check_variant2_linux()
 			# IBPB (amd & intel)
 			if [ "$ibpb_enabled" = 0 ] && ( is_intel || is_amd ); then
 				if [ -z "$cpuid_ibpb" ]; then
-					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
+					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
 				if [ -z "$ibpb_supported" ]; then
 					explain "Your kernel doesn't have IBPB support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
@@ -2359,7 +2359,7 @@ check_variant2_linux()
 			# IBRS (intel only)
 			if [ "$ibrs_enabled" = 0 ] && is_intel; then
 				if [ -n "$cpuid_ibrs" ]; then
-					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
+					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
 				if [ -z "$ibrs_supported" ]; then
 					explain "Your kernel doesn't have IBRS support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
@@ -2456,10 +2456,13 @@ check_variant2_bsd()
 		pvulnstatus $cve OK "IBRS mitigates the vulnerability"
 	elif [ "$ibrs_disabled" = 0 ]; then
 		pvulnstatus $cve VULN "IBRS is supported by your kernel but your CPU microcode lacks support"
+		explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). To do a microcode update, you can search the ports for the \`cpupdate\` tool. Microcode updates done this way are not reboot-proof, so be sure to do it everytime the system boots up."
 	elif [ "$ibrs_disabled" = 1 ]; then
 		pvulnstatus $cve VULN "IBRS is supported but administratively disabled on your system"
+		explain "To enable IBRS, use \`sysctl hw.ibrs_disable=0\`"
 	else
 		pvulnstatus $cve VULN "IBRS is needed to mitigate the vulnerability but your kernel is missing support"
+		explain "You need to either upgrade your kernel or recompile yourself a more recent version having IBRS support"
 	fi
 }
 
