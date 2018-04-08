@@ -65,7 +65,7 @@ show_usage()
 
 		--variant [1,2,3]	specify which variant you'd like to check, by default all variants are checked,
 					can be specified multiple times (e.g. --variant 2 --variant 3)
-		--hw-only		only check for CPU informations, don't check for any variant
+		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 
 	Return codes:
@@ -101,7 +101,7 @@ explicitly stated otherwise in a verifiable public announcement.
 Please also note that for Spectre vulnerabilities, all software can possibly be exploited, this tool only verifies that the
 kernel (which is the core of the system) you're using has the proper protections in place. Verifying all the other software
 is out of the scope of this tool. As a general measure, ensure you always have the most up to date stable versions of all
-the softwares you use, especially for those who are exposed to the world, such as network daemons and browsers.
+the software you use, especially for those who are exposed to the world, such as network daemons and browsers.
 
 This tool has been released in the hope that it'll be useful, but don't use it to jump to conclusions about your security.
 
@@ -1700,12 +1700,12 @@ check_variant1_linux()
 		else
 			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 			if [ $ret -gt 0 ]; then
-				pstatus green YES "$ret occurence(s) found of 64 bits array_index_mask_nospec()"
+				pstatus green YES "$ret occurrence(s) found of 64 bits array_index_mask_nospec()"
 				v1_mask_nospec="64 bits array_index_mask_nospec"
 			else
 				perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 				if [ $ret -gt 0 ]; then
-					pstatus green YES "$ret occurence(s) found of 32 bits array_index_mask_nospec()"
+					pstatus green YES "$ret occurrence(s) found of 32 bits array_index_mask_nospec()"
 					v1_mask_nospec="32 bits array_index_mask_nospec"
 				else
 					pstatus yellow NO
