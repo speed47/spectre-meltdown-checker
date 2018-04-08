@@ -2387,7 +2387,7 @@ check_variant2_linux()
 
 			# IBRS (amd & intel)
 			if [ "$ibrs_enabled" = 0 ] && is_intel; then
-				if [ -n "$cpuid_ibrs" ]; then
+				if [ -z "$cpuid_ibrs" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
 				if [ -z "$ibrs_supported" ]; then
