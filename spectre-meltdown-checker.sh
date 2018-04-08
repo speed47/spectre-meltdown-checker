@@ -270,7 +270,7 @@ is_cpu_vulnerable()
 		variant1=immune
 		variant2=immune
 		variant3=immune
-	elif [ "$cpu_vendor" = GenuineIntel ]; then
+	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
 		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown vulnerable
@@ -287,7 +287,7 @@ is_cpu_vulnerable()
 			variant3=immune
 			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown"
 		fi
-	elif [ "$cpu_vendor" = AuthenticAMD ]; then
+	elif is_amd; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
 		variant1=vuln
@@ -371,7 +371,7 @@ is_cpu_specex_free()
 	# { X86_VENDOR_NSC,       5 },
 	# { X86_VENDOR_ANY,       4 },
 	parse_cpu_details
-	if [ "$cpu_vendor" = GenuineIntel ]; then
+	if is_intel; then
 		if [ "$cpu_family" = 6 ]; then
 			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"  ]      || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
@@ -958,11 +958,23 @@ parse_cpu_details()
 	parse_cpu_details_done=1
 }
 
+is_amd()
+{
+	[ "$cpu_vendor" = AuthenticAMD ] && return 0
+	return 1
+}
+
+is_intel()
+{
+	[ "$cpu_vendor" = GenuineIntel ] && return 0
+	return 1
+}
+
 is_ucode_blacklisted()
 {
 	parse_cpu_details
 	# if it's not an Intel, don't bother: it's not blacklisted
-	[ "$cpu_vendor" = GenuineIntel ] || return 1
+	is_intel || return 1
 	# it also needs to be family=6
 	[ "$cpu_family" = 6 ] || return 1
 	# now, check each known bad microcode
@@ -1023,7 +1035,7 @@ is_skylake_cpu()
 	#		case INTEL_FAM6_KABYLAKE_DESKTOP:
 	#			return true;
 	parse_cpu_details
-	[ "$cpu_vendor" = GenuineIntel ] || return 1
+	is_intel || return 1
 	[ "$cpu_family" = 6 ] || return 1
 	if [ "$cpu_model" = $INTEL_FAM6_SKYLAKE_MOBILE        ] || \
 		[ "$cpu_model" = $INTEL_FAM6_SKYLAKE_DESKTOP  ] || \
@@ -2242,7 +2254,7 @@ check_variant2_linux()
 		# if we arrive here and didn't already call pvulnstatus, then it's VULN, let's explain why
 		if [ "$pvulnstatus_last_cve" != "$cve" ]; then
 			# explain what's needed for this CPU
-			if [ "$cpu_vendor" = GenuineIntel ]; then
+			if is_intel; then
 				if is_skylake_cpu; then
 					pvulnstatus $cve VULN "IBRS+IBPB is needed to mitigate the vulnerability"
 					explain "To mitigate this vulnerability, you need IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support. The retpoline approach doesn't work on your CPU, as this is a Skylake+ model."
@@ -2250,7 +2262,7 @@ check_variant2_linux()
 					pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
 					explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. The retpoline + IBPB approach is generally preferred as the performance impact is lower. More information about those two possible mitigations on your system follow."
 				fi
-			elif [ "$cpu_vendor" = AuthenticAMD ]; then
+			elif is_amd; then
 				pvulnstatus $cve VULN "retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
 			else
@@ -2268,7 +2280,7 @@ check_variant2_linux()
 		if [ "$opt_live" = 1 ]; then
 			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor."
 			# IBPB (amd & intel)
-			if [ "$ibpb_enabled" = 0 ] && ( [ "$cpu_vendor" = GenuineIntel ] || [ "$cpu_vendor" = AuthenticAMD ] ); then
+			if [ "$ibpb_enabled" = 0 ] && ( is_intel || is_amd ); then
 				if [ -z "$cpu_ibpb_supported" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -2286,7 +2298,7 @@ check_variant2_linux()
 			# /IBPB
 
 			# IBRS (intel only)
-			if [ "$ibrs_enabled" = 0 ] && [ "$cpu_vendor" = GenuineIntel ]; then
+			if [ "$ibrs_enabled" = 0 ] && is_intel; then
 				if [ "$cpuid_spec_ctrl" != 1 ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -2305,7 +2317,7 @@ check_variant2_linux()
 			unset _explain_hypervisor
 
 			# RETPOLINE (intel non-skylake and amd)
-			if [ "$cpu_vendor" = AuthenticAMD ] || ( [ "$cpu_vendor" = GenuineIntel ] && ! is_skylake_cpu ); then
+			if is_amd || ( is_intel && ! is_skylake_cpu ); then
 				if [ "$retpoline" = 0 ]; then
 					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with  a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" != 1 ]; then
