@@ -974,6 +974,24 @@ is_intel()
 	return 1
 }
 
+is_cpu_smt_enabled()
+{
+	# SMT / HyperThreading is enabled if siblings != cpucores
+	if [ -e "$procfs/cpuinfo" ]; then
+		_siblings=$(awk '/^siblings/  {print $3;exit}' "$procfs/cpuinfo")
+		_cpucores=$(awk '/^cpu cores/ {print $4;exit}' "$procfs/cpuinfo")
+		if [ -n "$_siblings" ] && [ -n "$_cpucores" ]; then
+			if [ "$_siblings" = "$_cpucores" ]; then
+				return 1
+			else
+				return 0
+			fi
+		fi
+	fi
+	# we can't tell
+	return 2
+}
+
 is_ucode_blacklisted()
 {
 	parse_cpu_details
@@ -2294,6 +2312,8 @@ check_variant2_linux()
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
 		elif [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
 			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
+		elif [ "$ibpb_enabled" = 2 ] && ! is_cpu_smt_enabled; then
+			pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
 		elif [ -n "$bp_harden" ]; then
 			pvulnstatus $cve OK "Branch predictor hardening mitigates the vulnerability"
 		elif [ -z "$bp_harden" ] && [ "$cpu_vendor" = ARM ]; then
@@ -2353,6 +2373,8 @@ check_variant2_linux()
 						explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it. Check in your distro's documentation on how to do this."
 					fi
 				fi
+			elif [ "$ibpb_enabled" = 2 ] && is_cpu_smt_enabled; then
+				explain "You have ibpb_enabled set to 2, but it only offers sufficient protection when simultaneous multi-threading (aka SMT or HyperThreading) is disabled. You should reboot your system with the kernel parameter \`nosmt\`."
 			fi
 			# /IBPB
 
