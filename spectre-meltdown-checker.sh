@@ -2497,6 +2497,39 @@ check_variant2_bsd()
 
 ########################
 # MELTDOWN aka VARIANT 3
+
+# no security impact but give a hint to the user in verbose mode
+# about PCID/INVPCID cpuid features that must be present to avoid
+# too big a performance impact with PTI
+# refs:
+# https://marc.info/?t=151532047900001&r=1&w=2
+# https://groups.google.com/forum/m/#!topic/mechanical-sympathy/L9mHTbeQLNU
+pti_performance_check()
+{
+	_info_nol "  * Reduced performance impact of PTI: "
+	if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw pcid; then
+		cpu_pcid=1
+	else
+		read_cpuid 0x1 $ECX 17 1 1; ret=$?
+		[ $ret -eq 0 ] && cpu_pcid=1
+	fi
+
+	if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw invpcid; then
+		cpu_invpcid=1
+	else
+		read_cpuid 0x7 $EBX 10 1 1; ret=$?
+		[ $ret -eq 0 ] && cpu_invpcid=1
+	fi
+
+	if [ "$cpu_invpcid" = 1 ]; then
+		pstatus green YES 'CPU supports INVPCID, performance impact of PTI will be greatly reduced'
+	elif [ "$cpu_pcid" = 1 ]; then
+		pstatus green YES 'CPU supports PCID, performance impact o PTI will be reduced'
+	else
+		pstatus blue NO 'PCID and INVPCID not supported, but performance impact of PTI will be measurable'
+	fi
+}
+
 check_variant3()
 {
 	_info "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
@@ -2610,22 +2643,8 @@ check_variant3_linux()
 			pstatus blue N/A "not testable in offline mode"
 		fi
 
-		# no security impact but give a hint to the user in verbose mode
-		# about PCID/INVPCID cpuid features that must be present to avoid
-		# too big a performance impact with PTI
-		# refs:
-		# https://marc.info/?t=151532047900001&r=1&w=2
-		# https://groups.google.com/forum/m/#!topic/mechanical-sympathy/L9mHTbeQLNU
-		_info_nol "  * Reduced performance impact of PTI: "
-		grep ^flags "$procfs/cpuinfo" | grep -qw pcid    && cpu_pcid=1
-		grep ^flags "$procfs/cpuinfo" | grep -qw invpcid && cpu_invpcid=1
-		if [ "$cpu_invpcid" = 1 ]; then
-			pstatus green YES 'CPU supports INVPCID, performance impact of PTI will be greatly reduced'
-		elif [ "$cpu_pcid" = 1 ]; then
-			pstatus green YES 'CPU supports PCID, performance impact o PTI will be reduced'
-		else
-			pstatus blue NO 'PCID and INVPCID not supported, no security impact but performance impact of PTI will be measurable'
-		fi
+		pti_performance_check
+
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
@@ -2749,6 +2768,8 @@ check_variant3_bsd()
 	else
 		pstatus yellow NO
 	fi
+
+	pti_performance_check
 
 	cve='CVE-2017-5754'
 	if ! is_cpu_vulnerable 3; then
