@@ -2485,7 +2485,7 @@ check_variant2_bsd()
 		pvulnstatus $cve OK "IBRS mitigates the vulnerability"
 	elif [ "$ibrs_disabled" = 0 ]; then
 		pvulnstatus $cve VULN "IBRS is supported by your kernel but your CPU microcode lacks support"
-		explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). To do a microcode update, you can search the ports for the \`cpupdate\` tool. Microcode updates done this way are not reboot-proof, so be sure to do it everytime the system boots up."
+		explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). To do a microcode update, you can search the ports for the \`cpupdate\` tool. Microcode updates done this way are not reboot-proof, so be sure to do it every time the system boots up."
 	elif [ "$ibrs_disabled" = 1 ]; then
 		pvulnstatus $cve VULN "IBRS is supported but administratively disabled on your system"
 		explain "To enable IBRS, use \`sysctl hw.ibrs_disable=0\`"
@@ -2524,9 +2524,9 @@ pti_performance_check()
 	if [ "$cpu_invpcid" = 1 ]; then
 		pstatus green YES 'CPU supports INVPCID, performance impact of PTI will be greatly reduced'
 	elif [ "$cpu_pcid" = 1 ]; then
-		pstatus green YES 'CPU supports PCID, performance impact o PTI will be reduced'
+		pstatus green YES 'CPU supports PCID, performance impact of PTI will be reduced'
 	else
-		pstatus blue NO 'PCID and INVPCID not supported, but performance impact of PTI will be measurable'
+		pstatus blue NO 'PCID/INVPCID not supported, performance impact of PTI will be significant'
 	fi
 }
 
