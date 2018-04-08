@@ -590,7 +590,7 @@ pvulnstatus()
 	# display info if we're not in quiet/batch mode
 	vulnstatus="$2"
 	shift 2
-	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
+	_info_nol "> \033[46m\033[30mKERNEL STATUS:\033[0m "
 	case "$vulnstatus" in
 		UNK)  pstatus yellow 'UNKNOWN'        "$@";;
 		VULN) pstatus red    'VULNERABLE'     "$@";;
