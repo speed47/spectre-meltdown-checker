@@ -1069,6 +1069,15 @@ is_skylake_cpu()
 	return 1
 }
 
+is_zen_cpu()
+{
+	# is this CPU from the AMD ZEN family ? (ryzen, epyc, ...)
+	parse_cpu_details
+	is_amd || return 1
+	[ "$cpu_family" = 23 ] && return 0
+	return 1
+}
+
 # ENTRYPOINT
 
 # we can't do anything useful under WSL
@@ -2333,17 +2342,15 @@ check_variant2_linux()
 		# if we arrive here and didn't already call pvulnstatus, then it's VULN, let's explain why
 		if [ "$pvulnstatus_last_cve" != "$cve" ]; then
 			# explain what's needed for this CPU
-			if is_intel; then
-				if is_skylake_cpu; then
-					pvulnstatus $cve VULN "IBRS+IBPB is needed to mitigate the vulnerability"
-					explain "To mitigate this vulnerability, you need IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support. The retpoline approach doesn't work on your CPU, as this is a Skylake+ model."
-				else
-					pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
-					explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. The retpoline + IBPB approach is generally preferred as the performance impact is lower. More information about those two possible mitigations on your system follow."
-				fi
-			elif is_amd; then
+			if is_skylake_cpu; then
+				pvulnstatus $cve VULN "IBRS+IBPB is needed to mitigate the vulnerability"
+				explain "To mitigate this vulnerability, you need IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support. The retpoline approach doesn't work on your CPU, as this is a Skylake+ model."
+			elif is_zen_cpu; then
 				pvulnstatus $cve VULN "retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
+			elif is_intel || is_amd; then
+				pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
+				explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. The retpoline + IBPB approach is generally preferred as the performance impact is lower. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
 			else
 				# in that case, we might want to trust sysfs if it's there
 				if [ -n "$msg" ]; then
@@ -2378,7 +2385,7 @@ check_variant2_linux()
 			fi
 			# /IBPB
 
-			# IBRS (intel only)
+			# IBRS (amd & intel)
 			if [ "$ibrs_enabled" = 0 ] && is_intel; then
 				if [ -n "$cpuid_ibrs" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
