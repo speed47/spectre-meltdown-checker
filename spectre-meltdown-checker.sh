@@ -590,7 +590,7 @@ pvulnstatus()
 	# display info if we're not in quiet/batch mode
 	vulnstatus="$2"
 	shift 2
-	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
+	_info_nol "> \033[46m\033[30mKERNEL STATUS:\033[0m "
 	case "$vulnstatus" in
 		UNK)  pstatus yellow 'UNKNOWN'        "$@";;
 		VULN) pstatus red    'VULNERABLE'     "$@";;
@@ -1304,7 +1304,7 @@ number_of_cpus()
 }
 
 # $1 - msr number
-# $2 - cpu index 
+# $2 - cpu index
 write_msr()
 {
 	if [ "$os" != Linux ]; then
@@ -1384,7 +1384,7 @@ check_cpu()
 		val=0
 		cpu_mismatch=0
 		for i in $(seq 0 "$idx_max_cpu")
-		do 
+		do
 			read_msr 0x48 "$i"; ret=$?
 			if [ "$i" -eq 0 ]; then
 				val=$ret
@@ -1454,7 +1454,7 @@ check_cpu()
 		val=0
 		cpu_mismatch=0
 		for i in $(seq 0 "$idx_max_cpu")
-		do 
+		do
 			write_msr 0x49 "$i"; ret=$?
 			if [ "$i" -eq 0 ]; then
 				val=$ret
@@ -1550,7 +1550,7 @@ check_cpu()
 		val_cap_msr=0
 		cpu_mismatch=0
 		for i in $(seq 0 "$idx_max_cpu")
-		do 
+		do
 			read_msr 0x10a "$i"; ret=$?
 			capabilities=$(echo "$read_msr_value" | awk '{print $8}')
 			if [ "$i" -eq 0 ]; then
@@ -2017,7 +2017,7 @@ check_variant2_linux()
 						else
 							pstatus yellow NO
 							if [ -e "$specex_knob_dir/ibrs_enabled" ]; then
-							       _verbose "    - To enable, \`echo 1 > $specex_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
+								_verbose "    - To enable, \`echo 1 > $specex_knob_dir/ibrs_enabled' as root. If you don't have hardware support, you'll get an error."
 							fi
 						fi
 						;;
