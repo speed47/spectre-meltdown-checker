@@ -754,6 +754,10 @@ load_cpuid()
 	fi
 }
 
+# shellcheck disable=SC2034
+{
+EAX=1; EBX=2; ECX=3; EDX=4;
+}
 read_cpuid()
 {
 	# leaf is the value of the eax register when calling the cpuid instruction:
@@ -869,7 +873,7 @@ parse_cpu_details()
 	fi
 
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
-	if read_cpuid 0x1 1 0 0xFFFFFFFF; then
+	if read_cpuid 0x1 $EAX 0 0xFFFFFFFF; then
 		cpuid="$read_cpuid_value"
 	fi
 
@@ -1428,30 +1432,49 @@ check_cpu()
 
 	_info_nol "    * CPU indicates IBRS capability: "
 	# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
-	read_cpuid 0x7 4 26 1 1; ret=$?
-	if [ $ret -eq 0 ]; then
-		pstatus green YES "SPEC_CTRL feature bit"
-		cpuid_spec_ctrl=1
+	# amd: https://developer.amd.com/wp-content/resources/Architecture_Guidelines_Update_Indirect_Branch_Control.pdf
+	# amd: 8000_0008 EBX[14]=1
+	if is_intel; then
+		read_cpuid 0x7 $EDX 26 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES "SPEC_CTRL feature bit"
+			cpuid_spec_ctrl=1
+			cpuid_ibrs='SPEC_CTRL'
+		fi
+	elif is_amd; then
+		read_cpuid 0x80000008 $EBX 14 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES "IBRS_SUPPORT feature bit"
+			cpuid_ibrs='IBRS_SUPPORT'
+		fi
+	else
+		ret=-1
+		pstatus yellow UNKNOWN "unknown CPU"
+	fi
+	if [ $ret -eq 1 ]; then
+		pstatus yellow NO
 	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
-	else
-		pstatus yellow NO
+		cpuid_spec_ctrl=-1
 	fi
 
-	# hardware support according to kernel
-	if [ "$opt_verbose" -ge 2 ]; then
-		# the spec_ctrl flag in cpuinfo is set if and only if the kernel sees
-		# that the spec_ctrl cpuinfo bit set. we already check that ourselves above
-		# but let's check it anyway (in verbose mode only)
-		_verbose_nol "    * Kernel has set the spec_ctrl flag in cpuinfo: "
-		if [ "$opt_live" = 1 ]; then
-			if grep ^flags "$procfs/cpuinfo" | grep -qw spec_ctrl; then
-				pstatus blue YES
-			else
-				pstatus blue NO
-			fi
+	if is_amd; then
+		_info_nol "    * CPU indicates preferring IBRS always-on: "
+		# amd
+		read_cpuid 0x80000008 $EBX 16 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES
 		else
-			pstatus blue N/A "not testable in offline mode"
+			pstatus yellow NO
+		fi
+
+		_info_nol "    * CPU indicates preferring IBRS over retpoline: "
+		# amd
+		read_cpuid 0x80000008 $EBX 18 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
 		fi
 	fi
 
@@ -1495,17 +1518,26 @@ check_cpu()
 
 	_info_nol "    * CPU indicates IBPB capability: "
 	# CPUID EAX=0x80000008, ECX=0x00 return EBX[12] indicates support for just IBPB.
-	read_cpuid 0x80000008 2 12 1 1; ret=$?
-	if [ $ret -eq 0 ]; then
-		cpu_ibpb_supported='IBPB_SUPPORT'
-		pstatus green YES "IBPB_SUPPORT feature bit"
-	elif [ "$cpuid_spec_ctrl" = 1 ]; then
-		cpu_ibpb_supported='SPEC_CTRL'
+	if [ "$cpuid_spec_ctrl" = 1 ]; then
+		# spec_ctrl implies ibpb
+		cpuid_ibpb='SPEC_CTRL'
 		pstatus green YES "SPEC_CTRL feature bit"
-	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
-	else
-		pstatus yellow NO
+	elif is_intel; then
+		if [ "$cpuid_spec_ctrl" = -1 ]; then
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		else
+			pstatus yellow NO
+		fi
+	elif is_amd; then
+		read_cpuid 0x80000008 $EBX 12 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			cpuid_ibpb='IBPB_SUPPORT'
+			pstatus green YES "IBPB_SUPPORT feature bit"
+		elif [ $ret -eq 1 ]; then
+			pstatus yellow NO
+		else
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		fi
 	fi
 
 	# STIBP
@@ -1520,21 +1552,46 @@ check_cpu()
 	fi
 
 	_info_nol "    * CPU indicates STIBP capability: "
-	# A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
-	read_cpuid 0x7 4 27 1 1; ret=$?
-	if [ $ret -eq 0 ]; then
-		pstatus green YES
+	# intel: A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
+	# amd: 8000_0008 EBX[15]=1
+	if is_intel; then
+		read_cpuid 0x7 $EDX 27 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES "Intel STIBP feature bit"
+			#cpuid_stibp='Intel STIBP'
+		fi
+	elif is_amd; then
+		read_cpuid 0x80000008 $EBX 15 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES "AMD STIBP feature bit"
+			#cpuid_stibp='AMD STIBP'
+		fi
+	else
+		ret=-1
+		pstatus yellow UNKNOWN "unknown CPU"
+	fi
+	if [ $ret -eq 1 ]; then
+		pstatus yellow NO
 	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
-	else
-		pstatus yellow NO
+	fi
+
+
+	if is_amd; then
+		_info_nol "    * CPU indicates preferring STIBP always-on: "
+		read_cpuid 0x80000008 $EBX 17 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
 	fi
 
 	_info     "  * Enhanced IBRS (IBRS_ALL)"
 	_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 	cpuid_arch_capabilities=-1
 	# A processor supports the ARCH_CAPABILITIES MSR if it enumerates CPUID (EAX=7H,ECX=0):EDX[29] as 1
-	read_cpuid 0x7 4 29 1 1; ret=$?
+	read_cpuid 0x7 $EDX 29 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
 		pstatus green YES
 		cpuid_arch_capabilities=1
@@ -2281,13 +2338,13 @@ check_variant2_linux()
 			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor."
 			# IBPB (amd & intel)
 			if [ "$ibpb_enabled" = 0 ] && ( is_intel || is_amd ); then
-				if [ -z "$cpu_ibpb_supported" ]; then
+				if [ -z "$cpuid_ibpb" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
 				if [ -z "$ibpb_supported" ]; then
 					explain "Your kernel doesn't have IBPB support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
 				fi
-				if [ -n "$cpu_ibpb_supported" ] && [ -n "$ibpb_supported" ]; then
+				if [ -n "$cpuid_ibpb" ] && [ -n "$ibpb_supported" ]; then
 					if [ -e "$specex_knob_dir/ibpb_enabled" ]; then
 						explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it with \`echo 1 > $specex_knob_dir/ibpb_enabled\`."
 					else
@@ -2299,13 +2356,13 @@ check_variant2_linux()
 
 			# IBRS (intel only)
 			if [ "$ibrs_enabled" = 0 ] && is_intel; then
-				if [ "$cpuid_spec_ctrl" != 1 ]; then
+				if [ -n "$cpuid_ibrs" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
 				if [ -z "$ibrs_supported" ]; then
 					explain "Your kernel doesn't have IBRS support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
 				fi
-				if [ "$cpuid_spec_ctrl" = 1 ] && [ -n "$ibrs_supported" ]; then
+				if [ -n "$cpuid_ibrs" ] && [ -n "$ibrs_supported" ]; then
 					if [ -e "$specex_knob_dir/ibrs_enabled" ]; then
 						explain "Both your CPU and your kernel have IBRS support, but it is currently disabled. You may enable it with \`echo 1 > $specex_knob_dir/ibrs_enabled\`."
 					else
