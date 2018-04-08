@@ -1587,86 +1587,88 @@ check_cpu()
 		fi
 	fi
 
-	_info     "  * Enhanced IBRS (IBRS_ALL)"
-	_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
-	cpuid_arch_capabilities=-1
-	# A processor supports the ARCH_CAPABILITIES MSR if it enumerates CPUID (EAX=7H,ECX=0):EDX[29] as 1
-	read_cpuid 0x7 $EDX 29 1 1; ret=$?
-	if [ $ret -eq 0 ]; then
-		pstatus green YES
-		cpuid_arch_capabilities=1
-	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
-	else
-		pstatus yellow NO
-		cpuid_arch_capabilities=0
-	fi
+	if is_intel; then
+		_info     "  * Enhanced IBRS (IBRS_ALL)"
+		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
+		cpuid_arch_capabilities=-1
+		# A processor supports the ARCH_CAPABILITIES MSR if it enumerates CPUID (EAX=7H,ECX=0):EDX[29] as 1
+		read_cpuid 0x7 $EDX 29 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES
+			cpuid_arch_capabilities=1
+		elif [ $ret -eq 2 ]; then
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		else
+			pstatus yellow NO
+			cpuid_arch_capabilities=0
+		fi
 
-	_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
-	capabilities_rdcl_no=-1
-	capabilities_ibrs_all=-1
-	if [ "$cpuid_arch_capabilities" = -1 ]; then
-		pstatus yellow UNKNOWN
-	elif [ "$cpuid_arch_capabilities" != 1 ]; then
-		capabilities_rdcl_no=0
-		capabilities_ibrs_all=0
-		pstatus yellow NO
-	elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		spec_ctrl_msr=-1
-		pstatus yellow UNKNOWN "is msr kernel module available?"
-	else
-		# the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
-		# here we use dd, it's the same as using 'rdmsr 0x10a' but without needing the rdmsr tool
-		# if we get a read error, the MSR is not there. bs has to be 8 for msr
-		val=0
-		val_cap_msr=0
-		cpu_mismatch=0
-		for i in $(seq 0 "$idx_max_cpu")
-		do
-			read_msr 0x10a "$i"; ret=$?
-			capabilities=$(echo "$read_msr_value" | awk '{print $8}')
-			if [ "$i" -eq 0 ]; then
-				val=$ret
-				val_cap_msr=$capabilities
-			else
-				if [ "$ret" -eq "$val" ] && [ "$capabilities" -eq "$val_cap_msr" ]; then
-					continue
+		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
+		capabilities_rdcl_no=-1
+		capabilities_ibrs_all=-1
+		if [ "$cpuid_arch_capabilities" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$cpuid_arch_capabilities" != 1 ]; then
+			capabilities_rdcl_no=0
+			capabilities_ibrs_all=0
+			pstatus yellow NO
+		elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+			spec_ctrl_msr=-1
+			pstatus yellow UNKNOWN "is msr kernel module available?"
+		else
+			# the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
+			# here we use dd, it's the same as using 'rdmsr 0x10a' but without needing the rdmsr tool
+			# if we get a read error, the MSR is not there. bs has to be 8 for msr
+			val=0
+			val_cap_msr=0
+			cpu_mismatch=0
+			for i in $(seq 0 "$idx_max_cpu")
+			do
+				read_msr 0x10a "$i"; ret=$?
+				capabilities=$(echo "$read_msr_value" | awk '{print $8}')
+				if [ "$i" -eq 0 ]; then
+					val=$ret
+					val_cap_msr=$capabilities
 				else
-					cpu_mismatch=1
+					if [ "$ret" -eq "$val" ] && [ "$capabilities" -eq "$val_cap_msr" ]; then
+						continue
+					else
+						cpu_mismatch=1
+					fi
 				fi
-			fi
-		done
-		capabilities=$val_cap_msr
-		capabilities_rdcl_no=0
-		capabilities_ibrs_all=0
-		if [ $val -eq 0 ]; then
-			_debug "capabilities MSR lower byte is $capabilities (decimal)"
-			[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
-			[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
-			_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all"
-			if [ "$capabilities_ibrs_all" = 1 ]; then
-				if [ $cpu_mismatch -eq 0 ]; then
-					pstatus green YES
-				else:
-					pstatus green YES "But not in all CPUs"
+			done
+			capabilities=$val_cap_msr
+			capabilities_rdcl_no=0
+			capabilities_ibrs_all=0
+			if [ $val -eq 0 ]; then
+				_debug "capabilities MSR lower byte is $capabilities (decimal)"
+				[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
+				[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all"
+				if [ "$capabilities_ibrs_all" = 1 ]; then
+					if [ $cpu_mismatch -eq 0 ]; then
+						pstatus green YES
+					else:
+						pstatus green YES "But not in all CPUs"
+					fi
+				else
+					pstatus yellow NO
 				fi
+			elif [ $val -eq 200 ]; then
+				pstatus yellow UNKNOWN "is msr kernel module available?"
 			else
 				pstatus yellow NO
 			fi
-		elif [ $val -eq 200 ]; then
-			pstatus yellow UNKNOWN "is msr kernel module available?"
+		fi
+
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Meltdown (RDCL_NO): "
+		if [ "$capabilities_rdcl_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_rdcl_no" = 1 ]; then
+			pstatus green YES
 		else
 			pstatus yellow NO
 		fi
-	fi
-
-	_info_nol "  * CPU explicitly indicates not being vulnerable to Meltdown (RDCL_NO): "
-	if [ "$capabilities_rdcl_no" = -1 ]; then
-		pstatus yellow UNKNOWN
-	elif [ "$capabilities_rdcl_no" = 1 ]; then
-		pstatus green YES
-	else
-		pstatus yellow NO
 	fi
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
