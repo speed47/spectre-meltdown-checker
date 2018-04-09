@@ -2207,73 +2207,61 @@ check_variant2_linux()
 			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
 		fi
 
-		_info_nol "    * Kernel compiled with a retpoline-aware compiler: "
-		# Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
-		# For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
-		# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
-		# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
-		# *AND* if the compiler is retpoline-compliant, so look for that symbol
-		#
-		# if there is "retpoline" in the file and NOT "minimal", then it's full retpoline
-		# (works for vanilla and Red Hat variants)
-		if [ "$opt_live" = 1 ] && [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
-			if grep -qwi retpoline /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
-				if grep -qwi minimal /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
-					pstatus yellow NO "kernel reports minimal retpoline compilation"
-				else
-					retpoline_compiler=1
-					pstatus green YES "kernel reports full retpoline compilation"
-				fi
-			else
-				if [ "$retpoline" = 1 ]; then
-					pstatus yellow UNKNOWN
-				else
-					pstatus yellow NO
-				fi
-			fi
-		elif [ -n "$opt_map" ]; then
-			# look for the symbol
-			if grep -qw noretpoline_setup "$opt_map"; then
-				retpoline_compiler=1
-				pstatus green YES "noretpoline_setup symbol found in System.map"
-			else
-				if [ "$retpoline" = 1 ]; then
-					pstatus yellow UNKNOWN
-				else
-					pstatus yellow NO
-				fi
-			fi
-		elif [ -n "$kernel" ]; then
-			# look for the symbol
-			if which "${opt_arch_prefix}nm" >/dev/null 2>&1; then
-				# the proper way: use nm and look for the symbol
-				if "${opt_arch_prefix}nm" "$kernel" 2>/dev/null | grep -qw 'noretpoline_setup'; then
-					retpoline_compiler=1
-					pstatus green YES "noretpoline_setup found in kernel symbols"
-				else
-					if [ "$retpoline" = 1 ]; then
-						pstatus yellow UNKNOWN
+		if [ "$retpoline" = 1 ]; then
+			# Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
+			# For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
+			# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
+			# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
+			# *AND* if the compiler is retpoline-compliant, so look for that symbol
+			#
+			# if there is "retpoline" in the file and NOT "minimal", then it's full retpoline
+			# (works for vanilla and Red Hat variants)
+			if [ "$opt_live" = 1 ] && [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
+				if grep -qwi retpoline /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
+					if grep -qwi minimal /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
+						retpoline_compiler=0
+						retpoline_compiler_reason="kernel reports minimal retpoline compilation"
 					else
-						pstatus yellow NO
+						retpoline_compiler=1
+						retpoline_compiler_reason="kernel reports full retpoline compilation"
 					fi
 				fi
-			elif grep -q noretpoline_setup "$kernel"; then
-				# if we don't have nm, nevermind, the symbol name is long enough to not have
-				# any false positive using good old grep directly on the binary
-				retpoline_compiler=1
-				pstatus green YES "noretpoline_setup found in kernel"
-			else
-				if [ "$retpoline" = 1 ]; then
-					pstatus yellow UNKNOWN
-				else
-					pstatus yellow NO
+			elif [ -n "$opt_map" ]; then
+				# look for the symbol
+				if grep -qw noretpoline_setup "$opt_map"; then
+					retpoline_compiler=1
+					retpoline_compiler_reason="noretpoline_setup symbol found in System.map"
+				fi
+			elif [ -n "$kernel" ]; then
+				# look for the symbol
+				if which "${opt_arch_prefix}nm" >/dev/null 2>&1; then
+					# the proper way: use nm and look for the symbol
+					if "${opt_arch_prefix}nm" "$kernel" 2>/dev/null | grep -qw 'noretpoline_setup'; then
+						retpoline_compiler=1
+						retpoline_compiler_reason="noretpoline_setup found in kernel symbols"
+					fi
+				elif grep -q noretpoline_setup "$kernel"; then
+					# if we don't have nm, nevermind, the symbol name is long enough to not have
+					# any false positive using good old grep directly on the binary
+					retpoline_compiler=1
+					retpoline_compiler_reason="noretpoline_setup found in kernel"
 				fi
 			fi
-		else
-			if [ "$retpoline" = 1 ]; then
-				pstatus yellow UNKNOWN "couldn't find your kernel image or System.map"
-			else
-				pstatus yellow NO
+			if [ -n "$retpoline_compiler" ]; then
+				_info_nol "    * Kernel compiled with a retpoline-aware compiler: "
+				if [ "$retpoline_compiler" = 1 ]; then
+					if [ -n "$retpoline_compiler_reason" ]; then
+						pstatus green YES "$retpoline_compiler_reason"
+					else
+						pstatus green YES
+					fi
+				else
+					if [ -n "$retpoline_compiler_reason" ]; then
+						pstatus red NO "$retpoline_compiler_reason"
+					else
+						pstatus red NO
+					fi
+				fi
 			fi
 		fi
 
@@ -2287,7 +2275,6 @@ check_variant2_linux()
 					pstatus green YES
 				else
 					pstatus yellow NO
-					_verbose "    - To enable, \`echo 1 > $specex_knob_dir/retp_enabled' as root."
 				fi
 			fi
 		fi
@@ -2408,7 +2395,7 @@ check_variant2_linux()
 			if is_amd || ( is_intel && ! is_skylake_cpu ); then
 				if [ "$retpoline" = 0 ]; then
 					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with  a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
-				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" != 1 ]; then
+				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 0 ]; then
 					explain "Your kernel is compiled with retpoline, but without a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" = 0 ]; then
 					explain "Your kernel has retpoline support and has been compiled with a retpoline-aware compiler, but retpoline is disabled. You should enable it with \`echo 1 > $specex_knob_dir/retp_enabled\`."
