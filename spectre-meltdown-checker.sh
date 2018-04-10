@@ -2362,7 +2362,12 @@ check_variant2_linux()
 				fi
 				if [ -n "$cpuid_ibpb" ] && [ -n "$ibpb_supported" ]; then
 					if [ -e "$specex_knob_dir/ibpb_enabled" ]; then
-						explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it with \`echo 1 > $specex_knob_dir/ibpb_enabled\`."
+						# newer (April 2018) Red Hat kernels have ibpb_enabled as ro, and automatically enables it with retpoline
+						if [ ! -w "$specex_knob_dir/ibpb_enabled" ] && [ -e "$specex_knob_dir/retp_enabled" ]; then
+							explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You kernel should enable IBPB automatically if you enable retpoline. You may enable it with \`echo 1 > $specex_knob_dir/retp_enabled\`."
+						else
+							explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it with \`echo 1 > $specex_knob_dir/ibpb_enabled\`."
+						fi
 					else
 						explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it. Check in your distro's documentation on how to do this."
 					fi
