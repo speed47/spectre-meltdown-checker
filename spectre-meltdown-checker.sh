@@ -2304,9 +2304,9 @@ check_variant2_linux()
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$ibpb_enabled" -ge 1 ] && ! is_skylake_cpu; then
+		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ! is_skylake_cpu; then
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
-		elif [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
+		elif [ "$ibrs_enabled" -a "$ibpb_enabled" ] && [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
 			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
 		elif [ "$ibpb_enabled" = 2 ] && ! is_cpu_smt_enabled; then
 			pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
