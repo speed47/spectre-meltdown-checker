@@ -2320,7 +2320,7 @@ check_variant2_linux()
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ! is_skylake_cpu; then
+		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_skylake_cpu || [ -n "$rsb_filling" ] ); then
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
 		elif [ -n "$ibrs_enabled" ] && [ -n "$ibpb_enabled" ] && [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
 			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
@@ -2346,8 +2346,8 @@ check_variant2_linux()
 		if [ "$pvulnstatus_last_cve" != "$cve" ]; then
 			# explain what's needed for this CPU
 			if is_skylake_cpu; then
-				pvulnstatus $cve VULN "IBRS+IBPB is needed to mitigate the vulnerability"
-				explain "To mitigate this vulnerability, you need IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support. The retpoline approach doesn't work on your CPU, as this is a Skylake+ model."
+				pvulnstatus $cve VULN "IBRS+IBPB+RSB filling is needed to mitigate the vulnerability"
+				explain "To mitigate this vulnerability, you need IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support. RSB filling just requires a recent kernel. The retpoline approach doesn't work on your CPU, as this is a Skylake+ model."
 			elif is_zen_cpu; then
 				pvulnstatus $cve VULN "retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
