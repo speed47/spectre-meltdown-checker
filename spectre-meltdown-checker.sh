@@ -51,6 +51,7 @@ show_usage()
 		--no-color		don't use color codes
 		--verbose, -v		increase verbosity level, possibly several times
 		--no-explain		don't produce a human-readable explanation of actions to take to mitigate a vulnerability
+		--paranoid		require IBPB to deem Variant 2 as mitigated
 
 		--no-sysfs		don't use the /sys interface even if present [Linux]
 		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
@@ -131,6 +132,7 @@ opt_arch_prefix=''
 opt_hw_only=0
 opt_no_hw=0
 opt_no_explain=0
+opt_paranoid=0
 
 global_critical=0
 global_unknown=0
@@ -458,6 +460,9 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--coreos-within-toolbox" ]; then
 		# don't use directly: used internally by --coreos
 		opt_coreos=0
+		shift
+	elif [ "$1" = "--paranoid" ]; then
+		opt_paranoid=1
 		shift
 	elif [ "$1" = "--hw-only" ]; then
 		opt_hw_only=1
@@ -2322,6 +2327,9 @@ check_variant2_linux()
 	else
 		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_skylake_cpu || [ -n "$rsb_filling" ] ); then
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
+		elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && ( ! is_skylake_cpu || [ -n "$rsb_filling" ] ); then
+			pvulnstatus $cve OK "Full retpoline is mitigating the vulnerability"
+			_warn "You might want to enable IBPB to complete retpoline as a Variant 2 mitigation"
 		elif [ -n "$ibrs_enabled" ] && [ -n "$ibpb_enabled" ] && [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
 			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
 		elif [ "$ibpb_enabled" = 2 ] && ! is_cpu_smt_enabled; then
