@@ -2293,6 +2293,22 @@ check_variant2_linux()
 			fi
 		fi
 
+		if is_skylake_cpu; then
+			_info_nol "  * Kernel supports RSB filling: "
+			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
+			elif [ -z "$kernel" ]; then
+				pstatus yellow UNKNOWN "kernel image missing"
+			else
+				rsb_filling=$("${opt_arch_prefix}strings" "$kernel" | grep -w 'Filling RSB on context switch')
+				if [ -n "$rsb_filling" ]; then
+					pstatus green YES
+				else
+					pstatus yellow NO
+				fi
+			fi
+		fi
+
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
