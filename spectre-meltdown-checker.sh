@@ -2366,7 +2366,7 @@ check_variant2_linux()
 		fi
 
 		# if we are in live mode, we can check for a lot more stuff and explain further
-		if [ "$opt_live" = 1 ]; then
+		if [ "$opt_live" = 1 ] && [ "$vulnstatus" != "OK" ]; then
 			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor."
 			# IBPB (amd & intel)
 			if [ "$ibpb_enabled" = 0 ] && ( is_intel || is_amd ); then
