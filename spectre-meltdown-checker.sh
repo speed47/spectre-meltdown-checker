@@ -2358,8 +2358,8 @@ check_variant2_linux()
 		if [ "$pvulnstatus_last_cve" != "$cve" ]; then
 			# explain what's needed for this CPU
 			if is_skylake_cpu; then
-				pvulnstatus $cve VULN "IBRS+IBPB+RSB filling is needed to mitigate the vulnerability"
-				explain "To mitigate this vulnerability, you need IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support. RSB filling just requires a recent kernel. The retpoline approach doesn't work on your CPU, as this is a Skylake+ model."
+				pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB+RBS filling, is needed to mitigate the vulnerability"
+				explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. You also need a recent-enough kernel that supports RSB filling if you plan to use retpoline. For Skylake+ CPUs, the IBRS + IBPB approach is generally preferred as it guarantees complete protection, and the performance impact is not as high as with older CPUs in comparison with retpoline. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
 			elif is_zen_cpu; then
 				pvulnstatus $cve VULN "retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
@@ -2381,7 +2381,7 @@ check_variant2_linux()
 		if [ "$opt_live" = 1 ] && [ "$vulnstatus" != "OK" ]; then
 			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor."
 			# IBPB (amd & intel)
-			if [ "$ibpb_enabled" = 0 ] && ( is_intel || is_amd ); then
+			if ( [ -z "$ibpb_enabled" ] || [ "$ibpb_enabled" = 0 ] ) && ( is_intel || is_amd ); then
 				if [ -z "$cpuid_ibpb" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -2406,7 +2406,7 @@ check_variant2_linux()
 			# /IBPB
 
 			# IBRS (amd & intel)
-			if [ "$ibrs_enabled" = 0 ] && is_intel; then
+			if ( [ -z "$ibrs_enabled" ] || [ "$ibrs_enabled" = 0 ] ) && ( is_intel || is_amd ); then
 				if [ -z "$cpuid_ibrs" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -2424,8 +2424,8 @@ check_variant2_linux()
 			# /IBRS
 			unset _explain_hypervisor
 
-			# RETPOLINE (intel non-skylake and amd)
-			if is_amd || ( is_intel && ! is_skylake_cpu ); then
+			# RETPOLINE (amd & intel)
+			if is_amd || is_intel; then
 				if [ "$retpoline" = 0 ]; then
 					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with  a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 0 ]; then
