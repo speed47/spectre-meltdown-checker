@@ -2329,7 +2329,11 @@ check_variant2_linux()
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
 		elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && ( ! is_skylake_cpu || [ -n "$rsb_filling" ] ); then
 			pvulnstatus $cve OK "Full retpoline is mitigating the vulnerability"
-			_warn "You might want to enable IBPB to complete retpoline as a Variant 2 mitigation"
+			if [ -n "$cpuid_ibpb" ]; then
+				_warn "You should enable IBPB to complete retpoline as a Variant 2 mitigation"
+			else
+				_warn "IBPB is considered as a good addition to retpoline for Variant 2 mitigation, but your CPU microcode doesn't support it"
+			fi
 		elif [ -n "$ibrs_enabled" ] && [ -n "$ibpb_enabled" ] && [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
 			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
 		elif [ "$ibpb_enabled" = 2 ] && ! is_cpu_smt_enabled; then
