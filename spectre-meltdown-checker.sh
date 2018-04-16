@@ -2298,7 +2298,7 @@ check_variant2_linux()
 			fi
 		fi
 
-		if is_skylake_cpu; then
+		if is_skylake_cpu || [ "$opt_verbose" -ge 2 ]; then
 			_info_nol "  * Kernel supports RSB filling: "
 			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
