@@ -2119,7 +2119,7 @@ check_variant2_linux()
 				case "$ibrs_enabled" in
 					0)
 						if [ "$ibrs_fw_enabled" = 1 ]; then
-							pstatus green YES "for firmware code"
+							pstatus blue YES "for firmware code only"
 						else
 							pstatus yellow NO
 						fi
