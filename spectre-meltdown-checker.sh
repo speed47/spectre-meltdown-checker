@@ -2755,8 +2755,21 @@ check_variant3_linux()
 			status="VULN"
 			_explain="Go to https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ for more information"
 		elif [ "$msg" = "Vulnerable" ]; then
+			if uname -m | grep -qwE 'i[3-6]86'; then 
+				if [ "$cpu_pcid" = 1 ] || [ "$cpu_invpcid" = 1 ]; then
+					msg="PTI is needed to mitigate the vulnerability"
+					_explain="You are running a 32 bit kernel on a 64-bit CPU, with reduced performance impact for PTI mitigation. Check if your distro supports upgrading from 32-bit to 64-bit kernels or consider switching to a 64-bit kernel compiled with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels). (PTI is not yet available on 32-bit x86 kernels)"
+				elif grep ^flags $procfs/cpuinfo | grep -q 'lm'; then
+					msg="PTI is needed to mitigate the vulnerability"
+					_explain="You are running a 32 bit kernel on a 64-bit CPU. Check if your distro supports upgrading from 32-bit to 64-bit kernels or consider switching to a 64-bit kernel compiled with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels). (PTI is not yet available on 32-bit x86 kernels)"
+				else
+					msg="PTI is needed to mitigate the vulnerability"
+					_explain="You are running a 32-bit kernel on a 32-bit CPU. Continue to await PTI availability in 32-bit kernel. (PTI is not yet available on 32-bit x86 kernels)"
+				fi	
+			else
 			msg="PTI is needed to mitigate the vulnerability"
 			_explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+			fi
 		fi
 		pvulnstatus $cve "$status" "$msg"
 		[ -z "$_explain" ] && [ "$msg" = "Vulnerable" ] && _explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
