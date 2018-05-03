@@ -732,8 +732,12 @@ mount_debugfs()
 load_msr()
 {
 	if [ "$os" = Linux ]; then
-		modprobe msr 2>/dev/null && insmod_msr=1
-		_debug "attempted to load module msr, insmod_msr=$insmod_msr"
+		if ! grep -e msr /proc/modules 2>/dev/null; then
+			modprobe msr 2>/dev/null && insmod_msr=1
+			_debug "attempted to load module msr, insmod_msr=$insmod_cpuid"
+		else
+			_debug "msr module already loaded"
+		fi	
 	else
 		if ! kldstat -q -m cpuctl; then
 			kldload cpuctl 2>/dev/null && kldload_cpuctl=1
@@ -747,8 +751,12 @@ load_msr()
 load_cpuid()
 {
 	if [ "$os" = Linux ]; then
-		modprobe cpuid 2>/dev/null && insmod_cpuid=1
-		_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
+		if ! grep -e cpuid /proc/modules 2>/dev/null; then
+			modprobe cpuid 2>/dev/null && insmod_cpuid=1
+			_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
+		else
+			_debug "cpuid module already loaded"
+		fi	
 	else
 		if ! kldstat -q -m cpuctl; then
 			kldload cpuctl 2>/dev/null && kldload_cpuctl=1
