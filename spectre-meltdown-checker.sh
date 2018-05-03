@@ -734,7 +734,7 @@ load_msr()
 	if [ "$os" = Linux ]; then
 		if ! grep -e msr /proc/modules 2>/dev/null; then
 			modprobe msr 2>/dev/null && insmod_msr=1
-			_debug "attempted to load module msr, insmod_msr=$insmod_cpuid"
+			_debug "attempted to load module msr, insmod_msr=$insmod_msr"
 		else
 			_debug "msr module already loaded"
 		fi	
