@@ -2122,6 +2122,10 @@ check_variant2_linux()
 				# if ibpb=2, ibrs is forcefully=0
 				pstatus blue NO "IBPB used instead of IBRS in all kernel entrypoints"
 			else
+			if [ ! "$cpuid_ibrs" = 'SPEC_CTRL' ] && [ ! "cpuid_ibrs" = 'IBRS_SUPPORT' ] && [ ! "cpuid_spec_ctrl" = -1 ]; then 
+				pstatus yellow NO; 
+				_debug "ibrs: known cpu not supporting SPEC-CTRL or IBRS"; 
+			else
 				# 0 means disabled
 				# 1 is enabled only for kernel space
 				# 2 is enabled for kernel and user space
@@ -2139,6 +2143,7 @@ check_variant2_linux()
 					3)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel and firmware code"; else pstatus green YES; fi;;
 					*)	pstatus yellow UNKNOWN;;
 				esac
+			fi
 			fi
 		else
 			pstatus blue N/A "not testable in offline mode"
