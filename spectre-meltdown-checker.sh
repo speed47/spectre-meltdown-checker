@@ -2137,7 +2137,10 @@ check_variant2_linux()
 					1)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel space and firmware code"; else pstatus green YES "for kernel space"; fi;;
 					2)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel, user space, and firmware code" ; else pstatus green YES "for both kernel and user space"; fi;;
 					3)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel and firmware code"; else pstatus green YES; fi;;
-					*)	pstatus yellow UNKNOWN;;
+					*)	if [ ! "$cpuid_ibrs" = 'SPEC_CTRL' ] && [ ! "cpuid_ibrs" = 'IBRS_SUPPORT' ] && [ ! "cpuid_spec_ctrl" = -1 ]; 
+							then pstatus yellow NO; _debug "ibrs: known cpu not supporting SPEC-CTRL or IBRS"; 
+						else 
+							pstatus yellow UNKNOWN; fi;;
 				esac
 			fi
 		else
