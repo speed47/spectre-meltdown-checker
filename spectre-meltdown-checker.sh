@@ -2037,7 +2037,7 @@ check_variant2_linux()
 			fi
 			if [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
 				# when IBPB is enabled on 4.15+, we can see it in sysfs
-				if grep -q ', IBPB' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if grep -q 'IBPB' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
 					_debug "ibpb: found enabled in sysfs"
 					[ -z "$ibpb_supported" ] && ibpb_supported='IBPB found enabled in sysfs'
 					[ -z "$ibpb_enabled"   ] && ibpb_enabled=1
@@ -2049,7 +2049,7 @@ check_variant2_linux()
 					ibrs_fw_enabled=1
 				fi
 				# when IBRS is enabled on 4.15+, we can see it in sysfs
-				if grep -q 'Indirect Branch Restricted Speculation' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if grep -q -e 'IBRS' -e 'Indirect Branch Restricted Speculation' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
 					_debug "ibrs: found IBRS in sysfs"
 					[ -z "$ibrs_supported" ] && ibrs_supported='found IBRS in sysfs'
 					[ -z "$ibrs_enabled"   ] && ibrs_enabled=3
@@ -2137,7 +2137,7 @@ check_variant2_linux()
 					1)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel space and firmware code"; else pstatus green YES "for kernel space"; fi;;
 					2)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel, user space, and firmware code" ; else pstatus green YES "for both kernel and user space"; fi;;
 					3)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel and firmware code"; else pstatus green YES; fi;;
-					*)	if [ ! "$cpuid_ibrs" = 'SPEC_CTRL' ] && [ ! "cpuid_ibrs" = 'IBRS_SUPPORT' ] && [ ! "cpuid_spec_ctrl" = -1 ]; 
+					*)	if [ ! "$cpuid_ibrs" = 'SPEC_CTRL' ] && [ ! "$cpuid_ibrs" = 'IBRS_SUPPORT' ] && [ ! "$cpuid_spec_ctrl" = -1 ];
 							then pstatus yellow NO; _debug "ibrs: known cpu not supporting SPEC-CTRL or IBRS"; 
 						else 
 							pstatus yellow UNKNOWN; fi;;
