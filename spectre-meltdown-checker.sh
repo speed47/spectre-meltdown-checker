@@ -1718,13 +1718,13 @@ check_cpu()
 			capabilities=$val_cap_msr
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
-			capabilities_ssbd_no=0
+			capabilities_ssb_no=0
 			if [ $val -eq 0 ]; then
 				_debug "capabilities MSR lower byte is $capabilities (decimal)"
-				[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
-				[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
-				[ $(( capabilities & 4 )) -eq 4 ] && capabilities_ssbd_no=1
-				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssbd_no=$capabilities_ssbd_no"
+				[ $(( capabilities &  1 )) -eq 1  ] && capabilities_rdcl_no=1
+				[ $(( capabilities &  2 )) -eq 2  ] && capabilities_ibrs_all=1
+				[ $(( capabilities & 16 )) -eq 16 ] && capabilities_ssb_no=1
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssb_no=$capabilities_ssb_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
@@ -1750,10 +1750,10 @@ check_cpu()
 			pstatus yellow NO
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSBD_NO): "
-		if [ "$capabilities_ssbd_no" = -1 ]; then
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
+		if [ "$capabilities_ssb_no" = -1 ]; then
 			pstatus yellow UNKNOWN
-		elif [ "$capabilities_ssbd_no" = 1 ]; then
+		elif [ "$capabilities_ssb_no" = 1 ]; then
 			pstatus green YES
 		else
 			pstatus yellow NO
