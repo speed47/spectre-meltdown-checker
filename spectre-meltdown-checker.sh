@@ -2875,7 +2875,7 @@ check_variant3a()
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		pvulnstatus $cve UNK "new vulnerability, script will when more technical information is available in the next hours/days"
+		pvulnstatus $cve UNK "new vulnerability, script will be updated when more technical information is available in the next hours/days"
 	fi
 }
 
@@ -2888,7 +2888,7 @@ check_variant4()
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		pvulnstatus $cve UNK "new vulnerability, script will when more technical information is available in the next hours/days"
+		pvulnstatus $cve UNK "new vulnerability, script will be updated when more technical information is available in the next hours/days"
 	fi
 }
 
