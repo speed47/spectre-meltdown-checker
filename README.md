@@ -1,7 +1,16 @@
 Spectre & Meltdown Checker
 ==========================
 
-A shell script to tell if your system is vulnerable against the 3 "speculative execution" CVEs that were made public early 2018.
+A shell script to tell if your system is vulnerable against the several "speculative execution" CVEs that were made public in 2018.
+
+This includes:
+- CVE-2017-5753 aka Spectre Variant 1
+- CVE-2017-5715 aka Spectre Variant 2
+- CVE-2017-5754 aka Meltdown or Variant 3
+- CVE-2018-3640 aka Variant 3a
+- CVE-2018-3639 aka Variant 4
+
+**Note: as CVE-2018-3639 and CVE-2018-3640 are extremely recent (published on May 21th 2018), expect frequent changes of the script in the next days to adjust detection.**
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -74,7 +83,19 @@ sudo ./spectre-meltdown-checker.sh
    - Mitigation: updated kernel (with PTI/KPTI patches), updating the kernel is enough
    - Performance impact of the mitigation: low to medium
 
-## Disclaimer
+**CVE-2018-3640** rogue system register read (Variant 3a)
+
+   - Impact: TBC
+   - Mitigation: TBC
+   - Performance impact of the mitigation: negligible
+
+**CVE-2018-3639** speculative store bypass (Variant 4)
+
+   - Impact: software using JIT (no known exploitation against kernel)
+   - Mitigation: TBC
+   - Performance impact of the mitigation: low to medium
+
+## Understanding what this script does and doesn't
 
 This tool does its best to determine whether your system is immune (or has proper mitigations in place) for the collectively named "speculative execution" vulnerabilities. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying whether your system has the known correct mitigations in place.
 However, some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).

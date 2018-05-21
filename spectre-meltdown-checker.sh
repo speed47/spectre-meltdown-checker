@@ -243,18 +243,22 @@ is_cpu_vulnerable_cached=0
 _is_cpu_vulnerable_cached()
 {
 	# shellcheck disable=SC2086
-	[ "$1" = 1 ] && return $variant1
+	[ "$1" = 1  ] && return $variant1
 	# shellcheck disable=SC2086
-	[ "$1" = 2 ] && return $variant2
+	[ "$1" = 2  ] && return $variant2
 	# shellcheck disable=SC2086
-	[ "$1" = 3 ] && return $variant3
+	[ "$1" = 3  ] && return $variant3
+	# shellcheck disable=SC2086
+	[ "$1" = 3a ] && return $variant3a
+	# shellcheck disable=SC2086
+	[ "$1" = 4  ] && return $variant4
 	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
 	exit 255
 }
 
 is_cpu_vulnerable()
 {
-	# param: 1, 2 or 3 (variant)
+	# param: 1, 2, 3, 3a or 4 (variant)
 	# returns 0 if vulnerable, 1 if not vulnerable
 	# (note that in shell, a return of 0 is success)
 	# by default, everything is vulnerable, we work in a "whitelist" logic here.
@@ -267,11 +271,15 @@ is_cpu_vulnerable()
 	variant1=''
 	variant2=''
 	variant3=''
+	variant3a=''
+	variant4=''
 
 	if is_cpu_specex_free; then
 		variant1=immune
 		variant2=immune
 		variant3=immune
+		variant3a=immune
+		variant4=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
@@ -343,16 +351,29 @@ is_cpu_vulnerable()
 					_debug "checking cpu$i: this arm non vulnerable to meltdown"
 					[ -z "$variant3" ] && variant3=immune
 				fi
+
+				# for variant3a, only A15/A57/A72 are vulnerable
+				if [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(c0f|d07|d0a)$'; then
+					_debug "checking cpu$i: arm A15-A57-A72 vulnerable to variant3a"
+					variant3a=vuln
+				else
+					_debug "checking cpu$i: this arm non vulnerable to variant3a"
+					[ -z "$variant3" ] && variant3a=immune
+				fi
 			fi
-			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3>"
+			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 	fi
-	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3>"
+	# from the information we have for now, it seems that CPUs that are vulnerable to variant1 are also vulnerable to variant4
+	variant4=$variant1
+	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 	# if at least one of the cpu is vulnerable, then the system is vulnerable
-	[ "$variant1" = "immune" ] && variant1=1 || variant1=0
-	[ "$variant2" = "immune" ] && variant2=1 || variant2=0
-	[ "$variant3" = "immune" ] && variant3=1 || variant3=0
-	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3>"
+	[ "$variant1"  = "immune" ] && variant1=1  || variant1=0
+	[ "$variant2"  = "immune" ] && variant2=1  || variant2=0
+	[ "$variant3"  = "immune" ] && variant3=1  || variant3=0
+	[ "$variant3a" = "immune" ] && variant3a=1 || variant3a=0
+	[ "$variant4"  = "immune" ] && variant4=1  || variant4=0
+	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 	is_cpu_vulnerable_cached=1
 	_is_cpu_vulnerable_cached "$1"
 	return $?
@@ -496,11 +517,13 @@ while [ -n "$1" ]; do
 			exit 255
 		fi
 		case "$2" in
-			1) opt_variant1=1; opt_allvariants=0;;
-			2) opt_variant2=1; opt_allvariants=0;;
-			3) opt_variant3=1; opt_allvariants=0;;
+			1)  opt_variant1=1;  opt_allvariants=0;;
+			2)  opt_variant2=1;  opt_allvariants=0;;
+			3)  opt_variant3=1;  opt_allvariants=0;;
+			3a) opt_variant3a=1; opt_allvariants=0;;
+			4)  opt_variant4=1;  opt_allvariants=0;;
 			*)
-				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2 or 3" >&2;
+				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a or 4" >&2;
 				exit 255
 				;;
 		esac
@@ -567,6 +590,8 @@ pvulnstatus()
 			CVE-2017-5753) aka="SPECTRE VARIANT 1";;
 			CVE-2017-5715) aka="SPECTRE VARIANT 2";;
 			CVE-2017-5754) aka="MELTDOWN";;
+			CVE-2018-3640) aka="VARIANT 3A";;
+			CVE-2018-3639) aka="VARIANT 4";;
 		esac
 
 		case "$opt_batch_format" in
@@ -888,6 +913,7 @@ parse_cpu_details()
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
 	if read_cpuid 0x1 $EAX 0 0xFFFFFFFF; then
 		cpuid="$read_cpuid_value"
+		#cpuid_hex=$(printf "%X" "$cpuid")
 	fi
 
 	# under BSD, linprocfs often doesn't export ucode information, so fetch it ourselves the good old way
@@ -1411,7 +1437,6 @@ read_msr()
 	return 0
 }
 
-
 check_cpu()
 {
 	_info "\033[1;34mHardware check\033[0m"
@@ -1627,6 +1652,19 @@ check_cpu()
 		fi
 	fi
 
+	# variant 4
+	_info     "  * Speculative Store Bypass Disable (SSBD)"
+	_info_nol "    * CPU indicates SSBD capability: "
+	read_cpuid 0x7 $EDX 31 1 1; ret=$?
+	if [ $ret -eq 0 ]; then
+		#cpuid_ng1=1
+		pstatus green YES "SSBD feature bit"
+	elif [ $ret -eq 1 ]; then
+		pstatus yellow NO
+	else
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	fi
+
 	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
@@ -1680,11 +1718,13 @@ check_cpu()
 			capabilities=$val_cap_msr
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
+			capabilities_ssbd_no=0
 			if [ $val -eq 0 ]; then
 				_debug "capabilities MSR lower byte is $capabilities (decimal)"
 				[ $(( capabilities & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 				[ $(( capabilities & 2 )) -eq 2 ] && capabilities_ibrs_all=1
-				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all"
+				[ $(( capabilities & 4 )) -eq 4 ] && capabilities_ssbd_no=1
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssbd_no=$capabilities_ssbd_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
@@ -1709,6 +1749,15 @@ check_cpu()
 		else
 			pstatus yellow NO
 		fi
+
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSBD_NO): "
+		if [ "$capabilities_ssbd_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_ssbd_no" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
 	fi
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
@@ -1727,8 +1776,8 @@ check_cpu()
 
 check_cpu_vulnerabilities()
 {
-	_info     "* CPU vulnerability to the three speculative execution attack variants"
-	for v in 1 2 3; do
+	_info     "* CPU vulnerability to the speculative execution attack variants"
+	for v in 1 2 3 3a 4; do
 		_info_nol "  * Vulnerable to Variant $v: "
 		if is_cpu_vulnerable $v; then
 			pstatus yellow YES
@@ -2137,7 +2186,7 @@ check_variant2_linux()
 					1)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel space and firmware code"; else pstatus green YES "for kernel space"; fi;;
 					2)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel, user space, and firmware code" ; else pstatus green YES "for both kernel and user space"; fi;;
 					3)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel and firmware code"; else pstatus green YES; fi;;
-					*)	if [ ! "$cpuid_ibrs" = 'SPEC_CTRL' ] && [ ! "cpuid_ibrs" = 'IBRS_SUPPORT' ] && [ ! "cpuid_spec_ctrl" = -1 ]; 
+					*)	if [ "$cpuid_ibrs" != 'SPEC_CTRL' ] && [ "$cpuid_ibrs" != 'IBRS_SUPPORT' ] && [ "$cpuid_spec_ctrl" != -1 ]; 
 							then pstatus yellow NO; _debug "ibrs: known cpu not supporting SPEC-CTRL or IBRS"; 
 						else 
 							pstatus yellow UNKNOWN; fi;;
@@ -2817,6 +2866,32 @@ check_variant3_bsd()
 	fi
 }
 
+check_variant3a()
+{
+	_info "\033[1;34mCVE-2018-3640 [rogue system register read] aka 'Variant 3a'\033[0m"
+
+	cve='CVE-2018-3640'
+	if ! is_cpu_vulnerable 3a; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		pvulnstatus $cve UNK "new vulnerability, script will when more technical information is available in the next hours/days"
+	fi
+}
+
+check_variant4()
+{
+	_info "\033[1;34mCVE-2018-3639 [speculative store bypass] aka 'Variant 4'\033[0m"
+
+	cve='CVE-2018-3639'
+	if ! is_cpu_vulnerable 4; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		pvulnstatus $cve UNK "new vulnerability, script will when more technical information is available in the next hours/days"
+	fi
+}
+
 if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
 	check_cpu
 	check_cpu_vulnerabilities
@@ -2834,6 +2909,14 @@ if [ "$opt_variant2" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 fi
 if [ "$opt_variant3" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variant3
+	_info
+fi
+if [ "$opt_variant3a" = 1 ] || [ "$opt_allvariants" = 1 ]; then
+	check_variant3a
+	_info
+fi
+if [ "$opt_variant4" = 1 ] || [ "$opt_allvariants" = 1 ]; then
+	check_variant4
 	_info
 fi
 
