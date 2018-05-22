@@ -1453,6 +1453,21 @@ read_msr()
 	return 0
 }
 
+check_dd()
+{
+	# Old versions of dd do not support iflag=skip_bytes so are unable to read cpuid and MSR
+	# also some versions may fail silently.
+	if [ "$os" = Linux ]; then
+		printf ddskipsupport | dd bs=2 skip=2 iflag=skip_bytes count=2 2>/dev/null | grep skip >/dev/null 
+		dd_support=$?
+		if [ "$dd_support" != "0" ]; then
+			_debug "dd does not support iflag=skip_bytes"
+			_warn "Obsolete version of dd does not support required features"
+			_info
+		fi
+	fi
+}
+
 check_cpu()
 {
 	_info "\033[1;34mHardware check\033[0m"
@@ -1462,6 +1477,10 @@ check_cpu()
 	fi
 
 	_info     "* Hardware support (CPU microcode) for mitigation techniques"
+	if [ "$dd_support" != "0" ]; then
+			pstatus yellow UNKNOWN "* Unable to determine Hardware support (CPU microcode) mitigation techniques"
+			return
+	fi
 	_info     "  * Indirect Branch Restricted Speculation (IBRS)"
 	_info_nol "    * SPEC_CTRL MSR is available: "
 	number_of_cpus
@@ -1793,6 +1812,11 @@ check_cpu()
 check_cpu_vulnerabilities()
 {
 	_info     "* CPU vulnerability to the speculative execution attack variants"
+	if [ "$dd_support" != "0" ]; then
+			pstatus yellow UNKNOWN "* Unable to determine Hardware support (CPU microcode) mitigation techniques"
+			return
+	fi
+
 	for v in 1 2 3 3a 4; do
 		_info_nol "  * Vulnerable to Variant $v: "
 		if is_cpu_vulnerable $v; then
@@ -2909,6 +2933,7 @@ check_variant4()
 }
 
 if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+	check_dd
 	check_cpu
 	check_cpu_vulnerabilities
 	_info
