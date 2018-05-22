@@ -1813,7 +1813,7 @@ check_cpu_vulnerabilities()
 {
 	_info     "* CPU vulnerability to the speculative execution attack variants"
 	if [ "$dd_support" != "0" ]; then
-			pstatus yellow UNKNOWN "* Unable to determine Hardware support (CPU microcode) mitigation techniques"
+			pstatus yellow UNKNOWN "* Unable to determine CPU vulnerability to the speculative execution attack variants"
 			return
 	fi
 
