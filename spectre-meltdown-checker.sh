@@ -2886,12 +2886,19 @@ check_variant3a()
 {
 	_info "\033[1;34mCVE-2018-3640 [rogue system register read] aka 'Variant 3a'\033[0m"
 
+	status=UNK
+	sys_interface_available=0
+	msg=''
+
+	_info_nol "  * CPU microcode mitigates the vulnerability:"
+	pstatus yellow UNKNOWN "an up to date microcode is sufficient to mitigate this vulnerability, detection will be implemented soon"
+
 	cve='CVE-2018-3640'
 	if ! is_cpu_vulnerable 3a; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		pvulnstatus $cve UNK "new vulnerability, script will be updated when more technical information is available in the next hours/days"
+		pvulnstatus $cve VULN "a new microcode will mitigate this vulnerability"
 	fi
 }
 
