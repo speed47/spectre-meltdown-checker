@@ -365,14 +365,23 @@ is_cpu_vulnerable()
 					variant3a=vuln
 				else
 					_debug "checking cpu$i: this arm non vulnerable to variant3a"
-					[ -z "$variant3" ] && variant3a=immune
+					[ -z "$variant3a" ] && variant3a=immune
+				fi
+
+				# for variant4, only A57-72-73-75 are vulnerable
+				if [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0xd0[789a]$'; then
+					_debug "checking cpu$i: arm A57-A72-A73-A75 vulnerable to variant4"
+					variant4=vuln
+				else
+					_debug "checking cpu$i: this arm non vulnerable to variant4"
+					[ -z "$variant4" ] && variant4=immune
 				fi
 			fi
 			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 	fi
 	# from the information we have for now, it seems that CPUs that are vulnerable to variant1 are also vulnerable to variant4
-	variant4=$variant1
+	[ -z "$variant4" ] && variant4=$variant1
 	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 	# if at least one of the cpu is vulnerable, then the system is vulnerable
 	[ "$variant1"  = "immune" ] && variant1=1  || variant1=0
