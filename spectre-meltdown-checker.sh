@@ -2102,7 +2102,7 @@ check_variant2_linux()
 			fi
 			if [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
 				# when IBPB is enabled on 4.15+, we can see it in sysfs
-				if grep -q ', IBPB' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if grep -q 'IBPB' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
 					_debug "ibpb: found enabled in sysfs"
 					[ -z "$ibpb_supported" ] && ibpb_supported='IBPB found enabled in sysfs'
 					[ -z "$ibpb_enabled"   ] && ibpb_enabled=1
@@ -2114,7 +2114,7 @@ check_variant2_linux()
 					ibrs_fw_enabled=1
 				fi
 				# when IBRS is enabled on 4.15+, we can see it in sysfs
-				if grep -q 'Indirect Branch Restricted Speculation' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if grep -q -e 'IBRS' -e 'Indirect Branch Restricted Speculation' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
 					_debug "ibrs: found IBRS in sysfs"
 					[ -z "$ibrs_supported" ] && ibrs_supported='found IBRS in sysfs'
 					[ -z "$ibrs_enabled"   ] && ibrs_enabled=3
