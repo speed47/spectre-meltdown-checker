@@ -297,6 +297,13 @@ is_cpu_vulnerable()
 			variant3=immune
 			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown"
 		fi
+		if [ "$capabilities_ssb_no" = 1 ]; then
+			# capability bit for future Intel processor that will explicitly state
+			# that they're not vulnerable to Variant 4
+			# this var is set in check_cpu()
+			variant4=immune
+			_debug "is_cpu_vulnerable: SSB_NO is set so not vuln to variant4"
+		fi
 	elif is_amd; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
