@@ -2906,12 +2906,32 @@ check_variant4()
 {
 	_info "\033[1;34mCVE-2018-3639 [speculative store bypass] aka 'Variant 4'\033[0m"
 
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spec_store_bypass"; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
+		:
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
+
 	cve='CVE-2018-3639'
 	if ! is_cpu_vulnerable 4; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		pvulnstatus $cve VULN "your CPU microcode needs to be updated"
+		explain "A new microcode is needed for your CPU to provide mitigation tools that software running on your machine can use to protect itself against the vulnerability."
 	else
-		pvulnstatus $cve UNK "new vulnerability, script will be updated when more technical information is available in the next hours/days"
+		pvulnstatus $cve "$status" "$msg"
+		[ "$msg" = "Vulnerable" ] && explain "A new microcode is needed for your CPU to provide mitigation tools that software running on your machine can use to protect itself against the vulnerability."
 	fi
 }
 
