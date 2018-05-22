@@ -1673,7 +1673,7 @@ check_cpu()
 	_info_nol "    * CPU indicates SSBD capability: "
 	read_cpuid 0x7 $EDX 31 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
-		#cpuid_ng1=1
+		cpuid_ssbd=1
 		pstatus green YES "SSBD feature bit"
 	elif [ $ret -eq 1 ]; then
 		pstatus yellow NO
@@ -2890,7 +2890,7 @@ check_variant3a()
 	sys_interface_available=0
 	msg=''
 
-	_info_nol "  * CPU microcode mitigates the vulnerability:"
+	_info_nol "  * CPU microcode mitigates the vulnerability: "
 	pstatus yellow UNKNOWN "an up to date microcode is sufficient to mitigate this vulnerability, detection will be implemented soon"
 
 	cve='CVE-2018-3640'
@@ -2914,7 +2914,28 @@ check_variant4()
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		:
+		_info_nol "  * Kernel supports speculation store bypass: "
+		if [ "$opt_live" = 1 ]; then
+			if grep -q 'Speculation.Store.Bypass:' /proc/self/status 2>/dev/null; then
+				kernel_ssb='found in /proc/self/status'
+				_debug "found Speculation.Store.Bypass: in /proc/self/status"
+			fi
+		fi
+		if [ -z "$kernel_ssb" ] && [ -n "$kernel" ]; then
+			kernel_ssb=$("${opt_arch_prefix}strings" "$kernel" | grep spec_store_bypass | head -n1);
+			[ -n "$kernel_ssb" ] && _debug "found $kernel_ssb in kernel"
+		fi
+		if [ -z "$kernel_ssb" ] && [ -n "$opt_map" ]; then
+			kernel_ssb=$(grep spec_store_bypass "$opt_map" | head -n1)
+			[ -n "$kernel_ssb" ] && _debug "found $kernel_ssb in System.map"
+		fi
+
+		if [ -n "$kernel_ssb" ]; then
+			pstatus green YES "$kernel_ssb"
+		else
+			pstatus yellow NO
+		fi
+
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
@@ -2925,13 +2946,26 @@ check_variant4()
 	if ! is_cpu_vulnerable 4; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ -z "$msg" ]; then
+	elif [ -z "$msg" ] || [ "$msg" = "Vulnerable" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
-		pvulnstatus $cve VULN "your CPU microcode needs to be updated"
-		explain "A new microcode is needed for your CPU to provide mitigation tools that software running on your machine can use to protect itself against the vulnerability."
+		if [ "$cpuid_ssbd" = 1 ]; then
+			if [ -n "$kernel_ssb" ]; then
+				pvulnstatus $cve OK "your system provides the necessary tools for software mitigation"
+			else
+				pvulnstatus $cve VULN "your kernel needs to be updated"
+				explain "You have a recent-enough microcode but your kernel is too old to use the new features exported by your CPU's microcode"
+			fi
+		else
+			if [ -n "$kernel_ssb" ]; then
+				pvulnstatus $cve VULN "Your CPU doesn't support SSBD"
+				explain "Your kernel is recent enough to be able to export features for mitigation, but your CPU microcode doesn't provide the necessary tools"
+			else
+				pvulnstatus $cve VULN "Neither your CPU nor your kernel support SSBD"
+				explain "You need to update your CPU microcode and use a more recent kernel to provide the necessary mitigation tools to the software running on your machine"
+			fi
+		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
-		[ "$msg" = "Vulnerable" ] && explain "A new microcode is needed for your CPU to provide mitigation tools that software running on your machine can use to protect itself against the vulnerability."
 	fi
 }
 
