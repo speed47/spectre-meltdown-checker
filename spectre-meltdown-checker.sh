@@ -1465,6 +1465,8 @@ check_dd()
 			_warn "Obsolete version of dd does not support required features"
 			_info
 		fi
+	else
+		dd_support="0"
 	fi
 }
 
