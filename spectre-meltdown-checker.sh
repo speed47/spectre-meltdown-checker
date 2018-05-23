@@ -2965,15 +2965,15 @@ check_variant4()
 				pvulnstatus $cve OK "your system provides the necessary tools for software mitigation"
 			else
 				pvulnstatus $cve VULN "your kernel needs to be updated"
-				explain "You have a recent-enough microcode but your kernel is too old to use the new features exported by your CPU's microcode"
+				explain "You have a recent-enough CPU microcode but your kernel is too old to use the new features exported by your CPU's microcode. If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel from recent-enough sources."
 			fi
 		else
 			if [ -n "$kernel_ssb" ]; then
 				pvulnstatus $cve VULN "Your CPU doesn't support SSBD"
-				explain "Your kernel is recent enough to be able to export features for mitigation, but your CPU microcode doesn't provide the necessary tools"
+				explain "Your kernel is recent enough to use the CPU microcode features for mitigation, but your CPU microcode doesn't actually provide the necessary features for the kernel to use. The microcode of your CPU hence needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
 			else
 				pvulnstatus $cve VULN "Neither your CPU nor your kernel support SSBD"
-				explain "You need to update your CPU microcode and use a more recent kernel to provide the necessary mitigation tools to the software running on your machine"
+				explain "Both your CPU microcode and your kernel are lacking support for mitigation. If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel from recent-enough sources. The microcode of your CPU also needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
 			fi
 		fi
 	else
