@@ -309,7 +309,10 @@ is_cpu_vulnerable()
 		# https://www.amd.com/en/corporate/speculative-execution
 		variant1=vuln
 		variant2=vuln
-		[ -z "$variant3" ] && variant3=immune
+		[ -z "$variant3"  ] && variant3=immune
+		# https://www.amd.com/en/corporate/security-updates
+		# "We have not identified any AMD x86 products susceptible to the Variant 3a vulnerability in our analysis to-date."
+		[ -z "$variant3a" ] && variant3a=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
