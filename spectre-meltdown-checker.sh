@@ -1672,16 +1672,41 @@ check_cpu()
 	fi
 
 	# variant 4
-	_info     "  * Speculative Store Bypass Disable (SSBD)"
-	_info_nol "    * CPU indicates SSBD capability: "
-	read_cpuid 0x7 $EDX 31 1 1; ret=$?
-	if [ $ret -eq 0 ]; then
-		cpuid_ssbd=1
-		pstatus green YES "SSBD feature bit"
-	elif [ $ret -eq 1 ]; then
-		pstatus yellow NO
-	else
+	if is_intel; then
+		_info     "  * Speculative Store Bypass Disable (SSBD)"
+		_info_nol "    * CPU indicates SSBD capability: "
+		read_cpuid 0x7 $EDX 31 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			cpuid_ssbd='Intel SSBD'
+		fi
+	elif is_amd; then
+		_info     "  * Speculative Store Bypass Disable (SSBD)"
+		_info_nol "    * CPU indicates SSBD capability: "
+		read_cpuid 0x80000008 $EBX 24 1 1; ret24=$?
+		read_cpuid 0x80000008 $EBX 25 1 1; ret25=$?
+		if [ $ret24 -eq 0 ]; then
+			cpuid_ssbd='AMD SSBD in SPEC_CTRL'
+			#cpuid_ssbd_spec_ctrl=1
+		elif [ $ret25 -eq 0 ]; then
+			cpuid_ssbd='AMD SSBD in VIRT_SPEC_CTRL'
+			#cpuid_ssbd_virt_spec_ctrl=1
+		fi
+	fi
+
+	if [ -n "$cpuid_ssbd" ]; then
+		pstatus green YES "$cpuid_ssbd"
+	elif [ "$ret24" = 2 ] && [ "$ret25" = 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	else
+		pstatus yellow NO
+	fi
+
+	if is_amd; then
+		# similar to SSB_NO for intel
+		read_cpuid 0x80000008 $EBX 26 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			amd_ssb_no=1
+		fi
 	fi
 
 	if is_intel; then
@@ -1768,15 +1793,15 @@ check_cpu()
 		else
 			pstatus yellow NO
 		fi
+	fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
-		if [ "$capabilities_ssb_no" = -1 ]; then
-			pstatus yellow UNKNOWN
-		elif [ "$capabilities_ssb_no" = 1 ]; then
-			pstatus green YES
-		else
-			pstatus yellow NO
-		fi
+	_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
+	if [ "$capabilities_ssb_no" = -1 ]; then
+		pstatus yellow UNKNOWN
+	elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ]; then
+		pstatus green YES
+	else
+		pstatus yellow NO
 	fi
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
@@ -2894,7 +2919,7 @@ check_variant3a()
 	msg=''
 
 	_info_nol "  * CPU microcode mitigates the vulnerability: "
-	if [ "$cpuid_ssbd" = 1 ]; then
+	if [ -n "$cpuid_ssbd" ]; then
 		# microcodes that ship with SSBD are known to also fix variant3a
 		# there is no specific cpuid bit as far as we know
 		pstatus green YES
@@ -2906,7 +2931,7 @@ check_variant3a()
 	if ! is_cpu_vulnerable 3a; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ "$cpuid_ssbd" = 1 ]; then
+	elif [ -n "$cpuid_ssbd" ]; then
 		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
 	else
 		pvulnstatus $cve VULN "an up-to-date CPU microcode is needed to mitigate this vulnerability"
@@ -2960,7 +2985,7 @@ check_variant4()
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ] || [ "$msg" = "Vulnerable" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
-		if [ "$cpuid_ssbd" = 1 ]; then
+		if [ -n "$cpuid_ssbd" ]; then
 			if [ -n "$kernel_ssb" ]; then
 				pvulnstatus $cve OK "your system provides the necessary tools for software mitigation"
 			else
