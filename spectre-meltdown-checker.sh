@@ -953,7 +953,7 @@ parse_cpu_details()
 	fi
 
 	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode_decimal=$(( cpu_ucode ))
-	ucode_found="model $cpu_model stepping $cpu_stepping ucode $cpu_ucode cpuid "$(printf "0x%x" "$cpuid")
+	ucode_found=$(printf "model 0x%x family 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_model" "$cpu_family" "$cpu_stepping" "$cpu_ucode" "$cpuid")
 
 	# also define those that we will need in other funcs
 	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
@@ -1690,6 +1690,8 @@ check_cpu()
 		elif [ $ret25 -eq 0 ]; then
 			cpuid_ssbd='AMD SSBD in VIRT_SPEC_CTRL'
 			#cpuid_ssbd_virt_spec_ctrl=1
+		elif [ "$cpu_family" -ge 21 ] && [ "$cpu_family" -le 23 ]; then
+			cpuid_ssbd='AMD non-architectural MSR'
 		fi
 	fi
 
