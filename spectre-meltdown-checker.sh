@@ -2928,7 +2928,7 @@ check_variant4()
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "  * Kernel supports speculation store bypass: "
 		if [ "$opt_live" = 1 ]; then
-			if grep -q 'Speculation.Store.Bypass:' /proc/self/status 2>/dev/null; then
+			if grep -Eq 'Speculation.?Store.?Bypass:' /proc/self/status 2>/dev/null; then
 				kernel_ssb='found in /proc/self/status'
 				_debug "found Speculation.Store.Bypass: in /proc/self/status"
 			fi
