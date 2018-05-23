@@ -2894,14 +2894,23 @@ check_variant3a()
 	msg=''
 
 	_info_nol "  * CPU microcode mitigates the vulnerability: "
-	pstatus yellow UNKNOWN "an up to date microcode is sufficient to mitigate this vulnerability, detection will be implemented soon"
+	if [ "$cpuid_ssbd" = 1 ]; then
+		# microcodes that ship with SSBD are known to also fix variant3a
+		# there is no specific cpuid bit as far as we know
+		pstatus green YES
+	else
+		pstatus yellow NO
+	fi
 
 	cve='CVE-2018-3640'
 	if ! is_cpu_vulnerable 3a; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ "$cpuid_ssbd" = 1 ]; then
+		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
 	else
-		pvulnstatus $cve VULN "a new microcode will mitigate this vulnerability"
+		pvulnstatus $cve VULN "an up-to-date CPU microcode is needed to mitigate this vulnerability"
+		explain "The microcode of your CPU needs to be upgraded to mitigate this vulnerability. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). The microcode update is enough, there is no additional OS, kernel or software change needed."
 	fi
 }
 
