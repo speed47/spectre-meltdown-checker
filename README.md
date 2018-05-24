@@ -86,13 +86,13 @@ sudo ./spectre-meltdown-checker.sh
 **CVE-2018-3640** rogue system register read (Variant 3a)
 
    - Impact: TBC
-   - Mitigation: TBC
+   - Mitigation: microcode update only
    - Performance impact of the mitigation: negligible
 
 **CVE-2018-3639** speculative store bypass (Variant 4)
 
    - Impact: software using JIT (no known exploitation against kernel)
-   - Mitigation: TBC
+   - Mitigation: microcode update + kernel update making possible for affected software to protect itself
    - Performance impact of the mitigation: low to medium
 
 ## Understanding what this script does and doesn't
