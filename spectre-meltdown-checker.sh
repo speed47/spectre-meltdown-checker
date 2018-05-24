@@ -2920,7 +2920,7 @@ check_variant3a()
 	sys_interface_available=0
 	msg=''
 
-	_info_nol "  * CPU microcode mitigates the vulnerability: "
+	_info_nol "* CPU microcode mitigates the vulnerability: "
 	if [ -n "$cpuid_ssbd" ]; then
 		# microcodes that ship with SSBD are known to also fix variant3a
 		# there is no specific cpuid bit as far as we know
@@ -2953,7 +2953,7 @@ check_variant4()
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "  * Kernel supports speculation store bypass: "
+		_info_nol "* Kernel supports speculation store bypass: "
 		if [ "$opt_live" = 1 ]; then
 			if grep -Eq 'Speculation.?Store.?Bypass:' /proc/self/status 2>/dev/null; then
 				kernel_ssb='found in /proc/self/status'
