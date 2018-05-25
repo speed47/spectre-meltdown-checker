@@ -124,6 +124,8 @@ opt_verbose=1
 opt_variant1=0
 opt_variant2=0
 opt_variant3=0
+opt_variant3a=0
+opt_variant4=0
 opt_allvariants=1
 opt_no_sysfs=0
 opt_sysfs_only=0
@@ -532,7 +534,7 @@ while [ -n "$1" ]; do
 		shift
 	elif [ "$1" = "--variant" ]; then
 		if [ -z "$2" ]; then
-			echo "$0: error: option --variant expects a parameter (1, 2 or 3)" >&2
+			echo "$0: error: option --variant expects a parameter (1, 2, 3, 3a or 4)" >&2
 			exit 255
 		fi
 		case "$2" in
@@ -2920,7 +2922,7 @@ check_variant3a()
 	sys_interface_available=0
 	msg=''
 
-	_info_nol "  * CPU microcode mitigates the vulnerability: "
+	_info_nol "* CPU microcode mitigates the vulnerability: "
 	if [ -n "$cpuid_ssbd" ]; then
 		# microcodes that ship with SSBD are known to also fix variant3a
 		# there is no specific cpuid bit as far as we know
@@ -2953,7 +2955,7 @@ check_variant4()
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "  * Kernel supports speculation store bypass: "
+		_info_nol "* Kernel supports speculation store bypass: "
 		if [ "$opt_live" = 1 ]; then
 			if grep -Eq 'Speculation.?Store.?Bypass:' /proc/self/status 2>/dev/null; then
 				kernel_ssb='found in /proc/self/status'

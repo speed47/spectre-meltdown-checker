@@ -2,15 +2,11 @@ Spectre & Meltdown Checker
 ==========================
 
 A shell script to tell if your system is vulnerable against the several "speculative execution" CVEs that were made public in 2018.
-
-This includes:
 - CVE-2017-5753 aka Spectre Variant 1
 - CVE-2017-5715 aka Spectre Variant 2
 - CVE-2017-5754 aka Meltdown or Variant 3
 - CVE-2018-3640 aka Variant 3a
 - CVE-2018-3639 aka Variant 4
-
-**Note: as CVE-2018-3639 and CVE-2018-3640 are extremely recent (published on May 21th 2018), expect frequent changes of the script in the next days to adjust detection.**
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
