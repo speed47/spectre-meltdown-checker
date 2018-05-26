@@ -490,10 +490,10 @@ is_cpu_ssb_free()
 		fi
 	fi
 	if is_amd; then
-		if [ "$cpu_family" = "0x12"	 ] || \
-			[ "$cpu_family" = "0x11" ] || \
-			[ "$cpu_family" = "0x10" ] || \
-			[ "$cpu_family" = "0xf"	 ]; then
+		if [ "$cpu_family" = "18"      ] || \ # family 0x12
+			[ "$cpu_family" = "17" ] || \ # family 0x11
+			[ "$cpu_family" = "16" ] || \ # family 0x10
+			[ "$cpu_family" = "15" ]; then # family 0xf
 			return 0
 		fi
 	fi			
