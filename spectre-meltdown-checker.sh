@@ -306,6 +306,10 @@ is_cpu_vulnerable()
 			variant4=immune
 			_debug "is_cpu_vulnerable: SSB_NO is set so not vuln to variant4"
 		fi
+		if is_cpu_ssb_free; then
+			[ -z "$variant4" ] && variant4=immune
+			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
+		fi
 	elif is_amd; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
@@ -315,6 +319,10 @@ is_cpu_vulnerable()
 		# https://www.amd.com/en/corporate/security-updates
 		# "We have not identified any AMD x86 products susceptible to the Variant 3a vulnerability in our analysis to-date."
 		[ -z "$variant3a" ] && variant3a=immune
+		if is_cpu_ssb_free; then
+			[ -z "$variant4" ] && variant4=immune
+			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
+		fi
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -428,6 +436,51 @@ is_cpu_specex_free()
 			return 0
 		fi
 	fi
+	[ "$cpu_family" = 4 ] && return 0
+	return 1
+}
+
+is_cpu_ssb_free()
+{
+	# return true (0) if the CPU isn't affected by speculative store bypass, false (1) if it does.
+	# if it's not in the list we know, return false (1).
+	# source1: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c#n945
+	# source2: https://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git/tree/arch/x86/kernel/cpu/common.c
+	# Only list CPUs that speculate but are immune, to avoid duplication of cpus listed in is_cpu_specex_free()
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT1	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_AIRMONT		},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT2	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MERRIFIELD	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_CORE_YONAH		},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNL		},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNM		},
+	#{ X86_VENDOR_AMD,	0x12,					},
+	#{ X86_VENDOR_AMD,	0x11,					},
+	#{ X86_VENDOR_AMD,	0x10,					},
+	#{ X86_VENDOR_AMD,	0xf,					},
+	parse_cpu_details
+	if is_intel; then
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT"          ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT1" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT2" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_MERRIFIELD"  ]; then
+				return 0
+			elif [ "$cpu_model" = "$INTEL_FAM6_CORE_YONAH"          ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL"     ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM"     ]; then
+				return 0
+			fi
+		fi
+	fi
+	if is_amd; then
+		if [ "$cpu_family" = "18" ] || \
+			[ "$cpu_family" = "17" ] || \
+			[ "$cpu_family" = "16" ] || \
+			[ "$cpu_family" = "15" ]; then 
+			return 0
+		fi
+	fi			
 	[ "$cpu_family" = 4 ] && return 0
 	return 1
 }
