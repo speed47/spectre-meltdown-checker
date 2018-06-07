@@ -44,6 +44,13 @@ chmod +x spectre-meltdown-checker.sh
 sudo ./spectre-meltdown-checker.sh
 ```
 
+### Run the script in a docker container
+
+```shell
+docker build -t spectre-meltdown-checker .
+docker run --rm --privileged -v /boot:/boot:ro -v /lib/modules:/lib/modules:ro -v /dev/cpu:/dev/cpu:ro spectre-meltdown-checker
+```
+
 ## Example of script output
 
 - Intel Haswell CPU running under Ubuntu 16.04 LTS
