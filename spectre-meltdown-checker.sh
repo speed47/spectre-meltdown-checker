@@ -3111,7 +3111,7 @@ fi
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
 	echo "# TYPE specex_vuln_status untyped"
 	echo "# HELP specex_vuln_status Exposure of system to speculative execution vulnerabilities"
-	echo "$prometheus_output"
+	echo -e "$prometheus_output"
 fi
 
 # exit with the proper exit code
