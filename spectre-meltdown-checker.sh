@@ -341,12 +341,12 @@ is_cpu_vulnerable()
 			if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
 				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 				# I can't find their CPU part number, but it's probably not that useful anyway
-				# model R7 R8 A9    A15   A17   A57   A72    A73    A75
-				# part   ?  ? 0xc09 0xc0f 0xc0e 0xd07 0xd08  0xd09  0xd0a
-				# arch  7? 7? 7     7     7     8     8      8      8
+				# model R7 R8 A8    A9    A15   A17   A57   A72    A73    A75
+				# part   ?  ? 0xc08 0xc09 0xc0f 0xc0e 0xd07 0xd08  0xd09  0xd0a
+				# arch  7? 7? 7     7     7     7     8     8      8      8
 				#
 				# variant 1 & variant 2
-				if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c09|c0f|c0e)$'; then
+				if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c08|c09|c0f|c0e)$'; then
 					# armv7 vulnerable chips
 					_debug "checking cpu$i: this armv7 vulnerable to spectre 1 & 2"
 					variant1=vuln
