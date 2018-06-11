@@ -390,7 +390,7 @@ is_cpu_vulnerable()
 					variant4=vuln
 				else
 					_debug "checking cpu$i: unknown arm processor assumed vulnerable to variant4"
-					[ -z "$variant4" ] && variant4=vulnerable
+					[ -z "$variant4" ] && variant4=vuln
 				fi
 			fi
 			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
