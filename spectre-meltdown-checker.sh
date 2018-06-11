@@ -382,8 +382,8 @@ is_cpu_vulnerable()
 				fi
 
 				# for variant4, only A57-72-73-75 are vulnerable
-				if [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0xd0[789a]$'; then
-					_debug "checking cpu$i: arm A57-A72-A73-A75 vulnerable to variant4"
+                                if [ "$cpuarch" = 8 ]; then
+					_debug "checking cpu$i: arm A57-A72-A73-A75-A76 vulnerable to variant4"
 					variant4=vuln
 				else
 					_debug "checking cpu$i: this arm non vulnerable to variant4"
