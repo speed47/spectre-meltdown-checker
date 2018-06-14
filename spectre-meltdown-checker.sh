@@ -397,6 +397,12 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 	fi
+	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
+	[ "$variant1"  = "immune" ] && variant1=1  || variant1=0
+	[ "$variant2"  = "immune" ] && variant2=1  || variant2=0
+	[ "$variant3"  = "immune" ] && variant3=1  || variant3=0
+	[ "$variant3a" = "immune" ] && variant3a=1 || variant3a=0
+	[ "$variant4"  = "immune" ] && variant4=1  || variant4=0	
 	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 	is_cpu_vulnerable_cached=1
 	_is_cpu_vulnerable_cached "$1"
