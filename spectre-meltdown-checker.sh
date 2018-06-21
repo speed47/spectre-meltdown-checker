@@ -341,57 +341,71 @@ is_cpu_vulnerable()
 			if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
 				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 				# I can't find their CPU part number, but it's probably not that useful anyway
-				# model R7 R8 A9    A15   A17   A57   A72    A73    A75
-				# part   ?  ? 0xc09 0xc0f 0xc0e 0xd07 0xd08  0xd09  0xd0a
-				# arch  7? 7? 7     7     7     8     8      8      8
+				# model R7 R8 A8  A9  A12 A15 A17 A57 A72 A73 A75 A76
+				# part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b?
+				# arch  7? 7? 7   7   7   7   7   8   8   8   8   8
 				#
 				# Whitelist identified non-vulnerable processors, use vulnerability information from 
 				# https://developer.arm.com/support/arm-security-updates/speculative-processor-vulnerability
 				#
 				# Maintain cumulative check of vulnerabilities -
 				# if at least one of the cpu is vulnerable, then the system is vulnerable
-				if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c0[89ce])$'; then
+				if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc08 -e 0xc09 -e 0xc0d -e 0xc0e; then
 					variant1=vuln
 					variant2=vuln
 					[ -z "$variant3" ] && variant3=immune
 					[ -z "$variant3a" ] && variant3a=immune
 					[ -z "$variant4" ] && variant4=immune
-					_debug "checking cpu$i: this armv7 non vulnerable to variants 3, 3a & 4"
-				elif [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -Eq '^0x(c0f)$'; then
+					_debug "checking cpu$i: armv7 A8/A9/A12/A17 non vulnerable to variants 3, 3a & 4"
+				elif [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc0f; then
 					variant1=vuln
 					variant2=vuln
 					[ -z "$variant3" ] && variant3=immune
-					variant3=vuln
+					variant3a=vuln
 					[ -z "$variant4" ] && variant4=immune
-					_debug "checking cpu$i: this armv7 non vulnerable to variants 3 & 4"
-				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(d07|d08)$'; then
+					_debug "checking cpu$i: armv7 A12/A17 non vulnerable to variants 3 & 4"
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd07 -e 0xd08; then
 					variant1=vuln
 					variant2=vuln
-					variant3=vuln
-					[ -z "$variant3a" ] && variant3a=immune
-					[ -z "$variant4" ] && variant4=immune
-					_debug "checking cpu$i: this armv7 non vulnerable to variants 3a & 4"
-				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(d09|d0b)$'; then
+					[ -z "$variant3" ] && variant3=immune
+					variant3a=vuln
+					variant4=vuln
+					_debug "checking cpu$i: armv8 A57/A72 non vulnerable to variants 3"
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd09; then
 					variant1=vuln
 					variant2=vuln
 					[ -z "$variant3" ] && variant3=immune
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
-					_debug "checking cpu$i: this armv8 non vulnerable to variants 3 & 3a"
-				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -Eq '^0x(c0a)$'; then
+					_debug "checking cpu$i: armv8 A73 non vulnerable to variants 3 & 3a"
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0a; then
 					variant1=vuln
 					variant2=vuln
 					variant3=vuln
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
-					_debug "checking cpu$i: this armv8 non vulnerable to variant 3a"
+					_debug "checking cpu$i: armv8 A75 non vulnerable to variant 3a"
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0b; then
+					variant1=vuln
+					[ -z "$variant2" ] && variant2=immune
+					[ -z "$variant3" ] && variant3=immune
+					[ -z "$variant3a" ] && variant3a=immune
+					variant4=vuln
+					_debug "checking cpu$i: armv8 A76 non vulnerable to variant 2, 3 & 3a"
+				elif [ "$cpuarch" -le 7 ]; then
+					[ -z "$variant1" ] && variant1=immune
+					[ -z "$variant2" ] && variant2=immune
+					[ -z "$variant3" ] && variant3=immune
+					[ -z "$variant3a" ] && variant3a=immune
+					[ -z "$variant4" ] && variant4=immune
+					_debug "checking cpu$i: arm arch$cpuarch, all immune"
 				else
 					variant1=vuln
 					variant2=vuln
 					variant3=vuln
 					variant3a=vuln
 					variant4=vuln
-					_debug "checking cpu$i: this arm unknown"
+					_debug "checking cpu$i: arm unknown arch$cpuarch part$cpupart, considering vuln"
 				fi
 			fi
 			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
