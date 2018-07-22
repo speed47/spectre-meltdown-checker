@@ -912,7 +912,10 @@ read_cpuid()
 		# Linux
 		# we need _leaf to be converted to decimal for dd
 		_leaf=$(( _leaf ))
-		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip="$_leaf" iflag=skip_bytes count=1 2>/dev/null | od -A n -t u4)
+		# to avoid using iflag=skip_bytes, which doesn't exist on old versions of dd, seek to the closer multiple-of-16
+		_ddskip=$(( _leaf / 16 ))
+		_odskip=$(( _leaf - _ddskip * 16 ))
+		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip=$_ddskip count=$((_odskip + 1)) 2>/dev/null | od -j $((_odskip * 16)) -A n -t u4)
 	elif [ -e /dev/cpuctl0 ]; then
 		# BSD
 		_cpuid=$(cpucontrol -i "$_leaf" /dev/cpuctl0 2>/dev/null | awk '{print $4,$5,$6,$7}')
