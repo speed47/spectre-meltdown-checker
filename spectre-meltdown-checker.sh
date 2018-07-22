@@ -323,6 +323,9 @@ is_cpu_vulnerable()
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
+	elif [ "$cpu_vendor" = CAVIUM ]; then
+		variant3=immune
+		variant3a=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -989,6 +992,9 @@ parse_cpu_details()
 			cpu_friendly_name="ARM"
 			[ -n "$cpu_arch" ] && cpu_friendly_name="$cpu_friendly_name v$cpu_arch"
 			[ -n "$cpu_part" ] && cpu_friendly_name="$cpu_friendly_name model $cpu_part"
+
+		elif grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x43' "$procfs/cpuinfo"; then
+			cpu_vendor='CAVIUM'
 		fi
 
 		cpu_family=$(  grep '^cpu family' "$procfs/cpuinfo" | awk '{print $4}' | grep -E '^[0-9]+$' | head -1)
