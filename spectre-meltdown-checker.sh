@@ -1853,7 +1853,7 @@ check_cpu()
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
-					else:
+					else
 						pstatus green YES "But not in all CPUs"
 					fi
 				else
