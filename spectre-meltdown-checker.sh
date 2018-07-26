@@ -1809,11 +1809,13 @@ check_cpu()
 		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
 		capabilities_rdcl_no=-1
 		capabilities_ibrs_all=-1
+		capabilities_ssb_no=-1
 		if [ "$cpuid_arch_capabilities" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$cpuid_arch_capabilities" != 1 ]; then
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
+			capabilities_ssb_no=0
 			pstatus yellow NO
 		elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 			spec_ctrl_msr=-1
