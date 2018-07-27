@@ -1321,6 +1321,8 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/boot/vmlinuz"             ] && opt_kernel="/boot/vmlinuz"
 		# Arch:
 		[ -e "/boot/vmlinuz-linux"       ] && opt_kernel="/boot/vmlinuz-linux"
+		# Arch aarch64:
+		[ -e "/boot/Image"               ] && opt_kernel="/boot/Image"
 		# Linux-Libre:
 		[ -e "/boot/vmlinuz-linux-libre" ] && opt_kernel="/boot/vmlinuz-linux-libre"
 		# pine64
