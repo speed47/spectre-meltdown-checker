@@ -1977,7 +1977,7 @@ check_variant1_linux()
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
 		# no /sys interface (or offline mode), fallback to our own ways
-		_info_nol "* Kernel has array_index_mask_nospec (x86): "
+		_info_nol "* Kernel has array_index_mask_nospec: "
 		# vanilla: look for the Linus' mask aka array_index_mask_nospec()
 		# that is inlined at least in raw_copy_from_user (__get_user_X symbols)
 		#mov PER_CPU_VAR(current_task), %_ASM_DX
@@ -1989,6 +1989,22 @@ check_variant1_linux()
 		#ASM_STAC
 		# x86 64bits: jae(0x0f 0x83 0x?? 0x?? 0x?? 0x??) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
 		# x86 32bits: cmp(0x3b 0x82 0x?? 0x?? 0x00 0x00) jae(0x73 0x??) sbb(0x19 0xd2) and(0x21 0xd0)
+		#
+		# arm32
+		##ifdef CONFIG_THUMB2_KERNEL
+		##define CSDB	".inst.w 0xf3af8014"
+		##else
+		##define CSDB	".inst	0xe320f014"     e320f014
+		##endif
+		#asm volatile(
+		#	"cmp	%1, %2\n"      e1500003
+		#"	sbc	%0, %1, %1\n"  e0c03000
+		#CSDB
+		#: "=r" (mask)
+		#: "r" (idx), "Ir" (sz)
+		#: "cc");
+		#
+		# http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
 		if [ -n "$kernel_err" ]; then
 			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 		elif ! which perl >/dev/null 2>&1; then
@@ -1996,15 +2012,21 @@ check_variant1_linux()
 		else
 			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 			if [ $ret -gt 0 ]; then
-				pstatus green YES "$ret occurrence(s) found of 64 bits array_index_mask_nospec()"
-				v1_mask_nospec="64 bits array_index_mask_nospec"
+				pstatus green YES "$ret occurrence(s) found of x86 64 bits array_index_mask_nospec()"
+				v1_mask_nospec="x86 64 bits array_index_mask_nospec"
 			else
 				perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
 				if [ $ret -gt 0 ]; then
-					pstatus green YES "$ret occurrence(s) found of 32 bits array_index_mask_nospec()"
-					v1_mask_nospec="32 bits array_index_mask_nospec"
+					pstatus green YES "$ret occurrence(s) found of x86 32 bits array_index_mask_nospec()"
+					v1_mask_nospec="x86 32 bits array_index_mask_nospec"
 				else
-					pstatus yellow NO
+					ret=$("${opt_arch_prefix}objdump" -d "$kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
+					if [ "$ret" -gt 0 ]; then
+						pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
+						v1_mask_nospec="arm 32 bits array_index_mask_nospec"
+					else
+						pstatus yellow NO
+					fi
 				fi
 			fi
 		fi
@@ -2023,7 +2045,7 @@ check_variant1_linux()
 			pstatus yellow NO
 		fi
 
-		_info_nol "* Kernel has mask_nospec64 (arm): "
+		_info_nol "* Kernel has mask_nospec64 (arm64): "
 		#.macro	mask_nospec64, idx, limit, tmp
 		#sub	\tmp, \idx, \limit
 		#bic	\tmp, \tmp, \idx
@@ -2050,12 +2072,11 @@ check_variant1_linux()
 			"${opt_arch_prefix}objdump" -d "$kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'; ret=$?
 			if [ "$ret" -eq 9 ]; then
 				pstatus green YES "mask_nospec64 macro is present and used"
-				v1_mask_nospec="arm mask_nospec64"
+				v1_mask_nospec="arm64 mask_nospec64"
 			else
 				pstatus yellow NO
 			fi
 		fi
-
 
 		if [ "$opt_verbose" -ge 2 ] || ( [ -z "$v1_mask_nospec" ] && [ "$redhat_canonical_spectre" != 1 ] && [ "$redhat_canonical_spectre" != 2 ] ); then
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
