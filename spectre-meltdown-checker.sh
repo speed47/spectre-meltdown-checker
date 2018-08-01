@@ -366,7 +366,7 @@ is_cpu_vulnerable()
 					[ -z "$variant3" ] && variant3=immune
 					variant3a=vuln
 					[ -z "$variant4" ] && variant4=immune
-					_debug "checking cpu$i: armv7 A12/A17 non vulnerable to variants 3 & 4"
+					_debug "checking cpu$i: armv7 A15 non vulnerable to variants 3 & 4"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd07 -e 0xd08; then
 					variant1=vuln
 					variant2=vuln
@@ -401,7 +401,7 @@ is_cpu_vulnerable()
 					[ -z "$variant3" ] && variant3=immune
 					[ -z "$variant3a" ] && variant3a=immune
 					[ -z "$variant4" ] && variant4=immune
-					_debug "checking cpu$i: arm arch$cpuarch, all immune (v7 or v8 and model < 0x0d7)"
+					_debug "checking cpu$i: arm arch$cpuarch, all immune (v7 or v8 and model < 0xd07)"
 				else
 					variant1=vuln
 					variant2=vuln
