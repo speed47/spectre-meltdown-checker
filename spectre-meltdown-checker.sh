@@ -50,7 +50,7 @@ show_usage()
 	Options:
 		--no-color		don't use color codes
 		--verbose, -v		increase verbosity level, possibly several times
-		--no-explain		don't produce a human-readable explanation of actions to take to mitigate a vulnerability
+		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
 		--paranoid		require IBPB to deem Variant 2 as mitigated
 
 		--no-sysfs		don't use the /sys interface even if present [Linux]
@@ -133,7 +133,7 @@ opt_coreos=0
 opt_arch_prefix=''
 opt_hw_only=0
 opt_no_hw=0
-opt_no_explain=0
+opt_explain=0
 opt_paranoid=0
 
 global_critical=0
@@ -235,7 +235,7 @@ _debug()
 
 explain()
 {
-	if [ "$opt_no_explain" != 1 ] ; then
+	if [ "$opt_explain" = 1 ] ; then
 		_info ''
 		_info "> \033[41m\033[30mHow to fix:\033[0m $*"
 	fi
@@ -584,7 +584,11 @@ while [ -n "$1" ]; do
 		opt_no_hw=1
 		shift
 	elif [ "$1" = "--no-explain" ]; then
-		opt_no_explain=1
+		# deprecated, kept for compatibility
+		opt_explain=0
+		shift
+	elif [ "$1" = "--explain" ]; then
+		opt_explain=1
 		shift
 	elif [ "$1" = "--batch" ]; then
 		opt_batch=1
@@ -3121,6 +3125,10 @@ fi
 
 _vars=$(set | grep -Ev '^[A-Z_[:space:]]' | sort | tr "\n" '|')
 _debug "variables at end of script: $_vars"
+
+if [ "$opt_explain" = 0 ]; then
+	_info "Need more detailed information about mitigation options? Use --explain"
+fi
 
 _info "A false sense of security is worse than no security at all, see --disclaimer"
 
