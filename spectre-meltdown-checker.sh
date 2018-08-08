@@ -1499,18 +1499,39 @@ number_of_cpus()
 # $2 - cpu index
 write_msr()
 {
+	# _msr must be in hex, in the form 0x1234:
+	_msr="$1"
+	# cpu index, starting from 0:
+	_cpu="$2"
 	if [ "$os" != Linux ]; then
-		cpucontrol -m "$1=0" "/dev/cpuctl$2" >/dev/null 2>&1; ret=$?
+		cpucontrol -m "$_msr=0" "/dev/cpuctl$_cpu" >/dev/null 2>&1; ret=$?
 	else
+		# for Linux
 		# convert to decimal
-		_msrindex=$(( $1 ))
-		if [ ! -w /dev/cpu/"$2"/msr ]; then
+		_msr=$(( _msr ))
+		if [ ! -w /dev/cpu/"$_cpu"/msr ]; then
 			ret=200 # permission error
+		# if wrmsr is available, use it
+		elif which wrmsr >/dev/null 2>&1 && [ "$SMC_NO_WRMSR" != 1 ]; then
+			_debug "write_msr: using wrmsr"
+			wrmsr $_msr 0 2>/dev/null; ret=$?
+		# or if we have perl, use it, any 5.x version will work
+		elif which perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
+			_debug "write_msr: using perl"
+			ret=1
+			perl -e "open(M,'>','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
+		# fallback to dd if it supports seek_bytes
+		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr" oflag=seek_bytes 2>/dev/null; then
+			_debug "write_msr: using dd"
+			dd if=/dev/zero of=/dev/cpu/"$_cpu"/msr bs=8 count=1 seek="$_msr" oflag=seek_bytes 2>/dev/null; ret=$?
 		else
-			dd if=/dev/zero of=/dev/cpu/"$2"/msr bs=8 count=1 seek="$_msrindex" oflag=seek_bytes 2>/dev/null; ret=$?
+			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
+			return 201 # missing tool error
 		fi
 	fi
-	_debug "write_msr: for cpu $2 on msr $1 ($_msrindex), ret=$ret"
+	# normalize ret
+	[ "$ret" != 0 ] && ret=1
+	_debug "write_msr: for cpu $_cpu on msr $_msr, ret=$ret"
 	return $ret
 }
 
@@ -1531,12 +1552,27 @@ read_msr()
 		_msr_l="$(( _msr_l >> 24 & 0xFF )) $(( _msr_l >> 16 & 0xFF )) $(( _msr_l >> 8 & 0xFF )) $(( _msr_l & 0xFF ))"
 		read_msr_value="$_msr_h $_msr_l"
 	else
+		# for Linux
 		# convert to decimal
 		_msr=$(( _msr ))
 		if [ ! -r /dev/cpu/"$_cpu"/msr ]; then
 			return 200 # permission error
+		# if rdmsr is available, use it
+		elif which rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
+			_debug "read_msr: using rdmsr"
+			read_msr_value=$(rdmsr -r $_msr 2>/dev/null | od -t u1 -A n)
+		# or if we have perl, use it, any 5.x version will work
+		elif which perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
+			_debug "read_msr: using perl"
+			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and read(M,\$_,8) and print" | od -An -t u1)
+		# fallback to dd if it supports skip_bytes
+		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null; then
+			_debug "read_msr: using dd"
+			read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null | od -t u1 -A n)
+		else
+			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
+			return 201 # missing tool error
 		fi
-		read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null | od -t u1 -A n)
 		if [ -z "$read_msr_value" ]; then
 			# MSR doesn't exist, don't check for $? because some versions of dd still return 0!
 			return 1
@@ -1569,9 +1605,7 @@ check_cpu()
 		pstatus yellow UNKNOWN "is msr kernel module available?"
 	else
 		# the new MSR 'SPEC_CTRL' is at offset 0x48
-		# here we use dd, it's the same as using 'rdmsr 0x48' but without needing the rdmsr tool
-		# if we get a read error, the MSR is not there. bs has to be 8 for msr
-		# skip=9 because 8*9=72=0x48
+		# we check if we have it for all cpus
 		val=0
 		cpu_mismatch=0
 		for i in $(seq 0 "$idx_max_cpu")
@@ -1597,6 +1631,9 @@ check_cpu()
 			fi
 		elif [ $val -eq 200 ]; then
 			pstatus yellow UNKNOWN "is msr kernel module available?"
+			spec_ctrl_msr=-1
+		elif [ $val -eq 201 ]; then
+			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
 			spec_ctrl_msr=-1
 		else
 			spec_ctrl_msr=0
@@ -1659,8 +1696,7 @@ check_cpu()
 		pstatus yellow UNKNOWN "is msr kernel module available?"
 	else
 		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
-		# here we use dd, it's the same as using 'wrmsr 0x49 0' but without needing the wrmsr tool
-		# if we get a write error, the MSR is not there
+		# we test if of all cpus
 		val=0
 		cpu_mismatch=0
 		for i in $(seq 0 "$idx_max_cpu")
@@ -1833,8 +1869,7 @@ check_cpu()
 			pstatus yellow UNKNOWN "is msr kernel module available?"
 		else
 			# the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
-			# here we use dd, it's the same as using 'rdmsr 0x10a' but without needing the rdmsr tool
-			# if we get a read error, the MSR is not there. bs has to be 8 for msr
+			# we check if we have it for all cpus
 			val=0
 			val_cap_msr=0
 			cpu_mismatch=0
@@ -1874,6 +1909,8 @@ check_cpu()
 				fi
 			elif [ $val -eq 200 ]; then
 				pstatus yellow UNKNOWN "is msr kernel module available?"
+			elif [ $val -eq 201 ]; then
+				pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
 			else
 				pstatus yellow NO
 			fi
