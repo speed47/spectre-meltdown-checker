@@ -1560,15 +1560,15 @@ read_msr()
 		# if rdmsr is available, use it
 		elif which rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
 			_debug "read_msr: using rdmsr"
-			read_msr_value=$(rdmsr -r $_msr 2>/dev/null | od -t u1 -A n)
+			read_msr_value=$(rdmsr -r $_msr 2>/dev/null | od -t u8 -A n)
 		# or if we have perl, use it, any 5.x version will work
 		elif which perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
 			_debug "read_msr: using perl"
-			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and read(M,\$_,8) and print" | od -An -t u1)
+			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and read(M,\$_,8) and print" | od -t u8 -A n)
 		# fallback to dd if it supports skip_bytes
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null; then
 			_debug "read_msr: using dd"
-			read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null | od -t u1 -A n)
+			read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
 		else
 			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
 			return 201 # missing tool error
@@ -1876,7 +1876,7 @@ check_cpu()
 			for i in $(seq 0 "$idx_max_cpu")
 			do
 				read_msr 0x10a "$i"; ret=$?
-				capabilities=$(echo "$read_msr_value" | awk '{print $8}')
+				capabilities=$read_msr_value
 				if [ "$i" -eq 0 ]; then
 					val=$ret
 					val_cap_msr=$capabilities
@@ -1893,10 +1893,10 @@ check_cpu()
 			capabilities_ibrs_all=0
 			capabilities_ssb_no=0
 			if [ $val -eq 0 ]; then
-				_debug "capabilities MSR lower byte is $capabilities (decimal)"
-				[ $(( capabilities &  1 )) -eq 1  ] && capabilities_rdcl_no=1
-				[ $(( capabilities &  2 )) -eq 2  ] && capabilities_ibrs_all=1
-				[ $(( capabilities & 16 )) -eq 16 ] && capabilities_ssb_no=1
+				_debug "capabilities MSR is $capabilities (decimal)"
+				[ $(( capabilities >> 0 & 1 )) -eq 1 ] && capabilities_rdcl_no=1
+				[ $(( capabilities >> 1 & 1 )) -eq 1 ] && capabilities_ibrs_all=1
+				[ $(( capabilities >> 4 & 1 )) -eq 1 ] && capabilities_ssb_no=1
 				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssb_no=$capabilities_ssb_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
