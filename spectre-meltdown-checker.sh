@@ -1210,6 +1210,17 @@ is_skylake_cpu()
 	return 1
 }
 
+is_vulnerable_to_empty_rsb()
+{
+	if [ -z "$capabilities_rsba" ]; then
+		_warn "is_vulnerable_to_empty_rsb() called before ARCH CAPABILITIES MSR was read"
+	fi
+	if is_skylake_cpu || [ "$capabilities_rsba" = 1 ]; then
+		return 0
+	fi
+	return 1
+}
+
 is_zen_cpu()
 {
 	# is this CPU from the AMD ZEN family ? (ryzen, epyc, ...)
@@ -1857,12 +1868,14 @@ check_cpu()
 		capabilities_rdcl_no=-1
 		capabilities_ibrs_all=-1
 		capabilities_ssb_no=-1
+		capabilities_rsba=-1
 		if [ "$cpuid_arch_capabilities" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$cpuid_arch_capabilities" != 1 ]; then
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
 			capabilities_ssb_no=0
+			capabilities_rsba=0
 			pstatus yellow NO
 		elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 			spec_ctrl_msr=-1
@@ -1892,12 +1905,14 @@ check_cpu()
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
 			capabilities_ssb_no=0
+			capabilities_rsba=0
 			if [ $val -eq 0 ]; then
 				_debug "capabilities MSR is $capabilities (decimal)"
 				[ $(( capabilities >> 0 & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 				[ $(( capabilities >> 1 & 1 )) -eq 1 ] && capabilities_ibrs_all=1
+				[ $(( capabilities >> 2 & 1 )) -eq 1 ] && capabilities_rsba=1
 				[ $(( capabilities >> 4 & 1 )) -eq 1 ] && capabilities_ssb_no=1
-				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssb_no=$capabilities_ssb_no"
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssb_no=$capabilities_ssb_no rsba=$capabilities_rsba"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
@@ -1933,6 +1948,15 @@ check_cpu()
 		pstatus green YES
 	else
 		pstatus yellow NO
+	fi
+
+	_info_nol "  * Hypervisor indicates host CPU might be vulnerable to RSB underflow (RSBA): "
+	if [ "$capabilities_rsba" = -1 ]; then
+		pstatus yellow UNKNOWN
+	elif [ "$capabilities_rsba" = 1 ]; then
+		pstatus yellow YES
+	else
+		pstatus blue NO
 	fi
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
@@ -2556,7 +2580,7 @@ check_variant2_linux()
 			fi
 		fi
 
-		if is_skylake_cpu || [ "$opt_verbose" -ge 2 ]; then
+		if is_vulnerable_to_empty_rsb || [ "$opt_verbose" -ge 2 ]; then
 			_info_nol "  * Kernel supports RSB filling: "
 			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
@@ -2583,9 +2607,9 @@ check_variant2_linux()
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_skylake_cpu || [ -n "$rsb_filling" ] ); then
+		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_vulnerable_to_empty_rsb || [ -n "$rsb_filling" ] ); then
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
-		elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && ( ! is_skylake_cpu || [ -n "$rsb_filling" ] ); then
+		elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && ( ! is_vulnerable_to_empty_rsb || [ -n "$rsb_filling" ] ); then
 			pvulnstatus $cve OK "Full retpoline is mitigating the vulnerability"
 			if [ -n "$cpuid_ibpb" ]; then
 				_warn "You should enable IBPB to complete retpoline as a Variant 2 mitigation"
@@ -2615,7 +2639,7 @@ check_variant2_linux()
 		# if we arrive here and didn't already call pvulnstatus, then it's VULN, let's explain why
 		if [ "$pvulnstatus_last_cve" != "$cve" ]; then
 			# explain what's needed for this CPU
-			if is_skylake_cpu; then
+			if is_vulnerable_to_empty_rsb; then
 				pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB+RBS filling, is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. You also need a recent-enough kernel that supports RSB filling if you plan to use retpoline. For Skylake+ CPUs, the IBRS + IBPB approach is generally preferred as it guarantees complete protection, and the performance impact is not as high as with older CPUs in comparison with retpoline. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
 			elif is_zen_cpu; then
