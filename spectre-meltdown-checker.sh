@@ -1309,6 +1309,9 @@ if [ "$opt_live" = 1 ]; then
 	if [ -r /proc/cmdline ] && grep -q 'BOOT_IMAGE=' /proc/cmdline; then
 		opt_kernel=$(grep -Eo 'BOOT_IMAGE=[^ ]+' /proc/cmdline | cut -d= -f2)
 		_debug "found opt_kernel=$opt_kernel in /proc/cmdline"
+		# if the boot partition is within a btrfs subvolume, strip the subvolume name
+		# if /boot is a separate subvolume, the remainder of the code in this section should handle it
+		if echo "$opt_kernel" | grep -q "^/@"; then opt_kernel=$(echo "$opt_kernel" | sed "s:/@[^/]*::"); fi
 		# if we have a dedicated /boot partition, our bootloader might have just called it /
 		# so try to prepend /boot and see if we find anything
 		[ -e "/boot/$opt_kernel" ] && opt_kernel="/boot/$opt_kernel"
