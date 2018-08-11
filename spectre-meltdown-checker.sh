@@ -150,12 +150,12 @@ if which printf >/dev/null 2>&1; then
 elif which echo >/dev/null 2>&1; then
 	echo_cmd=$(which echo)
 else
-	# which command is broken?
+	# maybe the `which` command is broken?
 	[ -x /bin/echo        ] && echo_cmd=/bin/echo
 	# for Android
 	[ -x /system/bin/echo ] && echo_cmd=/system/bin/echo
 fi
-# still empty ? fallback to builtin
+# still empty? fallback to builtin
 [ -z "$echo_cmd" ] && echo_cmd=echo
 __echo()
 {
@@ -245,15 +245,13 @@ is_cpu_vulnerable_cached=0
 _is_cpu_vulnerable_cached()
 {
 	# shellcheck disable=SC2086
-	[ "$1" = 1  ] && return $variant1
-	# shellcheck disable=SC2086
-	[ "$1" = 2  ] && return $variant2
-	# shellcheck disable=SC2086
-	[ "$1" = 3  ] && return $variant3
-	# shellcheck disable=SC2086
-	[ "$1" = 3a ] && return $variant3a
-	# shellcheck disable=SC2086
-	[ "$1" = 4  ] && return $variant4
+	{
+		[ "$1" = 1  ] && return $variant1
+		[ "$1" = 2  ] && return $variant2
+		[ "$1" = 3  ] && return $variant3
+		[ "$1" = 3a ] && return $variant3a
+		[ "$1" = 4  ] && return $variant4
+	}
 	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
 	exit 255
 }
@@ -889,9 +887,7 @@ load_cpuid()
 }
 
 # shellcheck disable=SC2034
-{
 EAX=1; EBX=2; ECX=3; EDX=4;
-}
 read_cpuid()
 {
 	# leaf is the value of the eax register when calling the cpuid instruction:
@@ -1258,6 +1254,8 @@ if [ "$opt_hw_only" = 1 ]; then
 		opt_variant1=0
 		opt_variant2=0
 		opt_variant3=0
+		opt_variant3a=0
+		opt_variant4=0
 	fi
 fi
 
