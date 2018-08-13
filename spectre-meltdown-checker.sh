@@ -1208,7 +1208,7 @@ is_skylake_cpu()
 
 is_vulnerable_to_empty_rsb()
 {
-	if [ -z "$capabilities_rsba" ]; then
+	if is_intel && [ -z "$capabilities_rsba" ]; then
 		_warn "is_vulnerable_to_empty_rsb() called before ARCH CAPABILITIES MSR was read"
 	fi
 	if is_skylake_cpu || [ "$capabilities_rsba" = 1 ]; then
