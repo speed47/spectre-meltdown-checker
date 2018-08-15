@@ -9,7 +9,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='0.39'
+VERSION='0.39+'
 
 trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
@@ -64,7 +64,7 @@ show_usage()
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
-		--variant [1,2,3,3a,4]	specify which variant you'd like to check, by default all variants are checked,
+		--variant [1,2,3,3a,4,l1tf]	specify which variant you'd like to check, by default all variants are checked,
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
@@ -126,6 +126,7 @@ opt_variant2=0
 opt_variant3=0
 opt_variant3a=0
 opt_variant4=0
+opt_variantl1tf=0
 opt_allvariants=1
 opt_no_sysfs=0
 opt_sysfs_only=0
@@ -246,11 +247,12 @@ _is_cpu_vulnerable_cached()
 {
 	# shellcheck disable=SC2086
 	{
-		[ "$1" = 1  ] && return $variant1
-		[ "$1" = 2  ] && return $variant2
-		[ "$1" = 3  ] && return $variant3
-		[ "$1" = 3a ] && return $variant3a
-		[ "$1" = 4  ] && return $variant4
+		[ "$1" = 1    ] && return $variant1
+		[ "$1" = 2    ] && return $variant2
+		[ "$1" = 3    ] && return $variant3
+		[ "$1" = 3a   ] && return $variant3a
+		[ "$1" = 4    ] && return $variant4
+		[ "$1" = l1tf ] && return $variantl1tf
 	}
 	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
 	exit 255
@@ -273,6 +275,7 @@ is_cpu_vulnerable()
 	variant3=''
 	variant3a=''
 	variant4=''
+	variantl1tf=''
 
 	if is_cpu_specex_free; then
 		variant1=immune
@@ -280,6 +283,7 @@ is_cpu_vulnerable()
 		variant3=immune
 		variant3a=immune
 		variant4=immune
+		variantl1tf=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
@@ -294,19 +298,51 @@ is_cpu_vulnerable()
 			# capability bit for future Intel processor that will explicitly state
 			# that they're not vulnerable to Meltdown
 			# this var is set in check_cpu()
-			variant3=immune
-			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown"
+			[ -z "$variant3" ]    && variant3=immune
+			[ -z "$variantl1tf" ] && variantl1tf=immune
+			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown nor l1tf"
 		fi
 		if [ "$capabilities_ssb_no" = 1 ]; then
 			# capability bit for future Intel processor that will explicitly state
 			# that they're not vulnerable to Variant 4
 			# this var is set in check_cpu()
-			variant4=immune
+			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: SSB_NO is set so not vuln to variant4"
 		fi
 		if is_cpu_ssb_free; then
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
+		fi
+		# variant 4a for xeon phi
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] || [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
+				_debug "is_cpu_vulnerable: xeon phi immune to variant 3a"
+				[ -z "$variant3a" ] && variant3a=immune
+			fi
+		fi
+		# L1TF (RDCL_NO already checked above)
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"          ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT1" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT2" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_MERRIFIELD" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL"     ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM"     ]; then
+
+				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune"
+				[ -z "$variantl1tf" ] && variantl1tf=immune
+			else
+				_debug "is_cpu_vulnerable: intel family 6 is vuln"
+				variantl1tf=vuln
+			fi
+		elif [ "$cpu_family" -lt 6 ]; then
+			_debug "is_cpu_vulnerable: intel family < 6 is immune"
+			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
 	elif is_amd; then
 		# AMD revised their statement about variant2 => vulnerable
@@ -321,9 +357,11 @@ is_cpu_vulnerable()
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
+		variantl1tf=immune
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		variant3=immune
 		variant3a=immune
+		variantl1tf=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -411,14 +449,16 @@ is_cpu_vulnerable()
 			fi
 			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
+		variantl1tf=immune
 	fi
-	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
-	[ "$variant1"  = "immune" ] && variant1=1  || variant1=0
-	[ "$variant2"  = "immune" ] && variant2=1  || variant2=0
-	[ "$variant3"  = "immune" ] && variant3=1  || variant3=0
-	[ "$variant3a" = "immune" ] && variant3a=1 || variant3a=0
-	[ "$variant4"  = "immune" ] && variant4=1  || variant4=0
-	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
+	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
+	[ "$variant1"    = "immune" ] && variant1=1    || variant1=0
+	[ "$variant2"    = "immune" ] && variant2=1    || variant2=0
+	[ "$variant3"    = "immune" ] && variant3=1    || variant3=0
+	[ "$variant3a"   = "immune" ] && variant3a=1   || variant3a=0
+	[ "$variant4"    = "immune" ] && variant4=1    || variant4=0
+	[ "$variantl1tf" = "immune" ] && variantl1tf=1 || variantl1tf=0
+	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
 	is_cpu_vulnerable_cached=1
 	_is_cpu_vulnerable_cached "$1"
 	return $?
@@ -607,17 +647,18 @@ while [ -n "$1" ]; do
 		shift
 	elif [ "$1" = "--variant" ]; then
 		if [ -z "$2" ]; then
-			echo "$0: error: option --variant expects a parameter (1, 2, 3, 3a or 4)" >&2
+			echo "$0: error: option --variant expects a parameter (1, 2, 3, 3a, 4 or l1tf)" >&2
 			exit 255
 		fi
 		case "$2" in
-			1)  opt_variant1=1;  opt_allvariants=0;;
-			2)  opt_variant2=1;  opt_allvariants=0;;
-			3)  opt_variant3=1;  opt_allvariants=0;;
-			3a) opt_variant3a=1; opt_allvariants=0;;
-			4)  opt_variant4=1;  opt_allvariants=0;;
+			1)    opt_variant1=1;    opt_allvariants=0;;
+			2)    opt_variant2=1;    opt_allvariants=0;;
+			3)    opt_variant3=1;    opt_allvariants=0;;
+			3a)   opt_variant3a=1;   opt_allvariants=0;;
+			4)    opt_variant4=1;    opt_allvariants=0;;
+			l1tf) opt_variantl1tf=1; opt_allvariants=0;;
 			*)
-				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a or 4" >&2;
+				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4 or l1tf" >&2;
 				exit 255
 				;;
 		esac
@@ -686,6 +727,7 @@ pvulnstatus()
 			CVE-2017-5754) aka="MELTDOWN";;
 			CVE-2018-3640) aka="VARIANT 3A";;
 			CVE-2018-3639) aka="VARIANT 4";;
+			CVE-2018-3615/3620/3646) aka="L1TF";;
 		esac
 
 		case "$opt_batch_format" in
@@ -3180,6 +3222,36 @@ check_variant4()
 	fi
 }
 
+check_variantl1tf()
+{
+	_info "\033[1;34mCVE-2018-3615/3620/3646 [L1 terminal fault] aka 'Foreshadow & Foreshadow-NG'\033[0m"
+
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
+		:
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
+
+	cve='CVE-2018-3615/3620/3646'
+	if ! is_cpu_vulnerable l1tf; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ -z "$msg" ]; then
+		pvulnstatus $cve VULN "your CPU is known to be vulnerable, and your kernel doesn't report that it mitigates the issue, but more thorough mitigation checking by this script is being worked on (check often for new versions!)"
+	else
+		pvulnstatus $cve "$status" "$msg"
+	fi
+}
+
 if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
 	check_cpu
 	check_cpu_vulnerabilities
@@ -3205,6 +3277,10 @@ if [ "$opt_variant3a" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 fi
 if [ "$opt_variant4" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variant4
+	_info
+fi
+if [ "$opt_variantl1tf" = 1 ] || [ "$opt_allvariants" = 1 ]; then
+	check_variantl1tf
 	_info
 fi
 

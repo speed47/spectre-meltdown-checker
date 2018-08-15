@@ -2,11 +2,14 @@ Spectre & Meltdown Checker
 ==========================
 
 A shell script to tell if your system is vulnerable against the several "speculative execution" CVEs that were made public in 2018.
-- CVE-2017-5753 aka Spectre Variant 1
-- CVE-2017-5715 aka Spectre Variant 2
-- CVE-2017-5754 aka Meltdown or Variant 3
-- CVE-2018-3640 aka Variant 3a
-- CVE-2018-3639 aka Variant 4
+- CVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'
+- CVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'
+- CVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'
+- CVE-2018-3640 [rogue system register read] aka 'Variant 3a'
+- CVE-2018-3639 [speculative store bypass] aka 'Variant 4'
+- CVE-2018-3615, CVE-2018-3620, CVE-2018-3646 [L1 terminal fault] aka 'Foreshadow & Foreshadow-NG'
+
+**2018-08-15: Foreshadow support is being worked on, vulnerable/immune CPUs are already detected, and kernel-reported vulnerability status is checked, but manual mitigation detection is currently being implemented, will be available in the next few days**
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -97,6 +100,18 @@ docker run --rm --privileged -v /boot:/boot:ro -v /lib/modules:/lib/modules:ro -
    - Impact: software using JIT (no known exploitation against kernel)
    - Mitigation: microcode update + kernel update making possible for affected software to protect itself
    - Performance impact of the mitigation: low to medium
+
+**CVE-2018-3615** l1 terminal fault (Foreshadow)
+
+   - TBC
+
+**CVE-2018-3620** l1 terminal fault (Foreshadow-NG)
+
+   - TBC
+
+**CVE-2018-3646** l1 terminal fault (Foreshadow-NG)
+
+   - TBC
 
 ## Understanding what this script does and doesn't
 
