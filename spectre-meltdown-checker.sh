@@ -1045,15 +1045,14 @@ parse_cpu_details()
 		cpu_family=$(  grep '^cpu family' "$procfs/cpuinfo" | awk '{print $4}' | grep -E '^[0-9]+$' | head -1)
 		cpu_model=$(   grep '^model'      "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
-		cpu_ucode=$(  grep '^microcode'   "$procfs/cpuinfo" | awk '{print $3}' | head -1)
+		cpu_ucode=$(   grep '^microcode'  "$procfs/cpuinfo" | awk '{print $3}' | head -1)
 	else
 		cpu_friendly_name=$(sysctl -n hw.model)
 	fi
 
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
 	if read_cpuid 0x1 $EAX 0 0xFFFFFFFF; then
-		cpuid="$read_cpuid_value"
-		#cpuid_hex=$(printf "%X" "$cpuid")
+		cpu_cpuid="$read_cpuid_value"
 	fi
 
 	# under BSD, linprocfs often doesn't export ucode information, so fetch it ourselves the good old way
@@ -1073,8 +1072,8 @@ parse_cpu_details()
 		fi
 	fi
 
-	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode_decimal=$(( cpu_ucode ))
-	ucode_found=$(printf "model 0x%x family 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_model" "$cpu_family" "$cpu_stepping" "$cpu_ucode" "$cpuid")
+	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$(( cpu_ucode ))
+	ucode_found=$(printf "model 0x%x family 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_model" "$cpu_family" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid")
 
 	# also define those that we will need in other funcs
 	# taken from ttps://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
@@ -1212,7 +1211,7 @@ is_ucode_blacklisted()
 		ucode=$(echo $tuple | cut -d, -f3)
 		echo "$ucode" | grep -q ^0x && ucode_decimal=$(( ucode ))
 		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ]; then
-			if [ "$cpu_ucode_decimal" = "$ucode_decimal" ] || [ "$cpu_ucode" = "$ucode" ]; then
+			if [ "$cpu_ucode" = "$ucode_decimal" ] || [ "$cpu_ucode" = "$ucode" ]; then
 				_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
 				return 0
 			fi
@@ -1266,6 +1265,75 @@ is_zen_cpu()
 	is_amd || return 1
 	[ "$cpu_family" = 23 ] && return 0
 	return 1
+}
+
+is_latest_known_ucode()
+{
+	# 0: yes, 1: no, 2: unknown
+	parse_cpu_details
+	ucode_latest="latest microcode version of your CPU is not known to this script"
+	is_intel || return 2
+	# https://www.intel.com/content/dam/www/public/us/en/documents/sa00115-microcode-update-guidance.pdf
+	# ps2txt sa00115-microcode-update-guidance.ps | grep -Eo '[0-9A-F]+ [0-9A-F]+ [^ ]+ Production 0x[A-F0-9]+ 0x[A-F0-9]+' | awk '{print "0x"$1","$6" \\"}' | sort -u
+	# cpuid,ucode
+	for tuple in \
+		0x106A5,0x1D \
+		0x106E5,0x0A \
+		0x20652,0x11A \
+		0x20652,0x11C \
+		0x20655,0x7 \
+		0x20655,0x7C \
+		0x206A7,0x2E \
+		0x206C2,0x1F \
+		0x206D6,0x61D \
+		0x206D7,0x714 \
+		0x206E6,0x0D \
+		0x206F2,0x3B \
+		0x306A9,0x20 \
+		0x306C3,0x25 \
+		0x306D4,0x2BB \
+		0x306E4,0x42D \
+		0x306E7,0x714 \
+		0x306F2,0x3D \
+		0x306F4,0x12 \
+		0x40651,0x24 \
+		0x40661,0x1A \
+		0x40671,0x1EB \
+		0x406E3,0xC6 \
+		0x406F1,0xB00002E \
+		0x406F1,0xB00002EB \
+		0x50654,0x200004D \
+		0x50662,0x17B \
+		0x50663,0x7000013B \
+		0x50664,0xF000012B \
+		0x50665,0xE00000AB \
+		0x506C2,0x14C \
+		0x506E3,0xC6 \
+		0x506F1,0x24 \
+		0x706A1,0x28 \
+		0x806E9,0x8E \
+		0x806EA,0x96 \
+		0x806EA,0x96C \
+		0x906E9,0x8E \
+		0x906EA,0x96 \
+		0x906EA,0x96C \
+		0x906EA,0x96D \
+		0x906EB,0x8EC
+	do
+		cpuid_decimal=$(( $(echo "$tuple" | cut -d, -f1) ))
+		ucode_decimal=$(( $(echo "$tuple" | cut -d, -f2) ))
+		ucode_latest=$(printf "you have version 0x%x and latest known version is 0x%x" "$cpu_ucode" "$ucode_decimal")
+		if [ "$cpuid_decimal" = "$cpu_cpuid" ]; then
+			_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $cpuid_decimal"
+			if [ "$cpu_ucode" -ge "$ucode_decimal" ]; then
+				return 0
+			else
+				return 1
+			fi
+		fi
+	done
+	_debug "is_latest_known_ucode: this cpuid is not referenced ($cpu_cpuid)"
+	return 2
 }
 
 # ENTRYPOINT
@@ -2010,6 +2078,16 @@ check_cpu()
 		_warn
 	else
 		pstatus blue NO "$ucode_found"
+	fi
+
+	_info_nol "  * CPU microcode is the latest known available version: "
+	is_latest_known_ucode; ret=$?
+	if [ $ret -eq 0 ]; then
+		pstatus green YES "$ucode_latest"
+	elif [ $ret -eq 1 ]; then
+		pstatus red NO "$ucode_latest"
+	else
+		pstatus blue UNKNOWN "$ucode_latest"
 	fi
 }
 
