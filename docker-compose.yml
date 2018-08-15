@@ -1,0 +1,15 @@
+version: '2'
+
+services:
+  spectre-meltdown-checker:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    image: spectre-meltdown-checker:latest
+    container_name: spectre-meltdown-checker
+    privileged: true
+    network_mode: none
+    volumes:
+      - /boot:/boot:ro
+      - /dev/cpu:/dev/cpu:ro
+      - /lib/modules:/lib/modules:ro
