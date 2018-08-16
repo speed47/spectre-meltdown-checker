@@ -1956,6 +1956,42 @@ check_cpu()
 		fi
 	fi
 
+	_info "  * L1 data cache invalidation"
+	_info_nol "    * FLUSH_CMD MSR is available: "
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		pstatus yellow UNKNOWN "is msr kernel module available?"
+	else
+		# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+		# we test if of all cpus
+		val=0
+		cpu_mismatch=0
+		for i in $(seq 0 "$idx_max_cpu")
+		do
+			write_msr 0x10b "$i"; ret=$?
+			if [ "$i" -eq 0 ]; then
+				val=$ret
+			else
+				if [ "$ret" -eq $val ]; then
+					continue
+				else
+					cpu_mismatch=1
+				fi
+			fi
+		done
+
+		if [ $val -eq 0 ]; then
+			if [ $cpu_mismatch -eq 0 ]; then
+				pstatus green YES
+			else
+				pstatus green YES "But not in all CPUs"
+			fi
+		elif [ $val -eq 200 ]; then
+			pstatus yellow UNKNOWN "is msr kernel module available?"
+		else
+			pstatus yellow NO
+		fi
+	fi
+
 	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
