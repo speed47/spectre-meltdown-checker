@@ -26,6 +26,12 @@ exit_cleanup()
 	[ "$kldload_cpuctl"  = 1 ] && kldunload cpuctl 2>/dev/null
 }
 
+# if we were git clone'd, adjust VERSION
+if [ -d "$(dirname "$0")/.git" ] && which git >/dev/null 2>&1; then
+	describe=$(git -C "$(dirname "$0")" describe --tags --dirty 2>/dev/null)
+	[ -n "$describe" ] && VERSION=$(echo "$describe" | sed -e s/^v//)
+fi
+
 show_usage()
 {
 	# shellcheck disable=SC2086
@@ -1274,15 +1280,13 @@ is_latest_known_ucode()
 	ucode_latest="latest microcode version of your CPU is not known to this script"
 	is_intel || return 2
 	# https://www.intel.com/content/dam/www/public/us/en/documents/sa00115-microcode-update-guidance.pdf
-	# ps2txt sa00115-microcode-update-guidance.ps | grep -Eo '[0-9A-F]+ [0-9A-F]+ [^ ]+ Production 0x[A-F0-9]+ 0x[A-F0-9]+' | awk '{print "0x"$1","$6" \\"}' | sort -u
+	# ps2txt sa00115-microcode-update-guidance.ps | grep -Eo '[0-9A-F]+ [0-9A-F]+ [^ ]+ Production 0x[A-F0-9]+ 0x[^ ]+' | awk '{print "0x"$1","$6" \\"}' | uniq
 	# cpuid,ucode
 	for tuple in \
 		0x106A5,0x1D \
 		0x106E5,0x0A \
-		0x20652,0x11A \
-		0x20652,0x11C \
+		0x20652,0x11 \
 		0x20655,0x7 \
-		0x20655,0x7C \
 		0x206A7,0x2E \
 		0x206C2,0x1F \
 		0x206D6,0x61D \
@@ -1291,34 +1295,30 @@ is_latest_known_ucode()
 		0x206F2,0x3B \
 		0x306A9,0x20 \
 		0x306C3,0x25 \
-		0x306D4,0x2BB \
+		0x306D4,0x2B \
 		0x306E4,0x42D \
 		0x306E7,0x714 \
 		0x306F2,0x3D \
 		0x306F4,0x12 \
 		0x40651,0x24 \
 		0x40661,0x1A \
-		0x40671,0x1EB \
+		0x40671,0x1E \
 		0x406E3,0xC6 \
 		0x406F1,0xB00002E \
-		0x406F1,0xB00002EB \
 		0x50654,0x200004D \
-		0x50662,0x17B \
-		0x50663,0x7000013B \
-		0x50664,0xF000012B \
-		0x50665,0xE00000AB \
-		0x506C2,0x14C \
+		0x50662,0x17 \
+		0x50663,0x7000013 \
+		0x50664,0xF000012 \
+		0x50665,0xE00000A \
+		0x506C2,0x14 \
 		0x506E3,0xC6 \
 		0x506F1,0x24 \
 		0x706A1,0x28 \
 		0x806E9,0x8E \
 		0x806EA,0x96 \
-		0x806EA,0x96C \
 		0x906E9,0x8E \
 		0x906EA,0x96 \
-		0x906EA,0x96C \
-		0x906EA,0x96D \
-		0x906EB,0x8EC
+		0x906EB,0x8E
 	do
 		cpuid_decimal=$(( $(echo "$tuple" | cut -d, -f1) ))
 		ucode_decimal=$(( $(echo "$tuple" | cut -d, -f2) ))
@@ -1956,6 +1956,42 @@ check_cpu()
 		fi
 	fi
 
+	_info "  * L1 data cache invalidation"
+	_info_nol "    * FLUSH_CMD MSR is available: "
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		pstatus yellow UNKNOWN "is msr kernel module available?"
+	else
+		# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+		# we test if of all cpus
+		val=0
+		cpu_mismatch=0
+		for i in $(seq 0 "$idx_max_cpu")
+		do
+			write_msr 0x10b "$i"; ret=$?
+			if [ "$i" -eq 0 ]; then
+				val=$ret
+			else
+				if [ "$ret" -eq $val ]; then
+					continue
+				else
+					cpu_mismatch=1
+				fi
+			fi
+		done
+
+		if [ $val -eq 0 ]; then
+			if [ $cpu_mismatch -eq 0 ]; then
+				pstatus green YES
+			else
+				pstatus green YES "But not in all CPUs"
+			fi
+		elif [ $val -eq 200 ]; then
+			pstatus yellow UNKNOWN "is msr kernel module available?"
+		else
+			pstatus yellow NO
+		fi
+	fi
+
 	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
@@ -2094,7 +2130,7 @@ check_cpu()
 check_cpu_vulnerabilities()
 {
 	_info     "* CPU vulnerability to the speculative execution attack variants"
-	for v in 1 2 3 3a 4; do
+	for v in 1 2 3 3a 4 l1tf; do
 		_info_nol "  * Vulnerable to Variant $v: "
 		if is_cpu_vulnerable $v; then
 			pstatus yellow YES
