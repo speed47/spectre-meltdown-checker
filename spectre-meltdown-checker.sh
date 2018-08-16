@@ -26,6 +26,12 @@ exit_cleanup()
 	[ "$kldload_cpuctl"  = 1 ] && kldunload cpuctl 2>/dev/null
 }
 
+# if we were git clone'd, adjust VERSION
+if [ -d "$(dirname "$0")/.git" ] && which git >/dev/null 2>&1; then
+	describe=$(git -C "$(dirname "$0")" describe --tags --dirty 2>/dev/null)
+	[ -n "$describe" ] && VERSION=$(echo "$describe" | sed -e s/^v//)
+fi
+
 show_usage()
 {
 	# shellcheck disable=SC2086
@@ -1274,7 +1280,7 @@ is_latest_known_ucode()
 	ucode_latest="latest microcode version of your CPU is not known to this script"
 	is_intel || return 2
 	# https://www.intel.com/content/dam/www/public/us/en/documents/sa00115-microcode-update-guidance.pdf
-	# ps2txt sa00115-microcode-update-guidance.ps | grep -Eo '[0-9A-F]+ [0-9A-F]+ [^ ]+ Production 0x[A-F0-9]+ 0x[A-F0-9]+' | awk '{print "0x"$1","$6" \\"}' | uniq
+	# ps2txt sa00115-microcode-update-guidance.ps | grep -Eo '[0-9A-F]+ [0-9A-F]+ [^ ]+ Production 0x[A-F0-9]+ 0x[^ ]+' | awk '{print "0x"$1","$6" \\"}' | uniq
 	# cpuid,ucode
 	for tuple in \
 		0x106A5,0x1D \
