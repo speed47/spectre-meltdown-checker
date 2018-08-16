@@ -2094,7 +2094,7 @@ check_cpu()
 check_cpu_vulnerabilities()
 {
 	_info     "* CPU vulnerability to the speculative execution attack variants"
-	for v in 1 2 3 3a 4; do
+	for v in 1 2 3 3a 4 l1tf; do
 		_info_nol "  * Vulnerable to Variant $v: "
 		if is_cpu_vulnerable $v; then
 			pstatus yellow YES
