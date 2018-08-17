@@ -3379,6 +3379,28 @@ check_variantlfps()
 	elif [ "$opt_sysfs_only" != 1 ]; then
 		if [ "$opt_live" = 1 ]; then
 			if [ "$os" = Linux ]; then
+
+				_info "* Checking count of XRSTOR/XSAVE instructions in kernel... "
+				if [ -n "$kernel_err" ]; then
+					pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
+				else
+					if ! which "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+						pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+					else
+						nb_xsavrstor=$("${opt_arch_prefix}objdump" -d "$kernel" 2>/dev/null | grep -c -e xrstor -e xsaveopt )
+						nb_sttsclts=$("${opt_arch_prefix}objdump" -d "$kernel" 2>/dev/null | grep -c -e stts -e clts  )
+						_info_nol "Kernal contains EAGERFP logic : "
+						if [ "$nb_xsavrstor" -lt 20 ]; then
+							pstatus yellow NO "only $nb_xsavrstor, xrstor/xsave instructions found, should be >= 20 (heuristic)"
+							msg="your kernel does not appear to have EAGERFP restore logic"
+							status="VULN"
+						else
+							pstatus green YES "$nb_xsavrstor, xrstor/xsave instructions found, which is >= 20 (heuristic)"
+						fi
+					fi
+				fi
+		
+				_info_nol "* Kernel version reported immune: "
 				## Get kernel version number
 				kern_major=$(uname -r | cut -d. -f1)
 		                kern_minor=$(uname -r | cut -d. -f2)
@@ -3389,19 +3411,21 @@ check_variantlfps()
 				# Newer kernels (>4.9) are immune 
 				if [ "$kern_major" = "4" ]; then
 					if [ "$kern_minor" -gt "8" ]; then
+						pstatus green YES "kernel version is > 4.9"
 						status=OK
 						msg="Mitigation: Kernel version is $kern_major.$kern_minor, kernel > 4.9 not vulnerable to Lazy FP State Restore"
 					# older kernels are vulnerable, or immune, depending upon certain conditions
 					# 4.6-4.8 are vulnerable if default boot options are overridden
 					elif [ $"kern_minor" -gt "5" ]; then
 						if grep -q -w eagerfpu=off /proc/commandline ; then
+							pstatus red NO "kernel > 4.6, but boot option eagerfpu=off"
 							status=VULN
 							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
 							explain="kernel > 4.6, but boot option eagerfpu=off reverts to lazy FP state restoration"
 						else
+							pstatus green YES "kernel > 4.6 and lazy fp state restore not enabled via boot options"
 							status=OK
 							msg="Mitigation: Kernel version is $kern_major.$kern_minor"
-							explain="kernel > 4.6 and lazy fp state restore not enabled via boot options"
 						fi
 					# kernel 4.4 < 138 has its own issues
 					elif [ "$kern_minor" = "4" ] && [ "$kern_point" -lt "138" ]; then
@@ -3411,46 +3435,52 @@ check_variantlfps()
 					else
 						# <4.6 are vulnerable on pre-Haswell hardware, or if default boot options are overridden
 						if grep -q -w eagerfpu=off /proc/commandline ; then
+							pstatus red NO "kernel < 4.6, but boot option eagerfpu=off"
 							status=VULN
 							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
-							explain="kernel < 4.6, but boot option eagerfpu=off reverts to lazy FP state restoration"
 						elif grep -q -w noxsave /proc/commandline ; then
 							status=VULN
+							pstatus red NO "kernel < 4.6, but boot option noxsave"
 							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
-							explain="kernel < 4.6, but boot option noxsave reverts to lazy FP state restoration"
 						elif echo "$cpupart" | grep -q -w -e HASWELL -e BROADWELL -e SKYLAKE -e KABYLAKE; then
+							pstatus green YES "kernel 4.0 < 4.6, on post-haswell hardware"
 							status=OK
 							msg="Mitigation: your kernel version $kern_major.$kern_minor is immunne when running a Haswell or newer cpu, provided lazy fp state restore not enabled via boot options"
 						else 
+							pstatus red NO "kernel < 4.6 supports Eager FPU state restoration, but only on Haswell or newer cpus"
 							status=VULN
 							msg="your kernel supports Eager FPU state restoration, but not for this cpu"
-							explain="kernel < 4.6 supports Eager FPU state restoration, but only on Haswell or newer cpus"
 						fi
 					fi
 				fi
 				# Very old kernels (< 3.7) are vulnerable under all conditions
 				if [ "$kern_major" -lt "3" ]; then
+					pstatus red NO "kernel version is older than kernel 3.7"
 					status=VULN
 					msg="your kernel version $kern_major.$kern_minor is older than kernel 3.7, and is vulnerable to Lazy FP State Restore on all vulnerable processors"
 				fi
 				if [ "$kern_major" = "3" ]; then
 					if [ "$kern_minor" -lt "7" ]; then
+					pstatus red NO "kernel version is older than kernel 3.7"
 					status=VULN
 					msg="your kernel version $kern_major.$kern_minor is older than kernel 3.7, and is vulnerable to Lazy FP State Restore on all vulnerable processors"		else
 						# Kernel versions 3.7 - 3.9 on pre-Haswell hardware, or if default boot options are overridden
 						if grep -q -w eagerfpu=off /proc/commandline ; then
+							pstatus red NO "kernel > 3.7, but boot option eagerfpu=off reverts to lazy FP state restoration"
 							status=VULN
 							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
-							explain="kernel > 3.7, but boot option eagerfpu=off reverts to lazy FP state restoration"
+							explain=""
 						elif grep -q -w noxsave /proc/commandline ; then
+							pstatus red NO "kernel > 3.7, but boot option noxsave reverts to lazy FP state restoration"
 							status=VULN
 							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
-							explain="kernel > 3.7, but boot option noxsave reverts to lazy FP state restoration"
 						elif echo "$cpupart" | grep -q -w -e HASWELL -e BROADWELL -e SKYLAKE -e KABYLAKE; then
+							pstatus green YES "kernel 4.0 < 4.6, on post-haswell hardware"
 							status=OK
 							msg="Mitigation: your kernel version $kern_major.$kern_minor is immunne when running a Haswell or newer cpu, provided lazy fp state restore not enabled via boot options"
 						else 
 							status=VULN
+							pstatus red NO "kernel > 3.7 supports Eager FPU state restoration, but only on Haswell or newer cpus"
 							msg="your kernel supports Eager FPU state restoration, but not for this cpu"
 							explain="kernel > 3.7 supports Eager FPU state restoration, but only on Haswell or newer cpus"
 						fi
