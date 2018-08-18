@@ -637,6 +637,7 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--batch" ]; then
 		opt_batch=1
 		opt_verbose=0
+		opt_no_color=1
 		shift
 		case "$1" in
 			text|nrpe|json|prometheus) opt_batch_format="$1"; shift;;
