@@ -133,6 +133,7 @@ opt_variant3=0
 opt_variant3a=0
 opt_variant4=0
 opt_variantl1tf=0
+opt_variantlfps=0
 opt_allvariants=1
 opt_no_sysfs=0
 opt_sysfs_only=0
@@ -259,6 +260,7 @@ _is_cpu_vulnerable_cached()
 		[ "$1" = 3a   ] && return $variant3a
 		[ "$1" = 4    ] && return $variant4
 		[ "$1" = l1tf ] && return $variantl1tf
+                [ "$1" = lfps ] && return $variantlfps
 	}
 	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
 	exit 255
@@ -282,6 +284,7 @@ is_cpu_vulnerable()
 	variant3a=''
 	variant4=''
 	variantl1tf=''
+        variantlfps=''
 
 	if is_cpu_specex_free; then
 		variant1=immune
@@ -290,6 +293,7 @@ is_cpu_vulnerable()
 		variant3a=immune
 		variant4=immune
 		variantl1tf=immune
+                variantlfps=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
@@ -350,6 +354,30 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: intel family < 6 is immune"
 			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
+                # LFPS 
+		if [ "$cpu_family" = 6 ]; then
+			# LFPS affects all Core-based intel processors 
+			# (https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00145.html)
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"          ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT1" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT2" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_MERRIFIELD" ]; then
+
+				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune"
+				[ -z "$variantlfps" ] && variantlfps=immune
+			else
+				_debug "is_cpu_vulnerable: intel family 6 is vuln"
+				variantlfps=vuln
+			fi
+		elif [ "$cpu_family" -lt 6 ]; then
+			_debug "is_cpu_vulnerable: intel family < 6 is immune"
+                        [ -z "$variantl1tf" ] && variantlfps=immune
+		fi
 	elif is_amd; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
@@ -364,10 +392,12 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
 		variantl1tf=immune
+                variantlfps=immune
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		variant3=immune
 		variant3a=immune
 		variantl1tf=immune
+                variantlfps=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -456,15 +486,17 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 		variantl1tf=immune
+                variantlfps=immune
 	fi
-	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
+	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <variantlfps>"
 	[ "$variant1"    = "immune" ] && variant1=1    || variant1=0
 	[ "$variant2"    = "immune" ] && variant2=1    || variant2=0
 	[ "$variant3"    = "immune" ] && variant3=1    || variant3=0
 	[ "$variant3a"   = "immune" ] && variant3a=1   || variant3a=0
 	[ "$variant4"    = "immune" ] && variant4=1    || variant4=0
 	[ "$variantl1tf" = "immune" ] && variantl1tf=1 || variantl1tf=0
-	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
+        [ "$variantlfps" = "immune" ] && variantlfps=1 || variantlfps=0
+	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <variantlfps>"
 	is_cpu_vulnerable_cached=1
 	_is_cpu_vulnerable_cached "$1"
 	return $?
@@ -664,6 +696,7 @@ while [ -n "$1" ]; do
 			3a)   opt_variant3a=1;   opt_allvariants=0;;
 			4)    opt_variant4=1;    opt_allvariants=0;;
 			l1tf) opt_variantl1tf=1; opt_allvariants=0;;
+                        lfps) opt_variantlfps=1; opt_allvariants=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4 or l1tf" >&2;
 				exit 255
@@ -735,6 +768,7 @@ pvulnstatus()
 			CVE-2018-3640) aka="VARIANT 3A";;
 			CVE-2018-3639) aka="VARIANT 4";;
 			CVE-2018-3615/3620/3646) aka="L1TF";;
+                        CVE-2018-3655) aka="LAZY FP STATE RESTORE";;
 		esac
 
 		case "$opt_batch_format" in
@@ -2131,7 +2165,7 @@ check_cpu()
 check_cpu_vulnerabilities()
 {
 	_info     "* CPU vulnerability to the speculative execution attack variants"
-	for v in 1 2 3 3a 4 l1tf; do
+	for v in 1 2 3 3a 4 l1tf lfps; do
 		_info_nol "  * Vulnerable to Variant $v: "
 		if is_cpu_vulnerable $v; then
 			pstatus yellow YES
@@ -3367,6 +3401,142 @@ check_variantl1tf()
 	fi
 }
 
+check_variantlfps()
+{
+	_info "\033[1;34mCVE-2018-3665 [Lazy FP State Restore]\033[0m"
+
+	status=UNK
+	sys_interface_available=0
+	cve='CVE-2018-3665'
+	msg=''
+	if ! is_cpu_vulnerable lfps; then
+		# Dont bother with kernel checking if CPU is not vulnerable
+		msg="your CPU vendor reported your CPU model as not vulnerable"
+		status=OK
+	elif [ "$opt_sysfs_only" != 1 ]; then
+		if [ "$opt_live" = 1 ]; then
+			if [ "$os" = Linux ]; then
+
+				_info "* Checking count of XRSTOR/XSAVE instructions in kernel... "
+				if [ -n "$kernel_err" ]; then
+					pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
+				else
+					if ! which "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+						pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+					else
+						nb_xsavrstor=$("${opt_arch_prefix}objdump" -d "$kernel" 2>/dev/null | grep -c -e xrstor -e xsaveopt )
+						nb_sttsclts=$("${opt_arch_prefix}objdump" -d "$kernel" 2>/dev/null | grep -c -e stts -e clts  )
+						_info_nol "Kernal contains EAGERFP logic : "
+						if [ "$nb_xsavrstor" -lt 20 ]; then
+							pstatus yellow NO "only $nb_xsavrstor, xrstor/xsave instructions found, should be >= 20 (heuristic)"
+							msg="your kernel does not appear to have EAGERFP restore logic"
+							status="VULN"
+						else
+							pstatus green YES "$nb_xsavrstor, xrstor/xsave instructions found, which is >= 20 (heuristic)"
+						fi
+					fi
+				fi
+		
+				_info_nol "* Kernel version reported immune: "
+				## Get kernel version number
+				kern_major=$(uname -r | cut -d. -f1)
+		                kern_minor=$(uname -r | cut -d. -f2)
+				kern_point=$(uname -r | cut -d. -f3)
+				# Different versions are vulnerable under different circumstances 
+				# https://blog.cyberus-technology.de/posts/2018-06-06-intel-lazyfp-vulnerability.html
+
+				# Newer kernels (>4.9) are immune 
+				if [ "$kern_major" = "4" ]; then
+					if [ "$kern_minor" -gt "8" ]; then
+						pstatus green YES "kernel version is > 4.9"
+						status=OK
+						msg="Mitigation: Kernel version is $kern_major.$kern_minor, kernel > 4.9 not vulnerable to Lazy FP State Restore"
+					# older kernels are vulnerable, or immune, depending upon certain conditions
+					# 4.6-4.8 are vulnerable if default boot options are overridden
+					elif [ $"kern_minor" -gt "5" ]; then
+						if grep -q -w eagerfpu=off /proc/commandline ; then
+							pstatus red NO "kernel > 4.6, but boot option eagerfpu=off"
+							status=VULN
+							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
+							explain="kernel > 4.6, but boot option eagerfpu=off reverts to lazy FP state restoration"
+						else
+							pstatus green YES "kernel > 4.6 and lazy fp state restore not enabled via boot options"
+							status=OK
+							msg="Mitigation: Kernel version is $kern_major.$kern_minor"
+						fi
+					# kernel 4.4 < 138 has its own issues
+					elif [ "$kern_minor" = "4" ] && [ "$kern_point" -lt "138" ]; then
+						status=VULN
+						msg="your kernel version $kern_major.$kern_minor has documented a bug in eager FPU switching code"
+						explain="kernel versions 4.4 before point release 138 have a bug in the eager FPU switching code, leaving them vulnerable to Lazy FP State Restore"
+					else
+						# <4.6 are vulnerable on pre-Haswell hardware, or if default boot options are overridden
+						if grep -q -w eagerfpu=off /proc/commandline ; then
+							pstatus red NO "kernel < 4.6, but boot option eagerfpu=off"
+							status=VULN
+							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
+						elif grep -q -w noxsave /proc/commandline ; then
+							status=VULN
+							pstatus red NO "kernel < 4.6, but boot option noxsave"
+							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
+						elif echo "$cpupart" | grep -q -w -e HASWELL -e BROADWELL -e SKYLAKE -e KABYLAKE; then
+							pstatus green YES "kernel 4.0 < 4.6, on post-haswell hardware"
+							status=OK
+							msg="Mitigation: your kernel version $kern_major.$kern_minor is immunne when running a Haswell or newer cpu, provided lazy fp state restore not enabled via boot options"
+						else 
+							pstatus red NO "kernel < 4.6 supports Eager FPU state restoration, but only on Haswell or newer cpus"
+							status=VULN
+							msg="your kernel supports Eager FPU state restoration, but not for this cpu"
+						fi
+					fi
+				fi
+				# Very old kernels (< 3.7) are vulnerable under all conditions
+				if [ "$kern_major" -lt "3" ]; then
+					pstatus red NO "kernel version is older than kernel 3.7"
+					status=VULN
+					msg="your kernel version $kern_major.$kern_minor is older than kernel 3.7, and is vulnerable to Lazy FP State Restore on all vulnerable processors"
+				fi
+				if [ "$kern_major" = "3" ]; then
+					if [ "$kern_minor" -lt "7" ]; then
+					pstatus red NO "kernel version is older than kernel 3.7"
+					status=VULN
+					msg="your kernel version $kern_major.$kern_minor is older than kernel 3.7, and is vulnerable to Lazy FP State Restore on all vulnerable processors"		else
+						# Kernel versions 3.7 - 3.9 on pre-Haswell hardware, or if default boot options are overridden
+						if grep -q -w eagerfpu=off /proc/commandline ; then
+							pstatus red NO "kernel > 3.7, but boot option eagerfpu=off reverts to lazy FP state restoration"
+							status=VULN
+							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
+							explain=""
+						elif grep -q -w noxsave /proc/commandline ; then
+							pstatus red NO "kernel > 3.7, but boot option noxsave reverts to lazy FP state restoration"
+							status=VULN
+							msg="your kernel supports Eager FPU state restoration, but it is disabled at boot"
+						elif echo "$cpupart" | grep -q -w -e HASWELL -e BROADWELL -e SKYLAKE -e KABYLAKE; then
+							pstatus green YES "kernel 4.0 < 4.6, on post-haswell hardware"
+							status=OK
+							msg="Mitigation: your kernel version $kern_major.$kern_minor is immunne when running a Haswell or newer cpu, provided lazy fp state restore not enabled via boot options"
+						else 
+							status=VULN
+							pstatus red NO "kernel > 3.7 supports Eager FPU state restoration, but only on Haswell or newer cpus"
+							msg="your kernel supports Eager FPU state restoration, but not for this cpu"
+							explain="kernel > 3.7 supports Eager FPU state restoration, but only on Haswell or newer cpus"
+						fi
+					fi
+				fi
+	                else
+			status=VULN
+			msg="your CPU is known to be vulnerable, but more thorough mitigation checking by this script is being worked on (check often for new versions!)"
+			fi
+		fi
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
+
+	pvulnstatus $cve "$status" "$msg"
+}
+
 if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
 	check_cpu
 	check_cpu_vulnerabilities
@@ -3396,6 +3566,10 @@ if [ "$opt_variant4" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 fi
 if [ "$opt_variantl1tf" = 1 ] || [ "$opt_allvariants" = 1 ]; then
 	check_variantl1tf
+	_info
+fi
+if [ "$opt_variantlfps" = 1 ] || [ "$opt_allvariants" = 1 ]; then
+	check_variantlfps
 	_info
 fi
 
