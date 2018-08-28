@@ -3335,7 +3335,7 @@ check_CVE_2017_5754_linux()
 				if [ -n "$kpti_support" ]; then
 					if [ -e "/sys/kernel/debug/x86/pti_enabled" ]; then
 						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > /sys/kernel/debug/x86/pti_enabled\`"
-					elif grep -q -w nopti -w pti=off "$procfs/cmdline"; then
+					elif grep -q -w -e nopti -e pti=off "$procfs/cmdline"; then
 						explain "Your kernel supports PTI but it has been disabled on command-line, remove the nopti or pti=off option from your bootloader configuration"
 					else
 						explain "Your kernel supports PTI but it has been disabled, check \`dmesg\` right after boot to find clues why the system disabled it"
