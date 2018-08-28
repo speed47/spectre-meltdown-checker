@@ -1278,7 +1278,7 @@ is_latest_known_ucode()
 {
 	# 0: yes, 1: no, 2: unknown
 	parse_cpu_details
-	ucode_latest="latest microcode version of your CPU is not known to this script"
+	ucode_latest="latest microcode version for your CPU model is unknown"
 	is_intel || return 2
 	# https://www.intel.com/content/dam/www/public/us/en/documents/sa00115-microcode-update-guidance.pdf
 	# ps2txt sa00115-microcode-update-guidance.ps | grep -Eo '[0-9A-F]+ [0-9A-F]+ [^ ]+ Production 0x[A-F0-9]+ 0x[^ ]+' | awk '{print "0x"$1","$6" \\"}' | uniq
@@ -1323,9 +1323,9 @@ is_latest_known_ucode()
 	do
 		cpuid_decimal=$(( $(echo "$tuple" | cut -d, -f1) ))
 		ucode_decimal=$(( $(echo "$tuple" | cut -d, -f2) ))
-		ucode_latest=$(printf "you have version 0x%x and latest known version is 0x%x" "$cpu_ucode" "$ucode_decimal")
 		if [ "$cpuid_decimal" = "$cpu_cpuid" ]; then
 			_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $cpuid_decimal"
+			ucode_latest=$(printf "latest known version is 0x%x according to Intel Microcode Guidance, August 8 2018" "$ucode_decimal")
 			if [ "$cpu_ucode" -ge "$ucode_decimal" ]; then
 				return 0
 			else
