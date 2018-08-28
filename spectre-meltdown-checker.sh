@@ -1487,6 +1487,8 @@ if [ "$opt_live" = 1 ]; then
 		opt_config="/lib/modules/$(uname -r)/config"
 	elif [ -e "/boot/config-$(uname -r)" ]; then
 		opt_config="/boot/config-$(uname -r)"
+	elif [ -e "/etc/kernels/kernel-config-$(uname -m)-$(uname -r)" ]; then
+		opt_config="/etc/kernels/kernel-config-$(uname -m)-$(uname -r)"
 	fi
 else
 	_info "Checking for vulnerabilities against specified kernel"
