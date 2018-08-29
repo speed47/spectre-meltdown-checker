@@ -3061,9 +3061,14 @@ check_variant3_linux()
 		mount_debugfs
 		_info_nol "  * PTI enabled and active: "
 		if [ "$opt_live" = 1 ]; then
-			dmesg_grep="Kernel/User page tables isolation: enabled"
-			dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
-			dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
+		        if [ "$(uname -m)" = "aarch64" ]; then
+			    dmesg_grep="CPU features: detected: Kernel page table isolation \(KPTI\)"
+			    dmesg_grep="$dmesg_grep|CPU features: detected feature: Kernel page table isolation \(KPTI\)"
+			else
+			    dmesg_grep="Kernel/User page tables isolation: enabled"
+			    dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
+			    dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
+			fi
 			if grep ^flags "$procfs/cpuinfo" | grep -qw pti; then
 				# vanilla PTI patch sets the 'pti' flag in cpuinfo
 				_debug "kpti_enabled: found 'pti' flag in $procfs/cpuinfo"
