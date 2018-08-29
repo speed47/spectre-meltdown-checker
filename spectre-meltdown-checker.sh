@@ -3237,6 +3237,8 @@ check_CVE_2017_5754_linux()
 			dmesg_grep="Kernel/User page tables isolation: enabled"
 			dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
 			dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
+			# aarch64
+			dmesg_grep="$dmesg_grep|CPU features: detected( feature)?: Kernel page table isolation \(KPTI\)"
 			if grep ^flags "$procfs/cpuinfo" | grep -qw pti; then
 				# vanilla PTI patch sets the 'pti' flag in cpuinfo
 				_debug "kpti_enabled: found 'pti' flag in $procfs/cpuinfo"
