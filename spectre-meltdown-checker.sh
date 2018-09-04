@@ -66,7 +66,7 @@ show_usage()
 		--arch-prefix PREFIX	specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
 					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
 		--batch text		produce machine readable output, this is the default if --batch is specified alone
-        --batch short		produce only one line with the vulnerabilities separated by spaces
+		--batch short		produce only one line with the vulnerabilities separated by spaces
 		--batch json		produce JSON output formatted for Puppet, Ansible, Chef...
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
