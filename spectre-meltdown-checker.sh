@@ -66,6 +66,7 @@ show_usage()
 		--arch-prefix PREFIX	specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
 					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
 		--batch text		produce machine readable output, this is the default if --batch is specified alone
+        --batch short		produce only one line with the vulnerabilities separated by spaces
 		--batch json		produce JSON output formatted for Puppet, Ansible, Chef...
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
@@ -640,7 +641,7 @@ while [ -n "$1" ]; do
 		opt_no_color=1
 		shift
 		case "$1" in
-			text|nrpe|json|prometheus) opt_batch_format="$1"; shift;;
+			text|short|nrpe|json|prometheus) opt_batch_format="$1"; shift;;
 			--*) ;;    # allow subsequent flags
 			'') ;;     # allow nothing at all
 			*)
@@ -739,6 +740,7 @@ pvulnstatus()
 
 		case "$opt_batch_format" in
 			text) _echo 0 "$1: $2 ($3)";;
+            short) short_output="${short_output}$1 ";;
 			json)
 				case "$2" in
 					UNK)  is_vuln="null";;
@@ -3416,6 +3418,10 @@ if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
 	else
 		echo "OK"
 	fi
+fi
+
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "short" ]; then
+	_echo 0 "${short_output% }"
 fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
