@@ -1,4 +1,6 @@
 #! /bin/sh
+# SPDX-License-Identifier: GPL-3.0
+#
 # Spectre & Meltdown checker
 #
 # Check for the latest version at:
