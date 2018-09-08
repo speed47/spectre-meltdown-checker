@@ -959,11 +959,14 @@ read_cpuid()
 
 	if [ -e /dev/cpu/0/cpuid ]; then
 		# Linux
+		# on some kernel versions, /dev/cpu/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error
+		dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1 || load_cpuid
 		# we need _leaf to be converted to decimal for dd
 		_leaf=$(( _leaf ))
 		# to avoid using iflag=skip_bytes, which doesn't exist on old versions of dd, seek to the closer multiple-of-16
 		_ddskip=$(( _leaf / 16 ))
 		_odskip=$(( _leaf - _ddskip * 16 ))
+		# now read the value
 		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip=$_ddskip count=$((_odskip + 1)) 2>/dev/null | od -j $((_odskip * 16)) -A n -t u4)
 	elif [ -e /dev/cpuctl0 ]; then
 		# BSD
