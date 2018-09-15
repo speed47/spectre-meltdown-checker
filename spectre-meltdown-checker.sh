@@ -1473,6 +1473,9 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/run/booted-system/kernel" ] && opt_kernel="/run/booted-system/kernel"
 		# systemd kernel-install:
 		[ -e "/etc/machine-id" ] && [ -e "/boot/$(cat /etc/machine-id)/$(uname -r)/linux" ] && opt_kernel="/boot/$(cat /etc/machine-id)/$(uname -r)/linux"
+		# Clear Linux:
+		str_uname=$(uname -r)
+		[ -e "/lib/kernel" ] && opt_kernel="/lib/kernel/org.clearlinux.${str_uname##*.}.${str_uname%.*}"
 	fi
 
 	# system.map
@@ -1482,6 +1485,8 @@ if [ "$opt_live" = 1 ]; then
 		opt_map="/lib/modules/$(uname -r)/System.map"
 	elif [ -e "/boot/System.map-$(uname -r)" ] ; then
 		opt_map="/boot/System.map-$(uname -r)"
+	elif [ -e "/lib/kernel/config-$(uname -r)" ]; then
+		opt_config="/lib/kernel/config-$(uname -r)"
 	fi
 
 	# config
