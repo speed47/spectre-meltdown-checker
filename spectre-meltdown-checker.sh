@@ -60,6 +60,7 @@ show_usage()
 		--verbose, -v		increase verbosity level, possibly several times
 		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
 		--paranoid		require IBPB to deem Variant 2 as mitigated
+					also require SMT disabled + unconditional L1D flush to deem Foreshadow-NG VMM as mitigated
 
 		--no-sysfs		don't use the /sys interface even if present [Linux]
 		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
@@ -73,10 +74,12 @@ show_usage()
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
-		--variant [1,2,3,3a,4,l1tf]	specify which variant you'd like to check, by default all variants are checked,
+		--variant [1,2,3,3a,4,l1tf]	specify which variant you'd like to check, by default all variants are checked
+		--cve [cve1,cve2,...]		specify which CVE you'd like to check, by default all supported CVEs are checked
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
+		--vmm [auto,yes,no]	override the detection of the presence of an hypervisor (for CVE-2018-3646), default: auto
 
 	Return codes:
 		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
@@ -130,25 +133,23 @@ opt_no_color=0
 opt_batch=0
 opt_batch_format="text"
 opt_verbose=1
-opt_variant1=0
-opt_variant2=0
-opt_variant3=0
-opt_variant3a=0
-opt_variant4=0
-opt_variantl1tf=0
-opt_allvariants=1
+opt_cve_list=''
+opt_cve_all=1
 opt_no_sysfs=0
 opt_sysfs_only=0
 opt_coreos=0
 opt_arch_prefix=''
 opt_hw_only=0
 opt_no_hw=0
+opt_vmm=-1
 opt_explain=0
 opt_paranoid=0
 
 global_critical=0
 global_unknown=0
 nrpe_vuln=""
+
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -251,29 +252,45 @@ explain()
 	fi
 }
 
+cve2name()
+{
+	case "$1" in
+		CVE-2017-5753) echo "Spectre Variant 1, bounds check bypass";;
+		CVE-2017-5715) echo "Spectre Variant 2, branch target injection";;
+		CVE-2017-5754) echo "Variant 3, Meltdown, rogue data cache load";;
+		CVE-2018-3640) echo "Variant 3a, rogue system register read";;
+		CVE-2018-3639) echo "Variant 4, speculative store bypass";;
+		CVE-2018-3615) echo "Foreshadow (SGX), L1 terminal fault";;
+		CVE-2018-3620) echo "Foreshadow-NG (OS), L1 terminal fault";;
+		CVE-2018-3646) echo "Foreshadow-NG (VMM), L1 terminal fault";;
+	esac
+}
+
 is_cpu_vulnerable_cached=0
 _is_cpu_vulnerable_cached()
 {
 	# shellcheck disable=SC2086
-	{
-		[ "$1" = 1    ] && return $variant1
-		[ "$1" = 2    ] && return $variant2
-		[ "$1" = 3    ] && return $variant3
-		[ "$1" = 3a   ] && return $variant3a
-		[ "$1" = 4    ] && return $variant4
-		[ "$1" = l1tf ] && return $variantl1tf
-	}
+	case "$1" in
+		CVE-2017-5753) return $variant1;;
+		CVE-2017-5715) return $variant2;;
+		CVE-2017-5754) return $variant3;;
+		CVE-2018-3640) return $variant3a;;
+		CVE-2018-3639) return $variant4;;
+		CVE-2018-3615) return $variantl1tf_sgx;;
+		CVE-2018-3620) return $variantl1tf;;
+		CVE-2018-3646) return $variantl1tf;;
+	esac
 	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
 	exit 255
 }
 
 is_cpu_vulnerable()
 {
-	# param: 1, 2, 3, 3a or 4 (variant)
+	# param: one of the $supported_cve_list items
 	# returns 0 if vulnerable, 1 if not vulnerable
 	# (note that in shell, a return of 0 is success)
 	# by default, everything is vulnerable, we work in a "whitelist" logic here.
-	# usage: is_cpu_vulnerable 2 && do something if vulnerable
+	# usage: is_cpu_vulnerable CVE-xxxx-yyyy && do something if vulnerable
 	if [ "$is_cpu_vulnerable_cached" = 1 ]; then
 		_is_cpu_vulnerable_cached "$1"
 		return $?
@@ -467,7 +484,10 @@ is_cpu_vulnerable()
 	[ "$variant3a"   = "immune" ] && variant3a=1   || variant3a=0
 	[ "$variant4"    = "immune" ] && variant4=1    || variant4=0
 	[ "$variantl1tf" = "immune" ] && variantl1tf=1 || variantl1tf=0
-	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
+	[ "$variantl1tf" = "immune" ] && variantl1tf_sgx=1 || variantl1tf_sgx=0
+	# even if we are vulnerable to L1TF, if there's no SGX, we're safe for the original foreshadow
+	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
+	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
 	is_cpu_vulnerable_cached=1
 	_is_cpu_vulnerable_cached "$1"
 	return $?
@@ -655,18 +675,43 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "-v" ] || [ "$1" = "--verbose" ]; then
 		opt_verbose=$(( opt_verbose + 1 ))
 		shift
+	elif [ "$1" = "--cve" ]; then
+		if [ -z "$2" ]; then
+			echo "$0: error: option --cve expects a parameter, supported CVEs are: $supported_cve_list" >&2
+			exit 255
+		fi
+		selected_cve=$(echo "$supported_cve_list" | grep -iwo "$2")
+		if [ -n "$selected_cve" ]; then
+			opt_cve_list="$opt_cve_list $selected_cve"
+			opt_cve_all=0
+		else
+			echo "$0: error: unsupported CVE specified ('$2'), supported CVEs are: $supported_cve_list" >&2
+			exit 255
+		fi
+		shift 2
+	elif [ "$1" = "--vmm" ]; then
+		if [ -z "$2" ]; then
+			echo "$0: error: option --vmm (auto, yes, no)" >&2
+			exit 255
+		fi
+		case "$2" in
+			auto) opt_vmm=-1;;
+			yes)  opt_vmm=1;;
+			no)   opt_vmm=0;;
+		esac
+		shift 2
 	elif [ "$1" = "--variant" ]; then
 		if [ -z "$2" ]; then
 			echo "$0: error: option --variant expects a parameter (1, 2, 3, 3a, 4 or l1tf)" >&2
 			exit 255
 		fi
 		case "$2" in
-			1)    opt_variant1=1;    opt_allvariants=0;;
-			2)    opt_variant2=1;    opt_allvariants=0;;
-			3)    opt_variant3=1;    opt_allvariants=0;;
-			3a)   opt_variant3a=1;   opt_allvariants=0;;
-			4)    opt_variant4=1;    opt_allvariants=0;;
-			l1tf) opt_variantl1tf=1; opt_allvariants=0;;
+			1)    opt_cve_list="$opt_cve_list CVE-2017-5753"; opt_cve_all=0;;
+			2)    opt_cve_list="$opt_cve_list CVE-2017-5715"; opt_cve_all=0;;
+			3)    opt_cve_list="$opt_cve_list CVE-2017-5754"; opt_cve_all=0;;
+			3a)   opt_cve_list="$opt_cve_list CVE-2018-3640"; opt_cve_all=0;;
+			4)    opt_cve_list="$opt_cve_list CVE-2018-3639"; opt_cve_all=0;;
+			l1tf) opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4 or l1tf" >&2;
 				exit 255
@@ -770,9 +815,9 @@ pvulnstatus()
 	shift 2
 	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
 	case "$vulnstatus" in
-		UNK)  pstatus yellow 'UNKNOWN'        "$@";;
-		VULN) pstatus red    'VULNERABLE'     "$@";;
-		OK)   pstatus green  'NOT VULNERABLE' "$@";;
+		UNK)  pstatus yellow 'UNKNOWN'        "$@"; final_summary="$final_summary \033[43m\033[30m$pvulnstatus_last_cve:??\033[0m";;
+		VULN) pstatus red    'VULNERABLE'     "$@"; final_summary="$final_summary \033[41m\033[30m$pvulnstatus_last_cve:KO\033[0m";;
+		OK)   pstatus green  'NOT VULNERABLE' "$@"; final_summary="$final_summary \033[42m\033[30m$pvulnstatus_last_cve:OK\033[0m";;
 	esac
 }
 
@@ -1363,17 +1408,13 @@ if [ "$opt_live_explicit" = 1 ]; then
 	fi
 fi
 if [ "$opt_hw_only" = 1 ]; then
-	if [ "$opt_allvariants" = 0 ]; then
+	if [ "$opt_cve_all" = 0 ]; then
 		show_usage
 		echo "$0: error: incompatible modes specified, --hw-only vs --variant" >&2
 		exit 255
 	else
-		opt_allvariants=0
-		opt_variant1=0
-		opt_variant2=0
-		opt_variant3=0
-		opt_variant3a=0
-		opt_variant4=0
+		opt_cve_all=0
+		opt_cve_list=''
 	fi
 fi
 
@@ -1593,18 +1634,26 @@ _info
 
 sys_interface_check()
 {
-	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$1" ] || return 1
+	file="$1"
+	regex="$2"
+	mode="$3"
+	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ] || return 1
+	[ -n "$regex" ] || regex='.*'
+	msg=$(grep -Eo "$regex" "$file")
+	if [ "$mode" = silent ]; then
+		_info "* Information from the /sys interface: $msg"
+		return 0
+	fi
 	_info_nol "* Mitigated according to the /sys interface: "
-	msg=$(cat "$1")
-	if grep -qi '^not affected' "$1"; then
+	if echo "$msg" | grep -qi '^not affected'; then
 		# Not affected
 		status=OK
 		pstatus green YES "$msg"
-	elif grep -qi '^mitigation' "$1"; then
+	elif echo "$msg" | grep -qi '^mitigation'; then
 		# Mitigation: PTI
 		status=OK
 		pstatus green YES "$msg"
-	elif grep -qi '^vulnerable' "$1"; then
+	elif echo "$msg" | grep -qi '^vulnerable'; then
 		# Vulnerable
 		status=VULN
 		pstatus yellow NO "$msg"
@@ -1612,7 +1661,7 @@ sys_interface_check()
 		status=UNK
 		pstatus yellow UNKNOWN "$msg"
 	fi
-	_debug "sys_interface_check: $1=$msg"
+	_debug "sys_interface_check: $file=$msg (re=$regex)"
 	return 0
 }
 
@@ -1997,6 +2046,7 @@ check_cpu()
 		if [ $val -eq 0 ]; then
 			if [ $cpu_mismatch -eq 0 ]; then
 				pstatus green YES
+				cpu_flush_cmd=1
 			else
 				pstatus green YES "But not in all CPUs"
 			fi
@@ -2118,6 +2168,22 @@ check_cpu()
 		pstatus blue NO
 	fi
 
+	_info_nol "  * CPU supports Software Guard Extensions (SGX): "
+	ret=1
+	cpuid_sgx=0
+	if is_intel; then
+		read_cpuid 0x7 $EBX 2 1 1; ret=$?
+	fi
+	if [ $ret -eq 0 ]; then
+		pstatus blue YES
+		cpuid_sgx=1
+	elif [ $ret -eq 2 ]; then
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		cpuid_sgx=-1
+	else
+		pstatus green NO
+	fi
+
 	_info_nol "  * CPU microcode is known to cause stability problems: "
 	if is_ucode_blacklisted; then
 		pstatus red YES "$ucode_found"
@@ -2145,9 +2211,9 @@ check_cpu()
 check_cpu_vulnerabilities()
 {
 	_info     "* CPU vulnerability to the speculative execution attack variants"
-	for v in 1 2 3 3a 4 l1tf; do
-		_info_nol "  * Vulnerable to Variant $v: "
-		if is_cpu_vulnerable $v; then
+	for cve in $supported_cve_list; do
+		_info_nol "  * Vulnerable to $cve ($(cve2name "$cve")): "
+		if is_cpu_vulnerable "$cve"; then
 			pstatus yellow YES
 		else
 			pstatus green NO
@@ -2183,22 +2249,24 @@ check_redhat_canonical_spectre()
 	fi
 }
 
-
 ###################
-# SPECTRE VARIANT 1
-check_variant1()
+# SPECTRE 1 SECTION
+
+# bounds check bypass aka 'Spectre Variant 1'
+check_CVE_2017_5753()
 {
-	_info "\033[1;34mCVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'\033[0m"
+	cve='CVE-2017-5753'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 	if [ "$os" = Linux ]; then
-		check_variant1_linux
+		check_CVE_2017_5753_linux
 	elif echo "$os" | grep -q BSD; then
-		check_variant1_bsd
+		check_CVE_2017_5753_bsd
 	else
 		_warn "Unsupported OS ($os)"
 	fi
 }
 
-check_variant1_linux()
+check_CVE_2017_5753_linux()
 {
 	status=UNK
 	sys_interface_available=0
@@ -2348,9 +2416,7 @@ check_variant1_linux()
 	fi
 
 	# report status
-	cve='CVE-2017-5753'
-
-	if ! is_cpu_vulnerable 1; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
@@ -2383,10 +2449,9 @@ check_variant1_linux()
 	fi
 }
 
-check_variant1_bsd()
+check_CVE_2017_5753_bsd()
 {
-	cve='CVE-2017-5753'
-	if ! is_cpu_vulnerable 1; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
@@ -2394,22 +2459,24 @@ check_variant1_bsd()
 	fi
 }
 
-
 ###################
-# SPECTRE VARIANT 2
-check_variant2()
+# SPECTRE 2 SECTION
+
+# branch target injection aka 'Spectre Variant 2'
+check_CVE_2017_5715()
 {
-	_info "\033[1;34mCVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'\033[0m"
+	cve='CVE-2017-5715'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 	if [ "$os" = Linux ]; then
-		check_variant2_linux
+		check_CVE_2017_5715_linux
 	elif echo "$os" | grep -q BSD; then
-		check_variant2_bsd
+		check_CVE_2017_5715_bsd
 	else
 		_warn "Unsupported OS ($os)"
 	fi
 }
 
-check_variant2_linux()
+check_CVE_2017_5715_linux()
 {
 	status=UNK
 	sys_interface_available=0
@@ -2771,8 +2838,7 @@ check_variant2_linux()
 		status=UNK
 	fi
 
-	cve='CVE-2017-5715'
-	if ! is_cpu_vulnerable 2; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
@@ -2909,7 +2975,7 @@ check_variant2_linux()
 	# "Mitigation: IBP disabled",
 }
 
-check_variant2_bsd()
+check_CVE_2017_5715_bsd()
 {
 	_info     "* Mitigation 1"
 	_info_nol "  * Kernel supports IBRS: "
@@ -2946,8 +3012,7 @@ check_variant2_bsd()
 		fi
 	fi
 
-	cve='CVE-2017-5715'
-	if ! is_cpu_vulnerable 2; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ "$retpoline" = 1 ]; then
@@ -2966,8 +3031,8 @@ check_variant2_bsd()
 	fi
 }
 
-########################
-# MELTDOWN aka VARIANT 3
+##################
+# MELTDOWN SECTION
 
 # no security impact but give a hint to the user in verbose mode
 # about PCID/INVPCID cpuid features that must be present to avoid
@@ -3001,19 +3066,21 @@ pti_performance_check()
 	fi
 }
 
-check_variant3()
+# rogue data cache load aka 'Meltdown' aka 'Variant 3'
+check_CVE_2017_5754()
 {
-	_info "\033[1;34mCVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'\033[0m"
+	cve='CVE-2017-5754'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 	if [ "$os" = Linux ]; then
-		check_variant3_linux
+		check_CVE_2017_5754_linux
 	elif echo "$os" | grep -q BSD; then
-		check_variant3_bsd
+		check_CVE_2017_5754_bsd
 	else
 		_warn "Unsupported OS ($os)"
 	fi
 }
 
-check_variant3_linux()
+check_CVE_2017_5754_linux()
 {
 	status=UNK
 	sys_interface_available=0
@@ -3154,8 +3221,7 @@ check_variant3_linux()
 		fi
 	fi
 
-	cve='CVE-2017-5754'
-	if ! is_cpu_vulnerable 3; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
@@ -3223,7 +3289,7 @@ check_variant3_linux()
 	fi
 }
 
-check_variant3_bsd()
+check_CVE_2017_5754_bsd()
 {
 	_info_nol "* Kernel supports Page Table Isolation (PTI): "
 	kpti_enabled=$(sysctl -n vm.pmap.pti 2>/dev/null)
@@ -3242,8 +3308,7 @@ check_variant3_bsd()
 
 	pti_performance_check
 
-	cve='CVE-2017-5754'
-	if ! is_cpu_vulnerable 3; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ "$kpti_enabled" = 1 ]; then
@@ -3255,9 +3320,14 @@ check_variant3_bsd()
 	fi
 }
 
-check_variant3a()
+####################
+# VARIANT 3A SECTION
+
+# rogue system register read aka 'Variant 3a'
+check_CVE_2018_3640()
 {
-	_info "\033[1;34mCVE-2018-3640 [rogue system register read] aka 'Variant 3a'\033[0m"
+	cve='CVE-2018-3640'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
 	status=UNK
 	sys_interface_available=0
@@ -3272,8 +3342,7 @@ check_variant3a()
 		pstatus yellow NO
 	fi
 
-	cve='CVE-2018-3640'
-	if ! is_cpu_vulnerable 3a; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -n "$cpuid_ssbd" ]; then
@@ -3284,9 +3353,14 @@ check_variant3a()
 	fi
 }
 
-check_variant4()
+###################
+# VARIANT 4 SECTION
+
+# speculative store bypass aka 'Variant 4'
+check_CVE_2018_3639()
 {
-	_info "\033[1;34mCVE-2018-3639 [speculative store bypass] aka 'Variant 4'\033[0m"
+	cve='CVE-2018-3639'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
 	status=UNK
 	sys_interface_available=0
@@ -3324,8 +3398,7 @@ check_variant4()
 		status=UNK
 	fi
 
-	cve='CVE-2018-3639'
-	if ! is_cpu_vulnerable 4; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ] || [ "$msg" = "Vulnerable" ]; then
@@ -3351,33 +3424,264 @@ check_variant4()
 	fi
 }
 
-check_variantl1tf()
+###########################
+# L1TF / FORESHADOW SECTION
+
+# L1 terminal fault (SGX) aka 'Foreshadow'
+check_CVE_2018_3615()
 {
-	_info "\033[1;34mCVE-2018-3615/3620/3646 [L1 terminal fault] aka 'Foreshadow & Foreshadow-NG'\033[0m"
+	cve='CVE-2018-3615'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+
+	_info_nol "* CPU microcode mitigates the vulnerability: "
+	if [ "$cpu_flush_cmd" = 1 ] && [ "$cpuid_sgx" = 1 ]; then
+		# no easy way to detect a fixed SGX but we know that
+		# microcodes that have the FLUSH_CMD MSR also have the
+		# fixed SGX (for CPUs that support it)
+		pstatus green YES
+	elif [ "$cpuid_sgx" = 1 ]; then
+		pstatus red NO
+	else
+		pstatus blue N/A
+	fi
+
+	if ! is_cpu_vulnerable "$cve"; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ "$cpuid_sgx" = 1 ]; then
+		if [ "$cpu_flush_cmd" = 1 ]; then
+			pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
+		else
+			pvulnstatus $cve VULN "your CPU supports SGX and the microcode is not up to date"
+		fi
+	else
+		pvulnstatus $cve UNK "couldn't tell if your CPU supports SGX"
+	fi
+}
+
+# L1 terminal fault (OS) aka 'Foreshadow-NG (OS)'
+check_CVE_2018_3620()
+{
+	cve='CVE-2018-3620'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" '^[^;]+'; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		:
+		_info_nol "* Kernel supports PTE inversion: "
+		if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			pteinv_supported=-1
+		else
+			if "${opt_arch_prefix}strings" "$kernel" | grep -Fq 'PTE Inversion'; then
+				pstatus green YES "found in kernel image"
+				_debug "pteinv: found pte inversion evidence in kernel image"
+				pteinv_supported=1
+			else
+				pstatus yellow NO
+				pteinv_supported=0
+			fi
+		fi
+
+		_info_nol "* PTE inversion enabled and active: "
+		if [ "$opt_live" = 1 ]; then
+			if [ "$sys_interface_available" = 1 ]; then
+				if grep -q 'Mitigation: PTE Inversion' /sys/devices/system/cpu/vulnerabilities/l1tf; then
+					pstatus green YES
+					pteinv_active=1
+				else
+					pstatus yellow NO
+					pteinv_active=0
+				fi
+			else
+				pstatus yellow UNKNOWN "sysfs interface not available"
+				pteinv_active=-1
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
 		status=UNK
 	fi
 
-	cve='CVE-2018-3615/3620/3646'
-	if ! is_cpu_vulnerable l1tf; then
+	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ -z "$msg" ]; then
-		pvulnstatus $cve VULN "your CPU is known to be vulnerable, and your kernel doesn't report that it mitigates the issue, but more thorough mitigation checking by this script is being worked on (check often for new versions!)"
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		if [ "$pteinv_supported" = 1 ]; then
+			if [ "$pteinv_active" = 1 ] || [ "$opt_live" != 1 ]; then
+				pvulnstatus $cve OK "PTE inversion mitigates the vunerability"
+			else
+				pvulnstatus $cve VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
+			fi
+		else
+			pvulnstatus $cve VULN "Your kernel doesn't support PTE inversion, update it"
+		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
+	fi
+}
+
+# L1TF VMM
+check_CVE_2018_3646()
+{
+	cve='CVE-2018-3646'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" 'VMX:.*' silent; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
+		_info_nol "* This system is a host running an hypervisor: "
+		has_vmm=$opt_vmm
+		if [ "$has_vmm" = -1 ]; then
+			# FIXME enhance detection, this one is pretty basic/stupid
+			has_vmm=0
+			# shellcheck disable=SC2009
+			ps ax | grep -v -e grep -e '\[kvm' | grep -q -e qemu -e kvm && has_vmm=1
+		fi
+		if [ "$has_vmm" = 0 ]; then
+			if [ "$opt_vmm" != -1 ]; then
+				pstatus green NO "forced from command line"
+			else
+				pstatus green NO
+			fi
+		else
+			if [ "$opt_vmm" != -1 ]; then
+				pstatus blue YES "forced from command line"
+			else
+				pstatus blue YES
+			fi
+		fi
+
+		_info "* Mitigation 1 (KVM)"
+		_info_nol "  * EPT is disabled: "
+		if [ "$opt_live" = 1 ]; then
+			if ! [ -r /sys/module/kvm_intel/parameters/ept ]; then
+				pstatus blue N/A "the kvm_intel module is not loaded"
+			elif [ "$(cat /sys/module/kvm_intel/parameters/ept)" = N ]; then
+				pstatus green YES
+				ept_disabled=1
+			else
+				pstatus yellow NO
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+
+		_info "* Mitigation 2"
+		_info_nol "  * L1D flush is supported by kernel: "
+		if [ "$opt_live" = 1 ] && grep -qw flush_l1d /proc/cpuinfo; then
+			l1d_kernel='found flush_l1d in /proc/cpuinfo'
+		fi
+		if [ -z "$l1d_kernel" ]; then
+			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+				l1d_kernel_err="missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
+			elif [ -n "$kernel_err" ]; then
+				l1d_kernel_err="$kernel_err"
+			elif "${opt_arch_prefix}strings" "$kernel" | grep -qw flush_l1d; then
+				l1d_kernel='found flush_l1d in kernel image'
+			fi
+		fi
+
+		if [ -n "$l1d_kernel" ]; then
+			pstatus green YES "$l1d_kernel"
+		elif [ -n "$l1d_kernel_err" ]; then
+			pstatus yellow UNKNOWN "$l1d_kernel_err"
+		else
+			pstatus yellow NO
+		fi
+
+		_info_nol "  * L1D flush enabled: "
+		if [ "$opt_live" = 1 ]; then
+			if [ -r "/sys/devices/system/cpu/vulnerabilities/l1tf" ]; then
+				if grep -Eq 'VMX: (L1D )?vulnerable' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+					l1d_mode=0
+					pstatus yellow NO
+				elif grep -Eq 'VMX: (L1D )?conditional cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+					l1d_mode=1
+					pstatus green YES "conditional flushes"
+				elif grep -Eq 'VMX: (L1D )?cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+					l1d_mode=2
+					pstatus green YES "unconditional flushes"
+				else
+					l1d_mode=-1
+					pstatus yellow UNKNOWN "unrecognized mode"
+				fi
+			else
+				pstatus yellow UNKNOWN "can't find or read /sys/devices/system/cpu/vulnerabilities/l1tf"
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+
+		_info_nol "  * Hardware-backed L1D flush supported: "
+		if [ "$opt_live" = 1 ]; then
+			if grep -qw flush_l1d /proc/cpuinfo; then
+				pstatus green YES "performance impact of the mitigation will be greatly reduced"
+			else
+				pstatus blue NO "flush will be done in software, this is slower"
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+
+		_info_nol "  * Hyper-Threading (SMT) is enabled: "
+		is_cpu_smt_enabled; smt_enabled=$?
+		if [ "$smt_enabled" = 0 ]; then
+			pstatus yellow YES
+		elif [ "$smt_enabled" = 1 ]; then
+			pstatus green NO
+		else
+			pstatus yellow UNKNOWN
+		fi
+
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
+
+	if ! is_cpu_vulnerable "$cve"; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ "$has_vmm" = 0 ]; then
+		pvulnstatus $cve OK "this system is not running an hypervisor"
+	else
+		if [ "$ept_disabled" = 1 ]; then
+			pvulnstatus $cve OK "EPT is disabled which mitigates the vulnerability"
+		elif [ "$opt_paranoid" = 0 ]; then
+			if [ "$l1d_mode" -ge 1 ]; then
+				pvulnstatus $cve OK "L1D flushing is enabled and mitigates the vulnerability"
+			else
+				pvulnstatus $cve VULN "disable EPT or enabled L1D flushing to mitigate the vulnerability"
+			fi
+		else
+			if [ "$l1d_mode" -ge 2 ]; then
+				if [ "$smt_enabled" = 1 ]; then
+					pvulnstatus $cve OK "L1D unconditional flushing and Hyper-Threading disabled are mitigating the vulnerability"
+				else
+					pvulnstatus $cve VULN "Hyper-Threading must be disabled to fully mitigate the vulnerability"
+				fi
+			else
+				if [ "$smt_enabled" = 1 ]; then
+					pvulnstatus $cve VULN "L1D unconditional flushing should be enabled to fully mitigate the vulnerability"
+				else
+					pvulnstatus $cve VULN "enable L1D unconditional flushing and disable Hyper-Threading to fully mitigate the vulnerability"
+				fi
+			fi
+		fi
 	fi
 }
 
@@ -3388,30 +3692,16 @@ if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
 fi
 
 # now run the checks the user asked for
-if [ "$opt_variant1" = 1 ] || [ "$opt_allvariants" = 1 ]; then
-	check_variant1
-	_info
-fi
-if [ "$opt_variant2" = 1 ] || [ "$opt_allvariants" = 1 ]; then
-	check_variant2
-	_info
-fi
-if [ "$opt_variant3" = 1 ] || [ "$opt_allvariants" = 1 ]; then
-	check_variant3
-	_info
-fi
-if [ "$opt_variant3a" = 1 ] || [ "$opt_allvariants" = 1 ]; then
-	check_variant3a
-	_info
-fi
-if [ "$opt_variant4" = 1 ] || [ "$opt_allvariants" = 1 ]; then
-	check_variant4
-	_info
-fi
-if [ "$opt_variantl1tf" = 1 ] || [ "$opt_allvariants" = 1 ]; then
-	check_variantl1tf
-	_info
-fi
+for cve in $supported_cve_list
+do
+	if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
+		check_"$(echo "$cve" | tr - _)"
+		_info
+	fi
+done
+
+_info "> \033[46m\033[30mSUMMARY:\033[0m$final_summary"
+_info ""
 
 _vars=$(set | grep -Ev '^[A-Z_[:space:]]' | sort | tr "\n" '|')
 _debug "variables at end of script: $_vars"
