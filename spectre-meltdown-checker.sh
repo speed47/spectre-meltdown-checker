@@ -3448,14 +3448,10 @@ check_CVE_2018_3615()
 	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ "$cpuid_sgx" = 1 ]; then
-		if [ "$cpu_flush_cmd" = 1 ]; then
-			pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
-		else
-			pvulnstatus $cve VULN "your CPU supports SGX and the microcode is not up to date"
-		fi
+	elif [ "$cpu_flush_cmd" = 1 ]; then
+		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
 	else
-		pvulnstatus $cve UNK "couldn't tell if your CPU supports SGX"
+		pvulnstatus $cve VULN "your CPU supports SGX and the microcode is not up to date"
 	fi
 }
 
