@@ -949,7 +949,7 @@ mount_debugfs()
 load_msr()
 {
 	if [ "$os" = Linux ]; then
-		if ! grep -e msr /proc/modules 2>/dev/null; then
+		if ! grep -e msr "$procfs/modules" 2>/dev/null; then
 			modprobe msr 2>/dev/null && insmod_msr=1
 			_debug "attempted to load module msr, insmod_msr=$insmod_msr"
 		else
@@ -968,7 +968,7 @@ load_msr()
 load_cpuid()
 {
 	if [ "$os" = Linux ]; then
-		if ! grep -e cpuid /proc/modules 2>/dev/null; then
+		if ! grep -e cpuid "$procfs/modules" 2>/dev/null; then
 			modprobe cpuid 2>/dev/null && insmod_cpuid=1
 			_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
 		else
@@ -1474,9 +1474,9 @@ if [ "$opt_live" = 1 ]; then
 
 	# try to find the image of the current running kernel
 	# first, look for the BOOT_IMAGE hint in the kernel cmdline
-	if [ -r /proc/cmdline ] && grep -q 'BOOT_IMAGE=' /proc/cmdline; then
-		opt_kernel=$(grep -Eo 'BOOT_IMAGE=[^ ]+' /proc/cmdline | cut -d= -f2)
-		_debug "found opt_kernel=$opt_kernel in /proc/cmdline"
+	if [ -r "$procfs/cmdline" ] && grep -q 'BOOT_IMAGE=' "$procfs/cmdline"; then
+		opt_kernel=$(grep -Eo 'BOOT_IMAGE=[^ ]+' "$procfs/cmdline" | cut -d= -f2)
+		_debug "found opt_kernel=$opt_kernel in $procfs/cmdline"
 		# if the boot partition is within a btrfs subvolume, strip the subvolume name
 		# if /boot is a separate subvolume, the remainder of the code in this section should handle it
 		if echo "$opt_kernel" | grep -q "^/@"; then opt_kernel=$(echo "$opt_kernel" | sed "s:/@[^/]*::"); fi
@@ -1520,8 +1520,8 @@ if [ "$opt_live" = 1 ]; then
 	fi
 
 	# system.map
-	if [ -e /proc/kallsyms ] ; then
-		opt_map=/proc/kallsyms
+	if [ -e "$procfs/kallsyms" ] ; then
+		opt_map="$procfs/kallsyms"
 	elif [ -e "/lib/modules/$(uname -r)/System.map" ] ; then
 		opt_map="/lib/modules/$(uname -r)/System.map"
 	elif [ -e "/boot/System.map-$(uname -r)" ] ; then
@@ -1531,9 +1531,9 @@ if [ "$opt_live" = 1 ]; then
 	fi
 
 	# config
-	if [ -e /proc/config.gz ] ; then
+	if [ -e "$procfs/config.gz" ] ; then
 		dumped_config="$(mktemp /tmp/config-XXXXXX)"
-		gunzip -c /proc/config.gz > "$dumped_config"
+		gunzip -c "$procfs/config.gz" > "$dumped_config"
 		# dumped_config will be deleted at the end of the script
 		opt_config="$dumped_config"
 	elif [ -e "/lib/modules/$(uname -r)/config" ]; then
@@ -1563,7 +1563,7 @@ if [ "$os" = Linux ]; then
 	fi
 
 	if [ -n "$dumped_config" ] && [ -n "$opt_config" ]; then
-		_verbose "Will use kconfig \033[35m/proc/config.gz (decompressed)\033[0m"
+		_verbose "Will use kconfig \033[35m$procfs/config.gz (decompressed)\033[0m"
 	elif [ -n "$opt_config" ]; then
 		_verbose "Will use kconfig \033[35m$opt_config\033[0m"
 	else
@@ -2503,7 +2503,7 @@ check_CVE_2017_5715_linux()
 			for dir in \
 				/sys/kernel/debug \
 				/sys/kernel/debug/x86 \
-				/proc/sys/kernel; do
+				"$procfs/sys/kernel"; do
 				if [ -e "$dir/ibrs_enabled" ]; then
 					# if the file is there, we have IBRS compiled-in
 					# /sys/kernel/debug/ibrs_enabled: vanilla
@@ -3191,13 +3191,13 @@ check_CVE_2017_5754_linux()
 
 
 	# Test if the current host is a Xen PV Dom0 / DomU
-	if [ -d "/proc/xen" ]; then
+	if [ -d "$procfs/xen" ]; then
 		# XXX do we have a better way that relying on dmesg?
 		dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
 		if [ $ret -eq 2 ]; then
 			_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
 		elif [ $ret -eq 0 ]; then
-			if [ -e /proc/xen/capabilities ] && grep -q "control_d" /proc/xen/capabilities; then
+			if [ -e "$procfs/xen/capabilities" ] && grep -q "control_d" "$procfs/xen/capabilities"; then
 				xen_pv_domo=1
 			else
 				xen_pv_domu=1
@@ -3241,7 +3241,7 @@ check_CVE_2017_5754_linux()
 				if [ -n "$kpti_support" ]; then
 					if [ -e "/sys/kernel/debug/x86/pti_enabled" ]; then
 						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > /sys/kernel/debug/x86/pti_enabled\`"
-					elif grep -q -w nopti -w pti=off /proc/cmdline; then
+					elif grep -q -w nopti -w pti=off "$procfs/cmdline"; then
 						explain "Your kernel supports PTI but it has been disabled on command-line, remove the nopti or pti=off option from your bootloader configuration"
 					else
 						explain "Your kernel supports PTI but it has been disabled, check \`dmesg\` right after boot to find clues why the system disabled it"
@@ -3372,9 +3372,9 @@ check_CVE_2018_3639()
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* Kernel supports speculation store bypass: "
 		if [ "$opt_live" = 1 ]; then
-			if grep -Eq 'Speculation.?Store.?Bypass:' /proc/self/status 2>/dev/null; then
-				kernel_ssb='found in /proc/self/status'
-				_debug "found Speculation.Store.Bypass: in /proc/self/status"
+			if grep -Eq 'Speculation.?Store.?Bypass:' "$procfs/self/status" 2>/dev/null; then
+				kernel_ssb="found in $procfs/self/status"
+				_debug "found Speculation.Store.Bypass: in $procfs/self/status"
 			fi
 		fi
 		if [ -z "$kernel_ssb" ] && [ -n "$kernel" ]; then
@@ -3582,8 +3582,8 @@ check_CVE_2018_3646()
 
 		_info "* Mitigation 2"
 		_info_nol "  * L1D flush is supported by kernel: "
-		if [ "$opt_live" = 1 ] && grep -qw flush_l1d /proc/cpuinfo; then
-			l1d_kernel='found flush_l1d in /proc/cpuinfo'
+		if [ "$opt_live" = 1 ] && grep -qw flush_l1d "$procfs/cpuinfo"; then
+			l1d_kernel="found flush_l1d in $procfs/cpuinfo"
 		fi
 		if [ -z "$l1d_kernel" ]; then
 			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
@@ -3628,7 +3628,7 @@ check_CVE_2018_3646()
 
 		_info_nol "  * Hardware-backed L1D flush supported: "
 		if [ "$opt_live" = 1 ]; then
-			if grep -qw flush_l1d /proc/cpuinfo; then
+			if grep -qw flush_l1d "$procfs/cpuinfo"; then
 				pstatus green YES "performance impact of the mitigation will be greatly reduced"
 			else
 				pstatus blue NO "flush will be done in software, this is slower"
