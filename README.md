@@ -7,9 +7,9 @@ A shell script to tell if your system is vulnerable against the several "specula
 - CVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'
 - CVE-2018-3640 [rogue system register read] aka 'Variant 3a'
 - CVE-2018-3639 [speculative store bypass] aka 'Variant 4'
-- CVE-2018-3615, CVE-2018-3620, CVE-2018-3646 [L1 terminal fault] aka 'Foreshadow & Foreshadow-NG'
-
-**2018-08-15: Foreshadow support is being worked on, vulnerable/immune CPUs are already detected, and kernel-reported vulnerability status is checked, but manual mitigation detection is currently being implemented, will be available in the next few days**
+- CVE-2018-3615 [L1 terminal fault] aka 'Foreshadow (SGX)'
+- CVE-2018-3620 [L1 terminal fault] aka 'Foreshadow-NG (OS)'
+- CVE-2018-3646 [L1 terminal fault] aka 'Foreshadow-NG (VMM)'
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
