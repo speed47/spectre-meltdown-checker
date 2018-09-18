@@ -1516,7 +1516,8 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/etc/machine-id" ] && [ -e "/boot/$(cat /etc/machine-id)/$(uname -r)/linux" ] && opt_kernel="/boot/$(cat /etc/machine-id)/$(uname -r)/linux"
 		# Clear Linux:
 		str_uname=$(uname -r)
-		[ -e "/lib/kernel" ] && opt_kernel="/lib/kernel/org.clearlinux.${str_uname##*.}.${str_uname%.*}"
+		clear_linux_kernel="/lib/kernel/org.clearlinux.${str_uname##*.}.${str_uname%.*}"
+		[ -e "$clear_linux_kernel" ] && opt_kernel=$clear_linux_kernel
 	fi
 
 	# system.map
