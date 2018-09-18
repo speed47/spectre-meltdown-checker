@@ -3521,7 +3521,17 @@ check_CVE_2018_3620()
 {
 	cve='CVE-2018-3620'
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_2018_3620_linux
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_2018_3620_bsd
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
 
+check_CVE_2018_3620_linux()
+{
 	status=UNK
 	sys_interface_available=0
 	msg=''
@@ -3586,12 +3596,31 @@ check_CVE_2018_3620()
 	fi
 }
 
+check_CVE_2018_3620_bsd()
+{
+	if ! is_cpu_vulnerable "$cve"; then
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		pvulnstatus $cve UNK "check not implemented yet under BSD"
+	fi
+}
+
 # L1TF VMM
 check_CVE_2018_3646()
 {
 	cve='CVE-2018-3646'
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_2018_3646_linux
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_2018_3646_bsd
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
 
+check_CVE_2018_3646_linux()
+{
 	status=UNK
 	sys_interface_available=0
 	msg=''
@@ -3739,6 +3768,15 @@ check_CVE_2018_3646()
 				fi
 			fi
 		fi
+	fi
+}
+
+check_CVE_2018_3646_bsd()
+{
+	if ! is_cpu_vulnerable "$cve"; then
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		pvulnstatus $cve UNK "check not implemented yet under BSD"
 	fi
 }
 
