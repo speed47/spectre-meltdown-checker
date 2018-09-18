@@ -3362,7 +3362,17 @@ check_CVE_2018_3639()
 {
 	cve='CVE-2018-3639'
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_2018_3639_linux
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_2018_3639_bsd
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
 
+check_CVE_2018_3639_linux()
+{
 	status=UNK
 	sys_interface_available=0
 	msg=''
@@ -3422,6 +3432,56 @@ check_CVE_2018_3639()
 		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
+	fi
+}
+
+check_CVE_2018_3639_bsd()
+{
+	_info_nol "* Kernel supports speculation store bypass: "
+	if sysctl hw.spec_store_bypass_disable >/dev/null 2>&1; then
+		kernel_ssb=1
+		pstatus green YES
+	else
+		kernel_ssb=0
+		pstatus yellow NO
+	fi
+
+	_info_nol "* Speculation store bypass is administratively enabled: "
+	ssb_enabled=$(sysctl -n hw.spec_store_bypass_disable 2>/dev/null)
+	_debug "hw.spec_store_bypass_disable=$ssb_enabled"
+	case "$ssb_enabled" in
+		0) pstatus yellow NO "disabled";;
+		1) pstatus green YES "enabled";;
+		2) pstatus green YES "auto mode";;
+		*) pstatus yellow NO "unavailable";;
+	esac
+
+	_info_nol "* Speculation store bypass is currently active: "
+	ssb_active=$(sysctl -n hw.spec_store_bypass_disable_active 2>/dev/null)
+	_debug "hw.spec_store_bypass_disable_active=$ssb_active"
+	case "$ssb_active" in
+		1) pstatus green YES;;
+		*) pstatus yellow NO;;
+	esac
+
+	if ! is_cpu_vulnerable "$cve"; then
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		if [ "$ssb_active" = 1 ]; then
+				pvulnstatus $cve OK "SSBD mitigates the vulnerability"
+		elif [ -n "$cpuid_ssbd" ]; then
+			if [ "$kernel_ssb" = 1 ]; then
+				pvulnstatus $cve VULN "you need to enable ssbd through sysctl to mitigate the vulnerability"
+			else
+				pvulnstatus $cve VULN "your kernel needs to be updated"
+			fi
+		else
+			if [ "$kernel_ssb" = 1 ]; then
+				pvulnstatus $cve VULN "Your CPU doesn't support SSBD"
+			else
+				pvulnstatus $cve VULN "Neither your CPU nor your kernel support SSBD"
+			fi
+		fi
 	fi
 }
 
