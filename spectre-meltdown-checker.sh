@@ -1,5 +1,5 @@
 #! /bin/sh
-# SPDX-License-Identifier: GPL-3.0
+# SPDX-License-Identifier: GPL-3.0-only
 #
 # Spectre & Meltdown checker
 #
