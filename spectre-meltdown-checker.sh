@@ -3795,8 +3795,10 @@ do
 	fi
 done
 
-_info "> \033[46m\033[30mSUMMARY:\033[0m$final_summary"
-_info ""
+if [ -n "$final_summary" ]; then
+	_info "> \033[46m\033[30mSUMMARY:\033[0m$final_summary"
+	_info ""
+fi
 
 _vars=$(set | grep -Ev '^[A-Z_[:space:]]' | sort | tr "\n" '|')
 _debug "variables at end of script: $_vars"
