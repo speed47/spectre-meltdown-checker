@@ -2057,6 +2057,16 @@ check_cpu()
 			pstatus yellow NO
 		fi
 	fi
+	# CPUID of L1D
+	_info_nol "    * CPU indicates L1D flush capability: "
+	read_cpuid 0x7 $EDX 28 1 1; ret=$?
+	if [ $ret -eq 0 ]; then
+		pstatus green YES "L1D flush feature bit"
+	elif [ $ret -eq 1 ]; then
+		pstatus yellow NO
+	elif [ $ret -eq 2 ]; then
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	fi
 
 	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
