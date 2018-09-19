@@ -1105,7 +1105,7 @@ parse_cpu_details()
 		cpu_model=$(   grep '^model'      "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 		# read CPU ucode from $procfs/cpuinfo. fall-back to 0x0 if not found (eg: with a virtual machine)
-		cpu_ucode=$(   raw_cpu_ucode=$(grep '^microcode'  "$procfs/cpuinfo") && echo $raw_cpu_ucode | awk '{print $3}' | head -1 || echo "0x0")
+		cpu_ucode=$(   raw_cpu_ucode=$(grep '^microcode'  "$procfs/cpuinfo") && echo "$raw_cpu_ucode" | awk '{print $3}' | head -1 || echo "0x0")
 	else
 		cpu_friendly_name=$(sysctl -n hw.model)
 	fi
