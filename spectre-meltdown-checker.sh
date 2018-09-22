@@ -3609,10 +3609,27 @@ check_CVE_2018_3620_linux()
 
 check_CVE_2018_3620_bsd()
 {
+	_info_nol "* Kernel reserved the memory page at physical address 0x0: "
+	if sysctl hw.vmm.vmx.l1d_flush >/dev/null 2>&1; then
+		# https://security.FreeBSD.org/patches/SA-18:09/l1tf-11.2.patch
+		# this is very difficult to detect that the kernel reserved the 0 page, but this fix
+		# is part of the exact same patch than the other L1TF CVE, so we detect it
+		# and deem it as OK if the other patch is there
+		pstatus green YES
+		bsd_zero_reserved=1
+	else
+		pstatus yellow NO
+		bsd_zero_reserved=0
+	fi
+
 	if ! is_cpu_vulnerable "$cve"; then
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		pvulnstatus $cve UNK "check not implemented yet under BSD"
+		if [ "$bsd_zero_reserved" = 1 ]; then
+			pvulnstatus $cve OK "kernel mitigates the vulnerability"
+		else
+			pvulnstatus $cve VULN "your kernel needs to be updated"
+		fi
 	fi
 }
 
@@ -3784,10 +3801,34 @@ check_CVE_2018_3646_linux()
 
 check_CVE_2018_3646_bsd()
 {
+	_info_nol "* Kernel supports L1D flushing: "
+	if sysctl hw.vmm.vmx.l1d_flush >/dev/null 2>&1; then
+		pstatus green YES
+		kernel_l1d_supported=1
+	else
+		pstatus yellow NO
+		kernel_l1d_supported=0
+	fi
+
+	_info_nol "* L1D flushing is enabled: "
+	kernel_l1d_enabled=$(sysctl -n hw.vmm.vmx.l1d_flush 2>/dev/null)
+	case "$kernel_l1d_enabled" in
+		0) pstatus yellow NO;;
+		1) pstatus green YES;;
+		"") pstatus yellow NO;;
+		*) pstatus yellow UNKNOWN;;
+	esac
+
 	if ! is_cpu_vulnerable "$cve"; then
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		pvulnstatus $cve UNK "check not implemented yet under BSD"
+		if [ "$kernel_l1d_enabled" = 1 ]; then
+			pvulnstatus $cve OK "L1D flushing mitigates the vulnerability"
+		elif [ "$kernel_l1d_supported" = 1 ]; then
+			pvulnstatus $cve VULN "L1D flushing is supported by your kernel but is disabled"
+		else
+			pvulnstatus $cve VULN "your kernel needs to be updated"
+		fi
 	fi
 }
 
