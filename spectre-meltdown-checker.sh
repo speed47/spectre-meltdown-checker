@@ -1104,8 +1104,7 @@ parse_cpu_details()
 		cpu_family=$(  grep '^cpu family' "$procfs/cpuinfo" | awk '{print $4}' | grep -E '^[0-9]+$' | head -1)
 		cpu_model=$(   grep '^model'      "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
-		# read CPU ucode from $procfs/cpuinfo. fall-back to 0x0 if not found (eg: with a virtual machine)
-		cpu_ucode=$(   raw_cpu_ucode=$(grep '^microcode'  "$procfs/cpuinfo") && echo "$raw_cpu_ucode" | awk '{print $3}' | head -1 || echo "0x0")
+		cpu_ucode=$(   grep '^microcode'  "$procfs/cpuinfo" | awk '{print $3}' | head -1)
 	else
 		cpu_friendly_name=$(sysctl -n hw.model)
 	fi
@@ -1131,6 +1130,9 @@ parse_cpu_details()
 			cpu_ucode=$(printf "0x%x" "$cpu_ucode")
 		fi
 	fi
+
+	# if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
+	[ -z "$cpu_ucode" ] && cpu_ucode=0x0
 
 	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$(( cpu_ucode ))
 	ucode_found=$(printf "model 0x%x family 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_model" "$cpu_family" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid")
