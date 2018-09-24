@@ -851,7 +851,7 @@ pvulnstatus()
 
 		case "$opt_batch_format" in
 			text) _echo 0 "$1: $2 ($3)";;
-            short) short_output="${short_output}$1 ";;
+			short) short_output="${short_output}$1 ";;
 			json)
 				case "$2" in
 					UNK)  is_vuln="null";;
@@ -1334,10 +1334,9 @@ is_ucode_blacklisted()
 	do
 		model=$(echo $tuple | cut -d, -f1)
 		stepping=$(( $(echo $tuple | cut -d, -f2) ))
-		ucode=$(echo $tuple | cut -d, -f3)
-		echo "$ucode" | grep -q ^0x && ucode_decimal=$(( ucode ))
 		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ]; then
-			if [ "$cpu_ucode" = "$ucode_decimal" ] || [ "$cpu_ucode" = "$ucode" ]; then
+			ucode=$(( $(echo $tuple | cut -d, -f3) ))
+			if [ "$cpu_ucode" = "$ucode" ]; then
 				_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
 				return 0
 			fi
@@ -1352,7 +1351,7 @@ is_skylake_cpu()
 	# is this a skylake cpu?
 	# return 0 if yes, 1 otherwise
 	#if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&
-	#	    boot_cpu_data.x86 == 6) {
+	#		boot_cpu_data.x86 == 6) {
 	#		switch (boot_cpu_data.x86_model) {
 	#		case INTEL_FAM6_SKYLAKE_MOBILE:
 	#		case INTEL_FAM6_SKYLAKE_DESKTOP:
@@ -1410,26 +1409,24 @@ is_latest_known_ucode()
 	# 0: yes, 1: no, 2: unknown
 	parse_cpu_details
 	ucode_latest="latest microcode version for your CPU model is unknown"
-	if ! is_intel && ! is_amd; then
+	# cpuid,version,date
+	if is_intel; then
+		cpu_brand_prefix=I
+	elif is_amd; then
+		cpu_brand_prefix=A
+	else
 		return 2
 	fi
-	# cpuid,version,date
-	for tuple in $(read_mcedb)
+	for tuple in $(read_mcedb | grep "$(printf "^$cpu_brand_prefix,0x%08X," "$cpu_cpuid")")
 	do
-		cpu_brand=$(        echo "$tuple" | cut -d, -f1)
-		is_intel && [ "$cpu_brand" != I ] && continue
-		is_amd   && [ "$cpu_brand" != A ] && continue
-		cpuid_decimal=$(( $(echo "$tuple" | cut -d, -f2) ))
-		ucode_decimal=$(( $(echo "$tuple" | cut -d, -f3) ))
-		ucode_date=$(       echo "$tuple" | cut -d, -f4)
-		if [ "$cpuid_decimal" = "$cpu_cpuid" ]; then
-			_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $cpuid_decimal from $ucode_date"
-			ucode_latest=$(printf "latest version is 0x%x dated $ucode_date according to $mcedb_info" "$ucode_decimal")
-			if [ "$cpu_ucode" -ge "$ucode_decimal" ]; then
-				return 0
-			else
-				return 1
-			fi
+		ucode=$((  $(echo "$tuple" | cut -d, -f3) ))
+		ucode_date=$(echo "$tuple" | cut -d, -f4 | sed -r 's=(....)(..)(..)=\1/\2/\3=')
+		_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $ucode from $ucode_date"
+		ucode_latest=$(printf "latest version is 0x%x dated $ucode_date according to $mcedb_info" "$ucode")
+		if [ "$cpu_ucode" -ge "$ucode" ]; then
+			return 0
+		else
+			return 1
 		fi
 	done
 	_debug "is_latest_known_ucode: this cpuid is not referenced ($cpu_cpuid)"
@@ -1637,7 +1634,7 @@ if [ -e "$opt_kernel" ]; then
 	if ! which "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
 		_debug "readelf not found"
 		kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
-	elif [ "$opt_sysfs_only" = 1 ]; then
+	elif [ "$opt_sysfs_only" = 1 ] || [ "$opt_hw_only" = 1 ]; then
 		kernel_err='kernel image decompression skipped'
 	else
 		extract_kernel "$opt_kernel"
