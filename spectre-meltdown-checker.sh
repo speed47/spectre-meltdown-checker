@@ -1072,6 +1072,9 @@ read_cpuid()
 
 	if [ -e /dev/cpu/0/cpuid ]; then
 		# Linux
+		if [ ! -r /dev/cpu/0/cpuid ]; then
+			return 2
+		fi
 		# on some kernel versions, /dev/cpu/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error
 		dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1 || load_cpuid
 		# we need _leaf to be converted to decimal for dd
@@ -1083,6 +1086,9 @@ read_cpuid()
 		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip=$_ddskip count=$((_odskip + 1)) 2>/dev/null | od -j $((_odskip * 16)) -A n -t u4)
 	elif [ -e /dev/cpuctl0 ]; then
 		# BSD
+		if [ ! -r /dev/cpuctl0 ]; then
+			return 2
+		fi
 		_cpuid=$(cpucontrol -i "$_leaf" /dev/cpuctl0 2>/dev/null | awk '{print $4,$5,$6,$7}')
 		# cpuid level 0x1: 0x000306d4 0x00100800 0x4dfaebbf 0xbfebfbff
 	else
@@ -1176,6 +1182,8 @@ parse_cpu_details()
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
 	if read_cpuid 0x1 $EAX 0 0xFFFFFFFF; then
 		cpu_cpuid="$read_cpuid_value"
+	else
+		cpu_cpuid=0
 	fi
 
 	# under BSD, linprocfs often doesn't export ucode information, so fetch it ourselves the good old way
@@ -1408,8 +1416,11 @@ is_latest_known_ucode()
 {
 	# 0: yes, 1: no, 2: unknown
 	parse_cpu_details
+	if [ "$cpu_cpuid" = 0 ]; then
+		ucode_latest="couldn't get your cpuid"
+		return 2
+	fi
 	ucode_latest="latest microcode version for your CPU model is unknown"
-	# cpuid,version,date
 	if is_intel; then
 		cpu_brand_prefix=I
 	elif is_amd; then
@@ -1924,6 +1935,8 @@ check_cpu()
 	_info_nol "    * PRED_CMD MSR is available: "
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		pstatus yellow UNKNOWN "is msr kernel module available?"
+	elif [ ! -r /dev/cpu/0/msr ] && [ ! -w /dev/cpuctl0 ]; then
+		pstatus yellow UNKNOWN "are you root?"
 	else
 		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
 		# we test if of all cpus
@@ -2031,8 +2044,8 @@ check_cpu()
 	if is_intel; then
 		_info     "  * Speculative Store Bypass Disable (SSBD)"
 		_info_nol "    * CPU indicates SSBD capability: "
-		read_cpuid 0x7 $EDX 31 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		read_cpuid 0x7 $EDX 31 1 1; ret24=$?; ret25=$ret24
+		if [ $ret24 -eq 0 ]; then
 			cpuid_ssbd='Intel SSBD'
 		fi
 	elif is_amd; then
@@ -2071,6 +2084,8 @@ check_cpu()
 	_info_nol "    * FLUSH_CMD MSR is available: "
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		pstatus yellow UNKNOWN "is msr kernel module available?"
+	elif [ ! -r /dev/cpu/0/msr ] && [ ! -w /dev/cpuctl0 ]; then
+		pstatus yellow UNKNOWN "are you root?"
 	else
 		# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
 		# we test if of all cpus
