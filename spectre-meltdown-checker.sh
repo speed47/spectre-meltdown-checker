@@ -1503,6 +1503,8 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/boot/Image"               ] && opt_kernel="/boot/Image"
 		# Arch armv5/armv7:
 		[ -e "/boot/zImage"              ] && opt_kernel="/boot/zImage"
+		# Arch arm7:
+		[ -e "/boot/kernel7.img"         ] && opt_kernel="/boot/kernel7.img"
 		# Linux-Libre:
 		[ -e "/boot/vmlinuz-linux-libre" ] && opt_kernel="/boot/vmlinuz-linux-libre"
 		# pine64
