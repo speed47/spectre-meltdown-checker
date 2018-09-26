@@ -484,7 +484,7 @@ is_cpu_vulnerable()
 	[ "$variant3a"   = "immune" ] && variant3a=1   || variant3a=0
 	[ "$variant4"    = "immune" ] && variant4=1    || variant4=0
 	[ "$variantl1tf" = "immune" ] && variantl1tf=1 || variantl1tf=0
-	[ "$variantl1tf" = "immune" ] && variantl1tf_sgx=1 || variantl1tf_sgx=0
+	variantl1tf_sgx="$variantl1tf"
 	# even if we are vulnerable to L1TF, if there's no SGX, we're safe for the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
 	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
