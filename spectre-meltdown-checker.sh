@@ -3780,13 +3780,17 @@ check_CVE_2018_3646_linux()
 		_info_nol "  * L1D flush enabled: "
 		if [ "$opt_live" = 1 ]; then
 			if [ -r "/sys/devices/system/cpu/vulnerabilities/l1tf" ]; then
-				if grep -Eq 'VMX: (L1D )?vulnerable' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				# vanilla: VMX: $l1dstatus, SMT $smtstatus
+				# Red Hat: VMX: SMT $smtstatus, L1D $l1dstatus
+				# $l1dstatus is one of (auto|vulnerable|conditional cache flushes|cache flushes|EPT disabled|flush not necessary)
+				# $smtstatus is one of (vulnerable|disabled)
+				if grep -Eq '(VMX:|L1D) (EPT disabled|vulnerable|flush not necessary)' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
 					l1d_mode=0
 					pstatus yellow NO
-				elif grep -Eq 'VMX: (L1D )?conditional cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				elif grep -Eq '(VMX:|L1D) conditional cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
 					l1d_mode=1
 					pstatus green YES "conditional flushes"
-				elif grep -Eq 'VMX: (L1D )?cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				elif grep -Eq '(VMX:|L1D) cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
 					l1d_mode=2
 					pstatus green YES "unconditional flushes"
 				else
