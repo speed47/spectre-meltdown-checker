@@ -131,7 +131,7 @@ opt_live_explicit=0
 opt_live=1
 opt_no_color=0
 opt_batch=0
-opt_batch_format="text"
+opt_batch_format='text'
 opt_verbose=1
 opt_cve_list=''
 opt_cve_all=1
@@ -147,7 +147,7 @@ opt_paranoid=0
 
 global_critical=0
 global_unknown=0
-nrpe_vuln=""
+nrpe_vuln=''
 
 supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646'
 
@@ -3864,7 +3864,7 @@ fi
 _info "A false sense of security is worse than no security at all, see --disclaimer"
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
-	if [ ! -z "$nrpe_vuln" ]; then
+	if [ -n "$nrpe_vuln" ]; then
 		echo "Vulnerable:$nrpe_vuln"
 	else
 		echo "OK"
