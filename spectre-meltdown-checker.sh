@@ -2148,15 +2148,17 @@ check_cpu()
 		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
 		capabilities_rdcl_no=-1
 		capabilities_ibrs_all=-1
-		capabilities_ssb_no=-1
 		capabilities_rsba=-1
+		capabilities_l1dflush_no=-1
+		capabilities_ssb_no=-1
 		if [ "$cpuid_arch_capabilities" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$cpuid_arch_capabilities" != 1 ]; then
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
-			capabilities_ssb_no=0
 			capabilities_rsba=0
+			capabilities_l1dflush_no=0
+			capabilities_ssb_no=0
 			pstatus yellow NO
 		elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 			spec_ctrl_msr=-1
@@ -2185,15 +2187,17 @@ check_cpu()
 			capabilities=$val_cap_msr
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
-			capabilities_ssb_no=0
 			capabilities_rsba=0
+			capabilities_l1dflush_no=0
+			capabilities_ssb_no=0
 			if [ $val -eq 0 ]; then
 				_debug "capabilities MSR is $capabilities (decimal)"
 				[ $(( capabilities >> 0 & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 				[ $(( capabilities >> 1 & 1 )) -eq 1 ] && capabilities_ibrs_all=1
 				[ $(( capabilities >> 2 & 1 )) -eq 1 ] && capabilities_rsba=1
+				[ $(( capabilities >> 3 & 1 )) -eq 1 ] && capabilities_l1dflush_no=1
 				[ $(( capabilities >> 4 & 1 )) -eq 1 ] && capabilities_ssb_no=1
-				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssb_no=$capabilities_ssb_no rsba=$capabilities_rsba"
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
@@ -2220,24 +2224,33 @@ check_cpu()
 		else
 			pstatus yellow NO
 		fi
-	fi
 
-	_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
-	if [ "$capabilities_ssb_no" = -1 ]; then
-		pstatus yellow UNKNOWN
-	elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ]; then
-		pstatus green YES
-	else
-		pstatus yellow NO
-	fi
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
+		if [ "$capabilities_ssb_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
 
-	_info_nol "  * Hypervisor indicates host CPU might be vulnerable to RSB underflow (RSBA): "
-	if [ "$capabilities_rsba" = -1 ]; then
-		pstatus yellow UNKNOWN
-	elif [ "$capabilities_rsba" = 1 ]; then
-		pstatus yellow YES
-	else
-		pstatus blue NO
+		_info_nol "  * CPU/Hypervisor indicates L1D flushing is not necessary on this system: "
+		if [ "$capabilities_l1dflush_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_l1dflush_no" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
+
+		_info_nol "  * Hypervisor indicates host CPU might be vulnerable to RSB underflow (RSBA): "
+		if [ "$capabilities_rsba" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_rsba" = 1 ]; then
+			pstatus yellow YES
+		else
+			pstatus blue NO
+		fi
 	fi
 
 	_info_nol "  * CPU supports Software Guard Extensions (SGX): "
