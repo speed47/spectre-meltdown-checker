@@ -82,6 +82,7 @@ show_usage()
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 		--vmm [auto,yes,no]	override the detection of the presence of an hypervisor (for CVE-2018-3646), default: auto
 		--update-mcedb		update our local copy of the CPU microcodes versions database (from the awesome MCExtractor project)
+		--update-builtin-mcedb	same as --update-mcedb but update builtin DB inside the script itself
 
 	Return codes:
 		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
@@ -578,11 +579,8 @@ show_header()
 	_info
 }
 
-if [ -n "$HOME" ]; then
-	mcedb_cache="$HOME/.mcedb"
-else
-	mcedb_cache="$(getent passwd "$(whoami)" | cut -d: -f6)/.mcedb"
-fi
+[ -z "$HOME" ] && HOME="$(getent passwd "$(whoami)" | cut -d: -f6)"
+mcedb_cache="$HOME/.mcedb"
 update_mcedb()
 {
 	# We're using MCE.db from the excellent platomav's MCExtractor project
@@ -628,13 +626,21 @@ update_mcedb()
 	if [ -n "$previous_mcedb_revision" ]; then
 		if [ "$previous_mcedb_revision" = "v$mcedb_revision" ]; then
 			echo "We already have this version locally, no update needed"
-			return 0
+			[ "$1" != builtin ] && return 0
 		fi
 	fi
 	echo "# Spectre & Meltdown Checker" > "$mcedb_cache"
 	echo "# %%% MCEDB v$mcedb_revision - $mcedb_date" >> "$mcedb_cache"
-	sqlite3 "$mcedb_tmp" "select '# I,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from Intel group by cpuid order by cpuid asc; select '# A,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from AMD group by cpuid order by cpuid asc" >> "$mcedb_cache"
+	sqlite3 "$mcedb_tmp" "select '# I,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from Intel group by cpuid order by cpuid asc; select '# A,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from AMD group by cpuid order by cpuid asc" | grep -v '^# .,0x00000000,' >> "$mcedb_cache"
 	echo OK "local version updated"
+
+	if [ "$1" = builtin ]; then
+		newfile=$(mktemp /tmp/smc-XXXXXX)
+		awk '/^# %%% MCEDB / { exit }; { print }' "$0" > "$newfile"
+		awk '{ if (NR>1) { print } }' "$mcedb_cache" >> "$newfile"
+		cat "$newfile" > "$0"
+		rm -f "$newfile"
+	fi
 }
 
 parse_opt_file()
@@ -717,6 +723,9 @@ while [ -n "$1" ]; do
 		shift
 	elif [ "$1" = "--update-mcedb" ]; then
 		update_mcedb
+		exit $?
+	elif [ "$1" = "--update-builtin-mcedb" ]; then
+		update_mcedb builtin
 		exit $?
 	elif [ "$1" = "--explain" ]; then
 		opt_explain=1
