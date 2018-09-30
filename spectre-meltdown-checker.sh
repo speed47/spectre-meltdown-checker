@@ -3979,7 +3979,7 @@ exit 0  # ok
 
 # wget https://github.com/platomav/MCExtractor/raw/master/MCE.db
 # sqlite3 MCE.db "select '%%% MCEDB v'||revision||' - '||strftime('%Y/%m/%d', date, 'unixepoch') from MCE; select '# I,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from Intel group by cpuid order by cpuid asc; select '# A,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from AMD group by cpuid order by cpuid asc"
-# %%% MCEDB v83 - 2018/09/21
+# %%% MCEDB v84 - 2018/09/27
 # I,0x00000611,0x00000B27,19961218
 # I,0x00000612,0x000000C6,19961210
 # I,0x00000616,0x000000C6,19961210
