@@ -11,7 +11,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='0.39+'
+VERSION='0.40'
 
 trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
@@ -21,6 +21,7 @@ exit_cleanup()
 	[ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
 	[ -n "$kerneltmp"     ] && [ -f "$kerneltmp"     ] && rm -f "$kerneltmp"
 	[ -n "$kerneltmp2"    ] && [ -f "$kerneltmp2"    ] && rm -f "$kerneltmp2"
+	[ -n "$mcedb_tmp"     ] && [ -f "$mcedb_tmp"     ] && rm -f "$mcedb_tmp"
 	[ "$mounted_debugfs" = 1 ] && umount /sys/kernel/debug 2>/dev/null
 	[ "$mounted_procfs"  = 1 ] && umount "$procfs" 2>/dev/null
 	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
@@ -80,6 +81,8 @@ show_usage()
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 		--vmm [auto,yes,no]	override the detection of the presence of an hypervisor (for CVE-2018-3646), default: auto
+		--update-mcedb		update our local copy of the CPU microcodes versions database (from the awesome MCExtractor project)
+		--update-builtin-mcedb	same as --update-mcedb but update builtin DB inside the script itself
 
 	Return codes:
 		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
@@ -484,7 +487,7 @@ is_cpu_vulnerable()
 	[ "$variant3a"   = "immune" ] && variant3a=1   || variant3a=0
 	[ "$variant4"    = "immune" ] && variant4=1    || variant4=0
 	[ "$variantl1tf" = "immune" ] && variantl1tf=1 || variantl1tf=0
-	[ "$variantl1tf" = "immune" ] && variantl1tf_sgx=1 || variantl1tf_sgx=0
+	variantl1tf_sgx="$variantl1tf"
 	# even if we are vulnerable to L1TF, if there's no SGX, we're safe for the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
 	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
@@ -576,6 +579,70 @@ show_header()
 	_info
 }
 
+[ -z "$HOME" ] && HOME="$(getent passwd "$(whoami)" | cut -d: -f6)"
+mcedb_cache="$HOME/.mcedb"
+update_mcedb()
+{
+	# We're using MCE.db from the excellent platomav's MCExtractor project
+	show_header
+
+	if [ -r "$mcedb_cache" ]; then
+		previous_mcedb_revision=$(awk '/^# %%% MCEDB / { print $4 }' "$mcedb_cache")
+	fi
+
+	# first download the database
+	mcedb_tmp="$(mktemp /tmp/mcedb-XXXXXX)"
+	mcedb_url='https://github.com/platomav/MCExtractor/raw/master/MCE.db'
+	_info_nol "Fetching MCE.db from the MCExtractor project... "
+	if which wget >/dev/null 2>&1; then
+		wget -q "$mcedb_url" -O "$mcedb_tmp"; ret=$?
+	elif which curl >/dev/null 2>&1; then
+		curl -sL "$mcedb_url" -o "$mcedb_tmp"; ret=$?
+	elif which fetch >/dev/null 2>&1; then
+		fetch -q "$mcedb_url" -o "$mcedb_tmp"; ret=$?
+	else
+		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
+		return 1
+	fi
+	if [ "$ret" != 0 ]; then
+		echo ERROR "error $ret while downloading MCE.db"
+		return $ret
+	fi
+	echo DONE
+
+	# now extract contents using sqlite
+	_info_nol "Extracting data... "
+	if ! which sqlite3 >/dev/null 2>&1; then
+		echo ERROR "please install the \`sqlite3\` program"
+		return 1
+	fi
+	mcedb_revision=$(sqlite3 "$mcedb_tmp" "select revision from MCE")
+	mcedb_date=$(sqlite3 "$mcedb_tmp" "select strftime('%Y/%m/%d', date, 'unixepoch') from MCE")
+	if [ -z "$mcedb_revision" ]; then
+		echo ERROR "downloaded file seems invalid"
+		return 1
+	fi
+	echo OK "MCExtractor database revision $mcedb_revision dated $mcedb_date"
+	if [ -n "$previous_mcedb_revision" ]; then
+		if [ "$previous_mcedb_revision" = "v$mcedb_revision" ]; then
+			echo "We already have this version locally, no update needed"
+			[ "$1" != builtin ] && return 0
+		fi
+	fi
+	echo "# Spectre & Meltdown Checker" > "$mcedb_cache"
+	echo "# %%% MCEDB v$mcedb_revision - $mcedb_date" >> "$mcedb_cache"
+	sqlite3 "$mcedb_tmp" "select '# I,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from Intel group by cpuid order by cpuid asc; select '# A,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from AMD group by cpuid order by cpuid asc" | grep -v '^# .,0x00000000,' >> "$mcedb_cache"
+	echo OK "local version updated"
+
+	if [ "$1" = builtin ]; then
+		newfile=$(mktemp /tmp/smc-XXXXXX)
+		awk '/^# %%% MCEDB / { exit }; { print }' "$0" > "$newfile"
+		awk '{ if (NR>1) { print } }' "$mcedb_cache" >> "$newfile"
+		cat "$newfile" > "$0"
+		rm -f "$newfile"
+	fi
+}
+
 parse_opt_file()
 {
 	# parse_opt_file option_name option_value
@@ -654,6 +721,12 @@ while [ -n "$1" ]; do
 		# deprecated, kept for compatibility
 		opt_explain=0
 		shift
+	elif [ "$1" = "--update-mcedb" ]; then
+		update_mcedb
+		exit $?
+	elif [ "$1" = "--update-builtin-mcedb" ]; then
+		update_mcedb builtin
+		exit $?
 	elif [ "$1" = "--explain" ]; then
 		opt_explain=1
 		shift
@@ -787,7 +860,7 @@ pvulnstatus()
 
 		case "$opt_batch_format" in
 			text) _echo 0 "$1: $2 ($3)";;
-            short) short_output="${short_output}$1 ";;
+			short) short_output="${short_output}$1 ";;
 			json)
 				case "$2" in
 					UNK)  is_vuln="null";;
@@ -1008,6 +1081,9 @@ read_cpuid()
 
 	if [ -e /dev/cpu/0/cpuid ]; then
 		# Linux
+		if [ ! -r /dev/cpu/0/cpuid ]; then
+			return 2
+		fi
 		# on some kernel versions, /dev/cpu/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error
 		dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1 || load_cpuid
 		# we need _leaf to be converted to decimal for dd
@@ -1019,6 +1095,9 @@ read_cpuid()
 		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip=$_ddskip count=$((_odskip + 1)) 2>/dev/null | od -j $((_odskip * 16)) -A n -t u4)
 	elif [ -e /dev/cpuctl0 ]; then
 		# BSD
+		if [ ! -r /dev/cpuctl0 ]; then
+			return 2
+		fi
 		_cpuid=$(cpucontrol -i "$_leaf" /dev/cpuctl0 2>/dev/null | awk '{print $4,$5,$6,$7}')
 		# cpuid level 0x1: 0x000306d4 0x00100800 0x4dfaebbf 0xbfebfbff
 	else
@@ -1112,6 +1191,8 @@ parse_cpu_details()
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
 	if read_cpuid 0x1 $EAX 0 0xFFFFFFFF; then
 		cpu_cpuid="$read_cpuid_value"
+	else
+		cpu_cpuid=0
 	fi
 
 	# under BSD, linprocfs often doesn't export ucode information, so fetch it ourselves the good old way
@@ -1270,10 +1351,9 @@ is_ucode_blacklisted()
 	do
 		model=$(echo $tuple | cut -d, -f1)
 		stepping=$(( $(echo $tuple | cut -d, -f2) ))
-		ucode=$(echo $tuple | cut -d, -f3)
-		echo "$ucode" | grep -q ^0x && ucode_decimal=$(( ucode ))
 		if [ "$cpu_model" = "$model" ] && [ "$cpu_stepping" = "$stepping" ]; then
-			if [ "$cpu_ucode" = "$ucode_decimal" ] || [ "$cpu_ucode" = "$ucode" ]; then
+			ucode=$(( $(echo $tuple | cut -d, -f3) ))
+			if [ "$cpu_ucode" = "$ucode" ]; then
 				_debug "is_ucode_blacklisted: we have a match! ($cpu_model/$cpu_stepping/$cpu_ucode)"
 				return 0
 			fi
@@ -1288,7 +1368,7 @@ is_skylake_cpu()
 	# is this a skylake cpu?
 	# return 0 if yes, 1 otherwise
 	#if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&
-	#	    boot_cpu_data.x86 == 6) {
+	#		boot_cpu_data.x86 == 6) {
 	#		switch (boot_cpu_data.x86_model) {
 	#		case INTEL_FAM6_SKYLAKE_MOBILE:
 	#		case INTEL_FAM6_SKYLAKE_DESKTOP:
@@ -1329,63 +1409,44 @@ is_zen_cpu()
 	return 1
 }
 
+if [ -r "$mcedb_cache" ]; then
+	mcedb_source="$mcedb_cache"
+	mcedb_info="local MCExtractor DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
+else
+	mcedb_source="$0"
+	mcedb_info="builtin MCExtractor DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
+fi
+read_mcedb()
+{
+	awk '{ if (DELIM==1) { print $2 } } /^# %%% MCEDB / { DELIM=1 }' "$mcedb_source"
+}
+
 is_latest_known_ucode()
 {
 	# 0: yes, 1: no, 2: unknown
 	parse_cpu_details
+	if [ "$cpu_cpuid" = 0 ]; then
+		ucode_latest="couldn't get your cpuid"
+		return 2
+	fi
 	ucode_latest="latest microcode version for your CPU model is unknown"
-	is_intel || return 2
-	# https://www.intel.com/content/dam/www/public/us/en/documents/sa00115-microcode-update-guidance.pdf
-	# ps2txt sa00115-microcode-update-guidance.ps | grep -Eo '[0-9A-F]+ [0-9A-F]+ [^ ]+ Production 0x[A-F0-9]+ 0x[^ ]+' | awk '{print "0x"$1","$6" \\"}' | uniq
-	# cpuid,ucode
-	for tuple in \
-		0x106A5,0x1D \
-		0x106E5,0x0A \
-		0x20652,0x11 \
-		0x20655,0x7 \
-		0x206A7,0x2E \
-		0x206C2,0x1F \
-		0x206D6,0x61D \
-		0x206D7,0x714 \
-		0x206E6,0x0D \
-		0x206F2,0x3B \
-		0x306A9,0x20 \
-		0x306C3,0x25 \
-		0x306D4,0x2B \
-		0x306E4,0x42D \
-		0x306E7,0x714 \
-		0x306F2,0x3D \
-		0x306F4,0x12 \
-		0x40651,0x24 \
-		0x40661,0x1A \
-		0x40671,0x1E \
-		0x406E3,0xC6 \
-		0x406F1,0xB00002E \
-		0x50654,0x200004D \
-		0x50662,0x17 \
-		0x50663,0x7000013 \
-		0x50664,0xF000012 \
-		0x50665,0xE00000A \
-		0x506C2,0x14 \
-		0x506E3,0xC6 \
-		0x506F1,0x24 \
-		0x706A1,0x28 \
-		0x806E9,0x8E \
-		0x806EA,0x96 \
-		0x906E9,0x8E \
-		0x906EA,0x96 \
-		0x906EB,0x8E
+	if is_intel; then
+		cpu_brand_prefix=I
+	elif is_amd; then
+		cpu_brand_prefix=A
+	else
+		return 2
+	fi
+	for tuple in $(read_mcedb | grep "$(printf "^$cpu_brand_prefix,0x%08X," "$cpu_cpuid")")
 	do
-		cpuid_decimal=$(( $(echo "$tuple" | cut -d, -f1) ))
-		ucode_decimal=$(( $(echo "$tuple" | cut -d, -f2) ))
-		if [ "$cpuid_decimal" = "$cpu_cpuid" ]; then
-			_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $cpuid_decimal"
-			ucode_latest=$(printf "latest known version is 0x%x according to Intel Microcode Guidance, August 8 2018" "$ucode_decimal")
-			if [ "$cpu_ucode" -ge "$ucode_decimal" ]; then
-				return 0
-			else
-				return 1
-			fi
+		ucode=$((  $(echo "$tuple" | cut -d, -f3) ))
+		ucode_date=$(echo "$tuple" | cut -d, -f4 | sed -r 's=(....)(..)(..)=\1/\2/\3=')
+		_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $ucode from $ucode_date"
+		ucode_latest=$(printf "latest version is 0x%x dated $ucode_date according to $mcedb_info" "$ucode")
+		if [ "$cpu_ucode" -ge "$ucode" ]; then
+			return 0
+		else
+			return 1
 		fi
 	done
 	_debug "is_latest_known_ucode: this cpuid is not referenced ($cpu_cpuid)"
@@ -1503,6 +1564,8 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/boot/Image"               ] && opt_kernel="/boot/Image"
 		# Arch armv5/armv7:
 		[ -e "/boot/zImage"              ] && opt_kernel="/boot/zImage"
+		# Arch arm7:
+		[ -e "/boot/kernel7.img"         ] && opt_kernel="/boot/kernel7.img"
 		# Linux-Libre:
 		[ -e "/boot/vmlinuz-linux-libre" ] && opt_kernel="/boot/vmlinuz-linux-libre"
 		# pine64
@@ -1591,7 +1654,7 @@ if [ -e "$opt_kernel" ]; then
 	if ! which "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
 		_debug "readelf not found"
 		kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
-	elif [ "$opt_sysfs_only" = 1 ]; then
+	elif [ "$opt_sysfs_only" = 1 ] || [ "$opt_hw_only" = 1 ]; then
 		kernel_err='kernel image decompression skipped'
 	else
 		extract_kernel "$opt_kernel"
@@ -1881,6 +1944,8 @@ check_cpu()
 	_info_nol "    * PRED_CMD MSR is available: "
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		pstatus yellow UNKNOWN "is msr kernel module available?"
+	elif [ ! -r /dev/cpu/0/msr ] && [ ! -w /dev/cpuctl0 ]; then
+		pstatus yellow UNKNOWN "are you root?"
 	else
 		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
 		# we test if of all cpus
@@ -1988,8 +2053,8 @@ check_cpu()
 	if is_intel; then
 		_info     "  * Speculative Store Bypass Disable (SSBD)"
 		_info_nol "    * CPU indicates SSBD capability: "
-		read_cpuid 0x7 $EDX 31 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		read_cpuid 0x7 $EDX 31 1 1; ret24=$?; ret25=$ret24
+		if [ $ret24 -eq 0 ]; then
 			cpuid_ssbd='Intel SSBD'
 		fi
 	elif is_amd; then
@@ -2028,6 +2093,8 @@ check_cpu()
 	_info_nol "    * FLUSH_CMD MSR is available: "
 	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 		pstatus yellow UNKNOWN "is msr kernel module available?"
+	elif [ ! -r /dev/cpu/0/msr ] && [ ! -w /dev/cpuctl0 ]; then
+		pstatus yellow UNKNOWN "are you root?"
 	else
 		# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
 		# we test if of all cpus
@@ -2090,15 +2157,17 @@ check_cpu()
 		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
 		capabilities_rdcl_no=-1
 		capabilities_ibrs_all=-1
-		capabilities_ssb_no=-1
 		capabilities_rsba=-1
+		capabilities_l1dflush_no=-1
+		capabilities_ssb_no=-1
 		if [ "$cpuid_arch_capabilities" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$cpuid_arch_capabilities" != 1 ]; then
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
-			capabilities_ssb_no=0
 			capabilities_rsba=0
+			capabilities_l1dflush_no=0
+			capabilities_ssb_no=0
 			pstatus yellow NO
 		elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 			spec_ctrl_msr=-1
@@ -2127,15 +2196,17 @@ check_cpu()
 			capabilities=$val_cap_msr
 			capabilities_rdcl_no=0
 			capabilities_ibrs_all=0
-			capabilities_ssb_no=0
 			capabilities_rsba=0
+			capabilities_l1dflush_no=0
+			capabilities_ssb_no=0
 			if [ $val -eq 0 ]; then
 				_debug "capabilities MSR is $capabilities (decimal)"
 				[ $(( capabilities >> 0 & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 				[ $(( capabilities >> 1 & 1 )) -eq 1 ] && capabilities_ibrs_all=1
 				[ $(( capabilities >> 2 & 1 )) -eq 1 ] && capabilities_rsba=1
+				[ $(( capabilities >> 3 & 1 )) -eq 1 ] && capabilities_l1dflush_no=1
 				[ $(( capabilities >> 4 & 1 )) -eq 1 ] && capabilities_ssb_no=1
-				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all ssb_no=$capabilities_ssb_no rsba=$capabilities_rsba"
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
@@ -2162,24 +2233,33 @@ check_cpu()
 		else
 			pstatus yellow NO
 		fi
-	fi
 
-	_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
-	if [ "$capabilities_ssb_no" = -1 ]; then
-		pstatus yellow UNKNOWN
-	elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ]; then
-		pstatus green YES
-	else
-		pstatus yellow NO
-	fi
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
+		if [ "$capabilities_ssb_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
 
-	_info_nol "  * Hypervisor indicates host CPU might be vulnerable to RSB underflow (RSBA): "
-	if [ "$capabilities_rsba" = -1 ]; then
-		pstatus yellow UNKNOWN
-	elif [ "$capabilities_rsba" = 1 ]; then
-		pstatus yellow YES
-	else
-		pstatus blue NO
+		_info_nol "  * CPU/Hypervisor indicates L1D flushing is not necessary on this system: "
+		if [ "$capabilities_l1dflush_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_l1dflush_no" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
+
+		_info_nol "  * Hypervisor indicates host CPU might be vulnerable to RSB underflow (RSBA): "
+		if [ "$capabilities_rsba" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_rsba" = 1 ]; then
+			pstatus yellow YES
+		else
+			pstatus blue NO
+		fi
 	fi
 
 	_info_nol "  * CPU supports Software Guard Extensions (SGX): "
@@ -3157,6 +3237,8 @@ check_CVE_2017_5754_linux()
 			dmesg_grep="Kernel/User page tables isolation: enabled"
 			dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
 			dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
+			# aarch64
+			dmesg_grep="$dmesg_grep|CPU features: detected( feature)?: Kernel page table isolation \(KPTI\)"
 			if grep ^flags "$procfs/cpuinfo" | grep -qw pti; then
 				# vanilla PTI patch sets the 'pti' flag in cpuinfo
 				_debug "kpti_enabled: found 'pti' flag in $procfs/cpuinfo"
@@ -3255,7 +3337,7 @@ check_CVE_2017_5754_linux()
 				if [ -n "$kpti_support" ]; then
 					if [ -e "/sys/kernel/debug/x86/pti_enabled" ]; then
 						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > /sys/kernel/debug/x86/pti_enabled\`"
-					elif grep -q -w nopti -w pti=off "$procfs/cmdline"; then
+					elif grep -q -w -e nopti -e pti=off "$procfs/cmdline"; then
 						explain "Your kernel supports PTI but it has been disabled on command-line, remove the nopti or pti=off option from your bootloader configuration"
 					else
 						explain "Your kernel supports PTI but it has been disabled, check \`dmesg\` right after boot to find clues why the system disabled it"
@@ -3722,13 +3804,17 @@ check_CVE_2018_3646_linux()
 		_info_nol "  * L1D flush enabled: "
 		if [ "$opt_live" = 1 ]; then
 			if [ -r "/sys/devices/system/cpu/vulnerabilities/l1tf" ]; then
-				if grep -Eq 'VMX: (L1D )?vulnerable' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				# vanilla: VMX: $l1dstatus, SMT $smtstatus
+				# Red Hat: VMX: SMT $smtstatus, L1D $l1dstatus
+				# $l1dstatus is one of (auto|vulnerable|conditional cache flushes|cache flushes|EPT disabled|flush not necessary)
+				# $smtstatus is one of (vulnerable|disabled)
+				if grep -Eq '(VMX:|L1D) (EPT disabled|vulnerable|flush not necessary)' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
 					l1d_mode=0
 					pstatus yellow NO
-				elif grep -Eq 'VMX: (L1D )?conditional cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				elif grep -Eq '(VMX:|L1D) conditional cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
 					l1d_mode=1
 					pstatus green YES "conditional flushes"
-				elif grep -Eq 'VMX: (L1D )?cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				elif grep -Eq '(VMX:|L1D) cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
 					l1d_mode=2
 					pstatus green YES "unconditional flushes"
 				else
@@ -3889,3 +3975,350 @@ fi
 [ "$global_critical" = 1 ] && exit 2  # critical
 [ "$global_unknown"  = 1 ] && exit 3  # unknown
 exit 0  # ok
+
+# We're using MCE.db from the excellent platomav's MCExtractor project
+# The builtin version follows, the user can update it with --update-mcedb
+
+# wget https://github.com/platomav/MCExtractor/raw/master/MCE.db
+# sqlite3 MCE.db "select '%%% MCEDB v'||revision||' - '||strftime('%Y/%m/%d', date, 'unixepoch') from MCE; select '# I,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from Intel group by cpuid order by cpuid asc; select '# A,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from AMD group by cpuid order by cpuid asc"
+# %%% MCEDB v84 - 2018/09/27
+# I,0x00000611,0x00000B27,19961218
+# I,0x00000612,0x000000C6,19961210
+# I,0x00000616,0x000000C6,19961210
+# I,0x00000617,0x000000C6,19961210
+# I,0x00000619,0x000000D2,19980218
+# I,0x00000630,0x00000013,19960827
+# I,0x00000632,0x00000020,19960903
+# I,0x00000633,0x00000036,19980923
+# I,0x00000634,0x00000037,19980923
+# I,0x00000650,0x00000040,19990525
+# I,0x00000651,0x00000040,19990525
+# I,0x00000652,0x0000002D,19990518
+# I,0x00000653,0x00000010,19990628
+# I,0x00000660,0x0000000A,19990505
+# I,0x00000665,0x00000003,19990505
+# I,0x0000066A,0x0000000C,19990505
+# I,0x0000066D,0x00000007,19990505
+# I,0x00000670,0x00000007,19980602
+# I,0x00000671,0x00000003,19980811
+# I,0x00000672,0x00000010,19990922
+# I,0x00000673,0x0000000E,19990910
+# I,0x00000680,0x00000014,19990610
+# I,0x00000681,0x00000014,19991209
+# I,0x00000683,0x00000013,20010206
+# I,0x00000686,0x00000007,20000505
+# I,0x0000068A,0x00000004,20001207
+# I,0x00000690,0x00000004,20000206
+# I,0x00000691,0x00000001,20020527
+# I,0x00000692,0x00000001,20020620
+# I,0x00000694,0x00000002,20020926
+# I,0x00000695,0x00000007,20041109
+# I,0x00000696,0x00000001,20000707
+# I,0x000006A0,0x00000003,20000110
+# I,0x000006A1,0x00000001,20000306
+# I,0x000006A4,0x00000001,20000616
+# I,0x000006B0,0x0000001A,20010129
+# I,0x000006B1,0x0000001D,20010220
+# I,0x000006B4,0x00000002,20020111
+# I,0x000006D0,0x00000006,20030522
+# I,0x000006D1,0x00000009,20030709
+# I,0x000006D2,0x00000010,20030814
+# I,0x000006D6,0x00000018,20041017
+# I,0x000006D8,0x00000021,20060831
+# I,0x000006E0,0x00000008,20050215
+# I,0x000006E1,0x0000000C,20050413
+# I,0x000006E4,0x00000026,20050816
+# I,0x000006E8,0x0000003C,20060208
+# I,0x000006EC,0x0000005B,20070208
+# I,0x000006F0,0x00000005,20050818
+# I,0x000006F1,0x00000012,20051129
+# I,0x000006F2,0x0000005D,20101002
+# I,0x000006F4,0x00000028,20060417
+# I,0x000006F5,0x00000039,20060727
+# I,0x000006F6,0x000000D2,20101001
+# I,0x000006F7,0x0000006A,20101002
+# I,0x000006F9,0x00000084,20061012
+# I,0x000006FA,0x00000095,20101002
+# I,0x000006FB,0x000000C1,20111004
+# I,0x000006FD,0x000000A4,20101002
+# I,0x00000F00,0xFFFF0001,20000130
+# I,0x00000F01,0xFFFF0007,20000404
+# I,0x00000F02,0xFFFF000B,20000518
+# I,0x00000F03,0xFFFF0001,20000518
+# I,0x00000F04,0xFFFF0010,20000803
+# I,0x00000F05,0x0000000B,20000824
+# I,0x00000F06,0x00000004,20000911
+# I,0x00000F07,0x00000012,20020716
+# I,0x00000F08,0x00000008,20001101
+# I,0x00000F09,0x00000008,20010104
+# I,0x00000F0A,0x00000015,20020821
+# I,0x00000F11,0x0000000A,20030729
+# I,0x00000F12,0x0000002D,20030502
+# I,0x00000F13,0x00000005,20030508
+# I,0x00000F20,0x00000001,20010423
+# I,0x00000F21,0x00000002,20010529
+# I,0x00000F22,0x00000005,20030729
+# I,0x00000F23,0x0000000D,20010817
+# I,0x00000F24,0x00000021,20030610
+# I,0x00000F25,0x0000002C,20040826
+# I,0x00000F26,0x00000010,20040805
+# I,0x00000F27,0x00000038,20030604
+# I,0x00000F29,0x0000002D,20040811
+# I,0x00000F30,0x00000013,20030815
+# I,0x00000F31,0x0000000B,20031021
+# I,0x00000F32,0x0000000A,20040511
+# I,0x00000F33,0x0000000C,20050421
+# I,0x00000F34,0x00000017,20050421
+# I,0x00000F36,0x00000007,20040309
+# I,0x00000F37,0x00000003,20031218
+# I,0x00000F40,0x00000006,20040318
+# I,0x00000F41,0x00000017,20050422
+# I,0x00000F42,0x00000003,20050421
+# I,0x00000F43,0x00000005,20050421
+# I,0x00000F44,0x00000006,20050421
+# I,0x00000F46,0x00000004,20050411
+# I,0x00000F47,0x00000003,20050421
+# I,0x00000F48,0x0000000E,20080115
+# I,0x00000F49,0x00000003,20050421
+# I,0x00000F4A,0x00000004,20051214
+# I,0x00000F60,0x00000005,20050124
+# I,0x00000F61,0x00000008,20050610
+# I,0x00000F62,0x0000000F,20051215
+# I,0x00000F63,0x00000005,20051010
+# I,0x00000F64,0x00000004,20051223
+# I,0x00000F65,0x0000000B,20070510
+# I,0x00000F66,0x0000001B,20060310
+# I,0x00000F68,0x00000009,20060714
+# I,0x00001632,0x00000002,19980610
+# I,0x00010650,0x00000002,20060513
+# I,0x00010660,0x00000004,20060612
+# I,0x00010661,0x00000043,20101004
+# I,0x00010670,0x00000005,20070209
+# I,0x00010671,0x00000106,20070329
+# I,0x00010674,0x84050100,20070726
+# I,0x00010676,0x00000612,20150802
+# I,0x00010677,0x0000070D,20150802
+# I,0x0001067A,0x00000A0E,20150729
+# I,0x000106A0,0xFFFF001A,20071128
+# I,0x000106A1,0xFFFF000B,20080220
+# I,0x000106A2,0xFFFF0019,20080714
+# I,0x000106A4,0x00000013,20150630
+# I,0x000106A5,0x0000001D,20180511
+# I,0x000106C0,0x00000007,20070824
+# I,0x000106C1,0x00000109,20071203
+# I,0x000106C2,0x00000217,20090410
+# I,0x000106C9,0x00000007,20090213
+# I,0x000106CA,0x00000107,20090825
+# I,0x000106D0,0x00000005,20071204
+# I,0x000106D1,0x0000002A,20150803
+# I,0x000106E0,0xFFFF0022,20090116
+# I,0x000106E1,0xFFFF000D,20090206
+# I,0x000106E3,0xFFFF0011,20090512
+# I,0x000106E4,0x00000003,20130701
+# I,0x000106E5,0x0000000A,20180508
+# I,0x000106F0,0xFFFF0009,20090210
+# I,0x000106F1,0xFFFF0007,20090210
+# I,0x00020650,0xFFFF0008,20090218
+# I,0x00020651,0xFFFF0018,20090818
+# I,0x00020652,0x00000011,20180508
+# I,0x00020654,0xFFFF0007,20091124
+# I,0x00020655,0x00000007,20180423
+# I,0x00020661,0x00000105,20110718
+# I,0x000206A0,0x00000029,20091102
+# I,0x000206A1,0x00000007,20091223
+# I,0x000206A2,0x00000027,20100502
+# I,0x000206A3,0x00000009,20100609
+# I,0x000206A4,0x00000022,20100414
+# I,0x000206A5,0x00000007,20100722
+# I,0x000206A6,0x90030028,20100924
+# I,0x000206A7,0x0000002E,20180410
+# I,0x000206C0,0xFFFF001C,20091214
+# I,0x000206C1,0x00000006,20091222
+# I,0x000206C2,0x0000001F,20180508
+# I,0x000206D0,0x80000006,20100816
+# I,0x000206D1,0x80000106,20101201
+# I,0x000206D2,0x9584020C,20110622
+# I,0x000206D3,0x80000304,20110420
+# I,0x000206D5,0x00000513,20111013
+# I,0x000206D6,0x0000061D,20180508
+# I,0x000206D7,0x00000714,20180508
+# I,0x000206E0,0xE3493401,20090108
+# I,0x000206E1,0xE3493402,20090224
+# I,0x000206E2,0xFFFF0004,20081001
+# I,0x000206E3,0xE4486547,20090701
+# I,0x000206E4,0xFFFF0008,20090619
+# I,0x000206E5,0xFFFF0018,20091215
+# I,0x000206E6,0x0000000D,20180515
+# I,0x000206F0,0x00000004,20100630
+# I,0x000206F1,0x00000008,20101013
+# I,0x000206F2,0x0000003B,20180516
+# I,0x00030650,0x00000009,20120118
+# I,0x00030651,0x00000110,20131014
+# I,0x00030660,0x00000003,20101103
+# I,0x00030661,0x0000010F,20150721
+# I,0x00030669,0x0000010D,20130515
+# I,0x00030671,0x00000117,20130410
+# I,0x00030672,0x0000022E,20140401
+# I,0x00030673,0x00000326,20180110
+# I,0x00030678,0x00000837,20180125
+# I,0x00030679,0x0000090A,20180110
+# I,0x000306A0,0x00000007,20110407
+# I,0x000306A2,0x0000000C,20110725
+# I,0x000306A4,0x00000007,20110908
+# I,0x000306A5,0x00000009,20111110
+# I,0x000306A6,0x00000004,20111114
+# I,0x000306A8,0x00000010,20120220
+# I,0x000306A9,0x00000020,20180410
+# I,0x000306C0,0xFFFF0013,20111110
+# I,0x000306C1,0xFFFF0014,20120725
+# I,0x000306C2,0xFFFF0006,20121017
+# I,0x000306C3,0x00000025,20180402
+# I,0x000306D1,0xFFFF0009,20131015
+# I,0x000306D2,0xFFFF0009,20131219
+# I,0x000306D3,0xE3121338,20140825
+# I,0x000306D4,0x0000002B,20180322
+# I,0x000306E0,0x00000008,20120726
+# I,0x000306E2,0x0000020D,20130321
+# I,0x000306E3,0x00000308,20130321
+# I,0x000306E4,0x0000042D,20180425
+# I,0x000306E6,0x00000600,20130619
+# I,0x000306E7,0x00000714,20180425
+# I,0x000306F0,0xFFFF0017,20130730
+# I,0x000306F1,0x00000014,20140110
+# I,0x000306F2,0x0000003D,20180420
+# I,0x000306F3,0x0000000D,20160211
+# I,0x000306F4,0x00000012,20180420
+# I,0x00040650,0xFFFF000B,20121206
+# I,0x00040651,0x00000024,20180402
+# I,0x00040660,0xFFFF0011,20121012
+# I,0x00040661,0x0000001A,20180402
+# I,0x00040670,0xFFFF0006,20140304
+# I,0x00040671,0x0000001E,20180403
+# I,0x000406A0,0x80124001,20130521
+# I,0x000406A8,0x0000081F,20140812
+# I,0x000406A9,0x0000081F,20140812
+# I,0x000406C1,0x0000010B,20140814
+# I,0x000406C2,0x00000221,20150218
+# I,0x000406C3,0x00000367,20171225
+# I,0x000406C4,0x00000410,20180104
+# I,0x000406D0,0x0000000E,20130612
+# I,0x000406D8,0x0000012A,20180104
+# I,0x000406E1,0x00000020,20141111
+# I,0x000406E2,0x0000002C,20150521
+# I,0x000406E3,0x000000C6,20180417
+# I,0x000406E8,0x00000026,20160414
+# I,0x000406F0,0x00000014,20150702
+# I,0x000406F1,0x0B00002E,20180419
+# I,0x00050650,0x8000002B,20160208
+# I,0x00050651,0x8000002B,20160208
+# I,0x00050652,0x80000037,20170502
+# I,0x00050653,0x01000144,20180420
+# I,0x00050654,0x0200004D,20180515
+# I,0x00050655,0x0300000B,20180427
+# I,0x00050661,0xF1000008,20150130
+# I,0x00050662,0x00000017,20180525
+# I,0x00050663,0x07000013,20180420
+# I,0x00050664,0x0F000012,20180420
+# I,0x00050665,0x0E00000A,20180420
+# I,0x00050670,0xFFFF0030,20151113
+# I,0x00050671,0x000001B6,20180108
+# I,0x000506A0,0x00000038,20150112
+# I,0x000506C2,0x00000014,20180511
+# I,0x000506C8,0x90011010,20160323
+# I,0x000506C9,0x00000032,20180511
+# I,0x000506CA,0x0000000C,20180511
+# I,0x000506D1,0x00000102,20150605
+# I,0x000506E0,0x00000018,20141119
+# I,0x000506E1,0x0000002A,20150602
+# I,0x000506E2,0x0000002E,20150815
+# I,0x000506E3,0x000000C6,20180417
+# I,0x000506E8,0x00000034,20160710
+# I,0x000506F1,0x00000024,20180511
+# I,0x00060660,0x0000000C,20160821
+# I,0x00060661,0x0000000E,20170128
+# I,0x00060662,0x00000022,20171129
+# I,0x00060663,0x0000002A,20180417
+# I,0x000706A0,0x00000026,20170712
+# I,0x000706A1,0x0000002A,20180725
+# I,0x00080650,0x00000018,20180108
+# I,0x000806E9,0x00000098,20180626
+# I,0x000806EA,0x00000096,20180515
+# I,0x000806EB,0x00000098,20180530
+# I,0x000906E9,0x0000008E,20180324
+# I,0x000906EA,0x00000096,20180502
+# I,0x000906EB,0x0000008E,20180324
+# I,0x000906EC,0x0000009E,20180826
+# A,0x00000F00,0x02000008,20070614
+# A,0x00000F01,0x0000001C,20021031
+# A,0x00000F10,0x00000003,20020325
+# A,0x00000F11,0x0000001F,20030220
+# A,0x00000F48,0x00000046,20040719
+# A,0x00000F4A,0x00000047,20040719
+# A,0x00000F50,0x00000024,20021212
+# A,0x00000F51,0x00000025,20030115
+# A,0x00010F50,0x00000041,20040225
+# A,0x00020F10,0x0000004D,20050428
+# A,0x00040F01,0xC0012102,20050916
+# A,0x00040F0A,0x00000068,20060920
+# A,0x00040F13,0x0000007A,20080508
+# A,0x00040F14,0x00000062,20060127
+# A,0x00040F1B,0x0000006D,20060920
+# A,0x00040F33,0x0000007B,20080514
+# A,0x00060F80,0x00000083,20060929
+# A,0x000C0F1B,0x0000006E,20060921
+# A,0x000F0F00,0x00000005,20020627
+# A,0x000F0F01,0x00000015,20020627
+# A,0x00100F00,0x01000020,20070326
+# A,0x00100F20,0x010000CA,20100331
+# A,0x00100F22,0x010000C9,20100331
+# A,0x00100F40,0x01000085,20080501
+# A,0x00100F41,0x010000DB,20111024
+# A,0x00100F42,0x01000092,20081021
+# A,0x00100F43,0x010000C8,20100311
+# A,0x00100F62,0x010000C7,20100311
+# A,0x00100F80,0x010000DA,20111024
+# A,0x00100F81,0x010000D9,20111012
+# A,0x00100FA0,0x010000DC,20111024
+# A,0x00120F00,0x03000002,20100324
+# A,0x00200F30,0x02000018,20070921
+# A,0x00200F31,0x02000057,20080502
+# A,0x00200F32,0x02000034,20080307
+# A,0x00300F01,0x0300000E,20101004
+# A,0x00300F10,0x03000027,20111309
+# A,0x00500F00,0x0500000B,20100601
+# A,0x00500F01,0x0500001A,20100908
+# A,0x00500F10,0x05000029,20130121
+# A,0x00500F20,0x05000119,20130118
+# A,0x00580F00,0x0500000B,20100601
+# A,0x00580F01,0x0500001A,20100908
+# A,0x00580F10,0x05000028,20101124
+# A,0x00580F20,0x05000101,20110406
+# A,0x00600F00,0x06000017,20101029
+# A,0x00600F01,0x0600011F,20110227
+# A,0x00600F10,0x06000425,20110408
+# A,0x00600F11,0x0600050D,20110627
+# A,0x00600F12,0x0600063E,20180207
+# A,0x00600F20,0x06000852,20180206
+# A,0x00610F00,0x0600100E,20111102
+# A,0x00610F01,0x0600111F,20180305
+# A,0x00630F00,0x0600301C,20130817
+# A,0x00630F01,0x06003109,20180227
+# A,0x00660F00,0x06006012,20141014
+# A,0x00660F01,0x0600611A,20180126
+# A,0x00670F00,0x06006705,20180220
+# A,0x00680F00,0x06000017,20101029
+# A,0x00680F01,0x0600011F,20110227
+# A,0x00680F10,0x06000410,20110314
+# A,0x00700F00,0x0700002A,20121218
+# A,0x00700F01,0x07000110,20180209
+# A,0x00730F00,0x07030009,20131206
+# A,0x00730F01,0x07030106,20180209
+# A,0x00800F00,0x0800002A,20161006
+# A,0x00800F10,0x0800100C,20170131
+# A,0x00800F11,0x08001137,20180214
+# A,0x00800F12,0x08001227,20180209
+# A,0x00800F82,0x0800820B,20180620
+# A,0x00810F00,0x08100004,20161120
+# A,0x00810F10,0x0810100B,20180212
+# A,0x00810F80,0x08108002,20180605
+# A,0x00820F00,0x08200002,20180214
