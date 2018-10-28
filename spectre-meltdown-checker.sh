@@ -80,7 +80,7 @@ show_usage()
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
-		--vmm [auto,yes,no]	override the detection of the presence of an hypervisor (for CVE-2018-3646), default: auto
+		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor (for CVE-2018-3646), default: auto
 		--update-mcedb		update our local copy of the CPU microcodes versions database (from the awesome MCExtractor project)
 		--update-builtin-mcedb	same as --update-mcedb but update builtin DB inside the script itself
 
@@ -2990,7 +2990,7 @@ check_CVE_2017_5715_linux()
 
 		# if we are in live mode, we can check for a lot more stuff and explain further
 		if [ "$opt_live" = 1 ] && [ "$vulnstatus" != "OK" ]; then
-			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor. You may need to reconfigure your VM to use a CPU model that has IBRS capability; in Libvirt, such CPUs are listed with an IBRS suffix."
+			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under a hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor. You may need to reconfigure your VM to use a CPU model that has IBRS capability; in Libvirt, such CPUs are listed with an IBRS suffix."
 			# IBPB (amd & intel)
 			if ( [ -z "$ibpb_enabled" ] || [ "$ibpb_enabled" = 0 ] ) && ( is_intel || is_amd ); then
 				if [ -z "$cpuid_ibpb" ]; then
@@ -3741,13 +3741,41 @@ check_CVE_2018_3646_linux()
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "* This system is a host running an hypervisor: "
+		_info_nol "* This system is a host running a hypervisor: "
 		has_vmm=$opt_vmm
 		if [ "$has_vmm" = -1 ]; then
-			# FIXME enhance detection, this one is pretty basic/stupid
+			# Assumed to be running on bare metal unless evidence of vm is found.
 			has_vmm=0
-			# shellcheck disable=SC2009
-			ps ax | grep -v -e grep -e '\[kvm' | grep -q -e qemu -e kvm && has_vmm=1
+			# test for presence of hypervisor flag - definitive if set
+			if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw hypervisor; then
+				has_vmm=1
+				_debug "hypervisor: present - hypervisor flag set in $procfs/cpuinfo"
+			else
+				_debug "hypervisor: unknown - hypervisor flag not set in $procfs/cpuinfo"
+			fi
+			# test for kernel detected hypervisor
+			dmesg_grep "Hypervisor detected:" ; ret=$?
+				if [ $ret -eq 0 ]; then
+					_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
+					has_vmm=1
+				elif [ $ret -eq 2 ]; then
+					_debug "hypervisor: dmesg truncated"
+				fi
+			# test for kernel detected paravirtualization 
+			dmesg_grep "Booting paravirtualized kernel on bare metal" ; ret=$?
+			if [ $ret -eq 0 ]; then
+				_debug "hypervisor: not present (bare metal)- found in dmesg: $dmesg_grepped"
+			elif [ $ret -eq 2 ]; then
+				_debug "hypervisor: dmesg truncated"
+			else
+				dmesg_grep "Booting paravirtualized kernel on" ; ret=$?
+				if [ $ret -eq 0 ]; then
+					_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
+					has_vmm=1
+				elif [ $ret -eq 2 ]; then
+					_debug "hypervisor: dmesg truncated"
+				fi
+			fi
 		fi
 		if [ "$has_vmm" = 0 ]; then
 			if [ "$opt_vmm" != -1 ]; then
@@ -3759,7 +3787,7 @@ check_CVE_2018_3646_linux()
 			if [ "$opt_vmm" != -1 ]; then
 				pstatus blue YES "forced from command line"
 			else
-				pstatus blue YES
+				pstatus blue YES 
 			fi
 		fi
 
@@ -3859,7 +3887,7 @@ check_CVE_2018_3646_linux()
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ "$has_vmm" = 0 ]; then
-		pvulnstatus $cve OK "this system is not running an hypervisor"
+		pvulnstatus $cve OK "this system is not running a hypervisor"
 	else
 		if [ "$ept_disabled" = 1 ]; then
 			pvulnstatus $cve OK "EPT is disabled which mitigates the vulnerability"
