@@ -3850,6 +3850,7 @@ check_CVE_2018_3646_linux()
 					pstatus yellow UNKNOWN "unrecognized mode"
 				fi
 			else
+				l1d_mode=-1
 				pstatus yellow UNKNOWN "can't find or read /sys/devices/system/cpu/vulnerabilities/l1tf"
 			fi
 		else
