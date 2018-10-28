@@ -351,17 +351,21 @@ is_cpu_vulnerable()
 		fi
 		# L1TF (RDCL_NO already checked above)
 		if [ "$cpu_family" = 6 ]; then
-			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"          ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT1" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT2" ] || \
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL"          ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_TABLET" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_X" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_MERRIFIELD" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_X" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL"     ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM"     ]; then
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
 
 				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune"
 				[ -z "$variantl1tf" ] && variantl1tf=immune
@@ -501,23 +505,24 @@ is_cpu_specex_free()
 	# return true (0) if the CPU doesn't do speculative execution, false (1) if it does.
 	# if it's not in the list we know, return false (1).
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c#n882
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_CEDARVIEW,   X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_CLOVERVIEW,  X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_LINCROFT,    X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_PENWELL,     X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_PINEVIEW,    X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_SALTWELL,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_SALTWELL_TABLET,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_BONNELL_MID,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_SALTWELL_MID,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_BONNELL,	X86_FEATURE_ANY },
 	# { X86_VENDOR_CENTAUR,   5 },
 	# { X86_VENDOR_INTEL,     5 },
 	# { X86_VENDOR_NSC,       5 },
 	# { X86_VENDOR_ANY,       4 },
+
 	parse_cpu_details
 	if is_intel; then
 		if [ "$cpu_family" = 6 ]; then
-			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"  ]      || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT"   ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL"    ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW"   ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL"	] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_TABLET"	] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL_MID"		] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_MID"	] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL"	]; then
 				return 0
 			fi
 		elif [ "$cpu_family" = 5 ]; then
@@ -535,10 +540,10 @@ is_cpu_ssb_free()
 	# source1: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c#n945
 	# source2: https://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git/tree/arch/x86/kernel/cpu/common.c
 	# Only list CPUs that speculate but are immune, to avoid duplication of cpus listed in is_cpu_specex_free()
-	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT1	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT	},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_AIRMONT		},
-	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT2	},
-	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MERRIFIELD	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT_X	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT_MID	},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_CORE_YONAH		},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNL		},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNM		},
@@ -550,9 +555,9 @@ is_cpu_ssb_free()
 	if is_intel; then
 		if [ "$cpu_family" = 6 ]; then
 			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT"          ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT1" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT2" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_MERRIFIELD"  ]; then
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_X" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID"  ]; then
 				return 0
 			elif [ "$cpu_model" = "$INTEL_FAM6_CORE_YONAH"          ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL"     ] || \
@@ -1261,19 +1266,19 @@ parse_cpu_details()
 
 	# /* "Small Core" Processors (Atom) */
 
-	INTEL_FAM6_ATOM_PINEVIEW=$(( 0x1C ))
-	INTEL_FAM6_ATOM_LINCROFT=$(( 0x26 ))
-	INTEL_FAM6_ATOM_PENWELL=$(( 0x27 ))
-	INTEL_FAM6_ATOM_CLOVERVIEW=$(( 0x35 ))
-	INTEL_FAM6_ATOM_CEDARVIEW=$(( 0x36 ))
-	INTEL_FAM6_ATOM_SILVERMONT1=$(( 0x37 ))
-	INTEL_FAM6_ATOM_SILVERMONT2=$(( 0x4D ))
+	INTEL_FAM6_ATOM_BONNELL=$(( 0x1C ))
+	INTEL_FAM6_ATOM_BONNELL_MID=$(( 0x26 ))
+	INTEL_FAM6_ATOM_SALTWELL_MID=$(( 0x27 ))
+	INTEL_FAM6_ATOM_SALTWELL_TABLET=$(( 0x35 ))
+	INTEL_FAM6_ATOM_SALTWELL=$(( 0x36 ))
+	INTEL_FAM6_ATOM_SILVERMONT=$(( 0x37 ))
+	INTEL_FAM6_ATOM_SILVERMONT_MID=$(( 0x4A ))
+	INTEL_FAM6_ATOM_SILVERMONT_X=$(( 0x4D ))
 	INTEL_FAM6_ATOM_AIRMONT=$(( 0x4C ))
-	INTEL_FAM6_ATOM_MERRIFIELD=$(( 0x4A ))
-	INTEL_FAM6_ATOM_MOOREFIELD=$(( 0x5A ))
+	INTEL_FAM6_ATOM_AIRMONT_MID=$(( 0x5A ))
 	INTEL_FAM6_ATOM_GOLDMONT=$(( 0x5C ))
-	INTEL_FAM6_ATOM_DENVERTON=$(( 0x5F ))
-	INTEL_FAM6_ATOM_GEMINI_LAKE=$(( 0x7A ))
+	INTEL_FAM6_ATOM_GOLDMONT_X=$(( 0x5F ))
+	INTEL_FAM6_ATOM_GOLDMONT_PLUS=$(( 0x7A ))
 
 	# /* Xeon Phi */
 
