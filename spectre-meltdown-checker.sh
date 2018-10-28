@@ -3755,12 +3755,12 @@ check_CVE_2018_3646_linux()
 			fi
 			# test for kernel detected hypervisor
 			dmesg_grep "Hypervisor detected:" ; ret=$?
-				if [ $ret -eq 0 ]; then
-					_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
-					has_vmm=1
-				elif [ $ret -eq 2 ]; then
-					_debug "hypervisor: dmesg truncated"
-				fi
+			if [ $ret -eq 0 ]; then
+				_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
+				has_vmm=1
+			elif [ $ret -eq 2 ]; then
+				_debug "hypervisor: dmesg truncated"
+			fi
 			# test for kernel detected paravirtualization 
 			dmesg_grep "Booting paravirtualized kernel on bare metal" ; ret=$?
 			if [ $ret -eq 0 ]; then
@@ -3787,7 +3787,7 @@ check_CVE_2018_3646_linux()
 			if [ "$opt_vmm" != -1 ]; then
 				pstatus blue YES "forced from command line"
 			else
-				pstatus blue YES 
+				pstatus blue YES
 			fi
 		fi
 
