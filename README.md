@@ -110,7 +110,7 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Mitigation: microcode update + kernel update making possible for affected software to protect itself
    - Performance impact of the mitigation: low to medium
 
-**CVE-2018-3615** l1 terminal fault (Foreshadow SGX)
+**CVE-2018-3615** l1 terminal fault (Foreshadow-NG SGX)
 
    - Impact: Kernel & all software (any physical memory address in the system)
    - Mitigation: microcode update
