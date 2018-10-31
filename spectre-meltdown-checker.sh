@@ -3859,6 +3859,7 @@ check_CVE_2018_3646_linux()
 				pstatus yellow UNKNOWN "can't find or read /sys/devices/system/cpu/vulnerabilities/l1tf"
 			fi
 		else
+			l1d_mode=-1
 			pstatus blue N/A "not testable in offline mode"
 		fi
 
@@ -3887,6 +3888,7 @@ check_CVE_2018_3646_linux()
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
 		status=UNK
+		l1d_mode=-1
 	fi
 
 	if ! is_cpu_vulnerable "$cve"; then
