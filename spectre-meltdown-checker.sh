@@ -1646,7 +1646,7 @@ if [ "$os" = Linux ]; then
 	fi
 
 	if [ "$bad_accuracy" = 1 ]; then
-		_info "We're missing some kernel info (see -v), accuracy might be reduced"
+		_warn "We're missing some kernel info (see -v), accuracy might be reduced"
 	fi
 fi
 
@@ -3938,6 +3938,10 @@ done
 if [ -n "$final_summary" ]; then
 	_info "> \033[46m\033[30mSUMMARY:\033[0m$final_summary"
 	_info ""
+fi
+
+if [ "$bad_accuracy" = 1 ]; then
+	_warn "We're missing some kernel info (see -v), accuracy might be reduced"
 fi
 
 _vars=$(set | grep -Ev '^[A-Z_[:space:]]' | sort | tr "\n" '|')
