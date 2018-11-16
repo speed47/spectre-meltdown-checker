@@ -1593,8 +1593,8 @@ if [ "$opt_live" = 1 ]; then
 		opt_map="/lib/modules/$(uname -r)/System.map"
 	elif [ -e "/boot/System.map-$(uname -r)" ] ; then
 		opt_map="/boot/System.map-$(uname -r)"
-	elif [ -e "/lib/kernel/config-$(uname -r)" ]; then
-		opt_config="/lib/kernel/config-$(uname -r)"
+	elif [ -e "/lib/kernel/System.map-$(uname -r)" ]; then
+		opt_map="/lib/kernel/System.map-$(uname -r)"
 	fi
 
 	# config
@@ -1609,6 +1609,8 @@ if [ "$opt_live" = 1 ]; then
 		opt_config="/boot/config-$(uname -r)"
 	elif [ -e "/etc/kernels/kernel-config-$(uname -m)-$(uname -r)" ]; then
 		opt_config="/etc/kernels/kernel-config-$(uname -m)-$(uname -r)"
+	elif [ -e "/lib/kernel/config-$(uname -r)" ]; then
+		opt_config="/lib/kernel/config-$(uname -r)"
 	fi
 else
 	_info "Checking for vulnerabilities against specified kernel"
