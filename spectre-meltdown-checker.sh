@@ -1558,8 +1558,6 @@ if [ "$opt_live" = 1 ]; then
 		[ -e "/lib/modules/$(uname -r)/vmlinuz" ] && opt_kernel="/lib/modules/$(uname -r)/vmlinuz"
 		# Slackare:
 		[ -e "/boot/vmlinuz"             ] && opt_kernel="/boot/vmlinuz"
-		# Arch:
-		[ -e "/boot/vmlinuz-linux"       ] && opt_kernel="/boot/vmlinuz-linux"
 		# Arch aarch64:
 		[ -e "/boot/Image"               ] && opt_kernel="/boot/Image"
 		# Arch armv5/armv7:
