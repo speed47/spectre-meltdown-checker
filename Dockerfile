@@ -5,7 +5,3 @@ RUN apk --update --no-cache add kmod binutils grep perl
 COPY . /check
 
 ENTRYPOINT ["/check/spectre-meltdown-checker.sh"]
-
-VOLUME /boot
-VOLUME /dev/cpu
-VOLUME /lib/modules
