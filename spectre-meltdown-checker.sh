@@ -80,7 +80,7 @@ show_usage()
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
-		--vmm [auto,yes,no]	override the detection of the presence of an hypervisor (for CVE-2018-3646), default: auto
+		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor (for CVE-2018-3646), default: auto
 		--update-mcedb		update our local copy of the CPU microcodes versions database (from the awesome MCExtractor project)
 		--update-builtin-mcedb	same as --update-mcedb but update builtin DB inside the script itself
 
@@ -134,7 +134,7 @@ opt_live_explicit=0
 opt_live=1
 opt_no_color=0
 opt_batch=0
-opt_batch_format="text"
+opt_batch_format='text'
 opt_verbose=1
 opt_cve_list=''
 opt_cve_all=1
@@ -150,7 +150,7 @@ opt_paranoid=0
 
 global_critical=0
 global_unknown=0
-nrpe_vuln=""
+nrpe_vuln=''
 
 supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646'
 
@@ -351,17 +351,21 @@ is_cpu_vulnerable()
 		fi
 		# L1TF (RDCL_NO already checked above)
 		if [ "$cpu_family" = 6 ]; then
-			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"          ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT1" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT2" ] || \
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL"          ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_TABLET" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_X" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_MERRIFIELD" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_X" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL"     ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM"     ]; then
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
 
 				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune"
 				[ -z "$variantl1tf" ] && variantl1tf=immune
@@ -501,23 +505,24 @@ is_cpu_specex_free()
 	# return true (0) if the CPU doesn't do speculative execution, false (1) if it does.
 	# if it's not in the list we know, return false (1).
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c#n882
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_CEDARVIEW,   X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_CLOVERVIEW,  X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_LINCROFT,    X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_PENWELL,     X86_FEATURE_ANY },
-	# { X86_VENDOR_INTEL,     6, INTEL_FAM6_ATOM_PINEVIEW,    X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_SALTWELL,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_SALTWELL_TABLET,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_BONNELL_MID,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_SALTWELL_MID,	X86_FEATURE_ANY },
+	# { X86_VENDOR_INTEL,	6, INTEL_FAM6_ATOM_BONNELL,	X86_FEATURE_ANY },
 	# { X86_VENDOR_CENTAUR,   5 },
 	# { X86_VENDOR_INTEL,     5 },
 	# { X86_VENDOR_NSC,       5 },
 	# { X86_VENDOR_ANY,       4 },
+
 	parse_cpu_details
 	if is_intel; then
 		if [ "$cpu_family" = 6 ]; then
-			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_CEDARVIEW"  ]      || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_CLOVERVIEW" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_LINCROFT"   ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PENWELL"    ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_PINEVIEW"   ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL"	] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_TABLET"	] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL_MID"		] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_MID"	] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL"	]; then
 				return 0
 			fi
 		elif [ "$cpu_family" = 5 ]; then
@@ -535,10 +540,10 @@ is_cpu_ssb_free()
 	# source1: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c#n945
 	# source2: https://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git/tree/arch/x86/kernel/cpu/common.c
 	# Only list CPUs that speculate but are immune, to avoid duplication of cpus listed in is_cpu_specex_free()
-	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT1	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT	},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_AIRMONT		},
-	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT2	},
-	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_MERRIFIELD	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT_X	},
+	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_ATOM_SILVERMONT_MID	},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_CORE_YONAH		},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNL		},
 	#{ X86_VENDOR_INTEL,	6,	INTEL_FAM6_XEON_PHI_KNM		},
@@ -550,9 +555,9 @@ is_cpu_ssb_free()
 	if is_intel; then
 		if [ "$cpu_family" = 6 ]; then
 			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT"          ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT1" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT2" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_MERRIFIELD"  ]; then
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_X" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID"  ]; then
 				return 0
 			elif [ "$cpu_model" = "$INTEL_FAM6_CORE_YONAH"          ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL"     ] || \
@@ -1261,19 +1266,19 @@ parse_cpu_details()
 
 	# /* "Small Core" Processors (Atom) */
 
-	INTEL_FAM6_ATOM_PINEVIEW=$(( 0x1C ))
-	INTEL_FAM6_ATOM_LINCROFT=$(( 0x26 ))
-	INTEL_FAM6_ATOM_PENWELL=$(( 0x27 ))
-	INTEL_FAM6_ATOM_CLOVERVIEW=$(( 0x35 ))
-	INTEL_FAM6_ATOM_CEDARVIEW=$(( 0x36 ))
-	INTEL_FAM6_ATOM_SILVERMONT1=$(( 0x37 ))
-	INTEL_FAM6_ATOM_SILVERMONT2=$(( 0x4D ))
+	INTEL_FAM6_ATOM_BONNELL=$(( 0x1C ))
+	INTEL_FAM6_ATOM_BONNELL_MID=$(( 0x26 ))
+	INTEL_FAM6_ATOM_SALTWELL_MID=$(( 0x27 ))
+	INTEL_FAM6_ATOM_SALTWELL_TABLET=$(( 0x35 ))
+	INTEL_FAM6_ATOM_SALTWELL=$(( 0x36 ))
+	INTEL_FAM6_ATOM_SILVERMONT=$(( 0x37 ))
+	INTEL_FAM6_ATOM_SILVERMONT_MID=$(( 0x4A ))
+	INTEL_FAM6_ATOM_SILVERMONT_X=$(( 0x4D ))
 	INTEL_FAM6_ATOM_AIRMONT=$(( 0x4C ))
-	INTEL_FAM6_ATOM_MERRIFIELD=$(( 0x4A ))
-	INTEL_FAM6_ATOM_MOOREFIELD=$(( 0x5A ))
+	INTEL_FAM6_ATOM_AIRMONT_MID=$(( 0x5A ))
 	INTEL_FAM6_ATOM_GOLDMONT=$(( 0x5C ))
-	INTEL_FAM6_ATOM_DENVERTON=$(( 0x5F ))
-	INTEL_FAM6_ATOM_GEMINI_LAKE=$(( 0x7A ))
+	INTEL_FAM6_ATOM_GOLDMONT_X=$(( 0x5F ))
+	INTEL_FAM6_ATOM_GOLDMONT_PLUS=$(( 0x7A ))
 
 	# /* Xeon Phi */
 
@@ -2992,7 +2997,7 @@ check_CVE_2017_5715_linux()
 
 		# if we are in live mode, we can check for a lot more stuff and explain further
 		if [ "$opt_live" = 1 ] && [ "$vulnstatus" != "OK" ]; then
-			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under an hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor. You may need to reconfigure your VM to use a CPU model that has IBRS capability; in Libvirt, such CPUs are listed with an IBRS suffix."
+			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under a hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor. You may need to reconfigure your VM to use a CPU model that has IBRS capability; in Libvirt, such CPUs are listed with an IBRS suffix."
 			# IBPB (amd & intel)
 			if ( [ -z "$ibpb_enabled" ] || [ "$ibpb_enabled" = 0 ] ) && ( is_intel || is_amd ); then
 				if [ -z "$cpuid_ibpb" ]; then
@@ -3743,13 +3748,41 @@ check_CVE_2018_3646_linux()
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "* This system is a host running an hypervisor: "
+		_info_nol "* This system is a host running a hypervisor: "
 		has_vmm=$opt_vmm
 		if [ "$has_vmm" = -1 ]; then
-			# FIXME enhance detection, this one is pretty basic/stupid
+			# Assumed to be running on bare metal unless evidence of vm is found.
 			has_vmm=0
-			# shellcheck disable=SC2009
-			ps ax | grep -v -e grep -e '\[kvm' | grep -q -e qemu -e kvm && has_vmm=1
+			# test for presence of hypervisor flag - definitive if set
+			if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw hypervisor; then
+				has_vmm=1
+				_debug "hypervisor: present - hypervisor flag set in $procfs/cpuinfo"
+			else
+				_debug "hypervisor: unknown - hypervisor flag not set in $procfs/cpuinfo"
+			fi
+			# test for kernel detected hypervisor
+			dmesg_grep "Hypervisor detected:" ; ret=$?
+			if [ $ret -eq 0 ]; then
+				_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
+				has_vmm=1
+			elif [ $ret -eq 2 ]; then
+				_debug "hypervisor: dmesg truncated"
+			fi
+			# test for kernel detected paravirtualization 
+			dmesg_grep "Booting paravirtualized kernel on bare metal" ; ret=$?
+			if [ $ret -eq 0 ]; then
+				_debug "hypervisor: not present (bare metal)- found in dmesg: $dmesg_grepped"
+			elif [ $ret -eq 2 ]; then
+				_debug "hypervisor: dmesg truncated"
+			else
+				dmesg_grep "Booting paravirtualized kernel on" ; ret=$?
+				if [ $ret -eq 0 ]; then
+					_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
+					has_vmm=1
+				elif [ $ret -eq 2 ]; then
+					_debug "hypervisor: dmesg truncated"
+				fi
+			fi
 		fi
 		if [ "$has_vmm" = 0 ]; then
 			if [ "$opt_vmm" != -1 ]; then
@@ -3824,9 +3857,11 @@ check_CVE_2018_3646_linux()
 					pstatus yellow UNKNOWN "unrecognized mode"
 				fi
 			else
+				l1d_mode=-1
 				pstatus yellow UNKNOWN "can't find or read /sys/devices/system/cpu/vulnerabilities/l1tf"
 			fi
 		else
+			l1d_mode=-1
 			pstatus blue N/A "not testable in offline mode"
 		fi
 
@@ -3855,13 +3890,14 @@ check_CVE_2018_3646_linux()
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
 		status=UNK
+		l1d_mode=-1
 	fi
 
 	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ "$has_vmm" = 0 ]; then
-		pvulnstatus $cve OK "this system is not running an hypervisor"
+		pvulnstatus $cve OK "this system is not running a hypervisor"
 	else
 		if [ "$ept_disabled" = 1 ]; then
 			pvulnstatus $cve OK "EPT is disabled which mitigates the vulnerability"
@@ -3956,7 +3992,7 @@ fi
 _info "A false sense of security is worse than no security at all, see --disclaimer"
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
-	if [ ! -z "$nrpe_vuln" ]; then
+	if [ -n "$nrpe_vuln" ]; then
 		echo "Vulnerable:$nrpe_vuln"
 	else
 		echo "OK"

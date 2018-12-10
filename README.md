@@ -110,17 +110,24 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Mitigation: microcode update + kernel update making possible for affected software to protect itself
    - Performance impact of the mitigation: low to medium
 
-**CVE-2018-3615** l1 terminal fault (Foreshadow)
+**CVE-2018-3615** l1 terminal fault (Foreshadow-NG SGX)
 
-   - TBC
+   - Impact: Kernel & all software (any physical memory address in the system)
+   - Mitigation: microcode update
+   - Performance impact of the mitigation: negligible
 
-**CVE-2018-3620** l1 terminal fault (Foreshadow-NG)
+**CVE-2018-3620** l1 terminal fault (Foreshadow-NG SMM)
 
-   - TBC
+   - Impact: Kernel & System management mode
+   - Mitigation: updated kernel (with PTE inversion)
+   - Performance impact of the mitigation: negligible
+   
+**CVE-2018-3646** l1 terminal fault (Foreshadow-NG VMM)
 
-**CVE-2018-3646** l1 terminal fault (Foreshadow-NG)
-
-   - TBC
+   - Impact: Virtualization software and Virtual Machine Monitors
+   - Mitigation: disable ept (extended page tables), disable hyper-threading (SMT), or
+                 updated kernel (with L1d flush)
+   - Performance impact of the mitigation: low to significant
 
 ## Understanding what this script does and doesn't
 
