@@ -3767,9 +3767,9 @@ check_CVE_2018_3646_linux()
 				_debug "hypervisor: dmesg truncated"
 			fi
 			# test for kernel detected paravirtualization 
-			dmesg_grep "Booting paravirtualized kernel on bare metal" ; ret=$?
+			dmesg_grep "Booting paravirtualized kernel on bare hardware" ; ret=$?
 			if [ $ret -eq 0 ]; then
-				_debug "hypervisor: not present (bare metal)- found in dmesg: $dmesg_grepped"
+				_debug "hypervisor: not present (bare hardware)- found in dmesg: $dmesg_grepped"
 			elif [ $ret -eq 2 ]; then
 				_debug "hypervisor: dmesg truncated"
 			else
