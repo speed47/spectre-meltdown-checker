@@ -1414,6 +1414,57 @@ is_zen_cpu()
 	return 1
 }
 
+# Test if the current host is a Xen PV Dom0 / DomU
+is_xen() {
+	if [ ! -d "$procfs/xen" ]; then
+	    return 0
+	fi
+
+	# XXX do we have a better way that relying on dmesg?
+	dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
+	if [ $ret -eq 2 ]; then
+		_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
+		return 0
+	elif [ $ret -eq 0 ]; then
+		return 1
+	else
+		return 0
+	fi
+}
+
+is_xen_dom0()
+{
+	if [ $((is_xen)) -ne 1 ]; then
+	    return 0
+	fi
+
+	if [ -e "$procfs/xen/capabilities" ] && grep -q "control_d" "$procfs/xen/capabilities"; then
+		return 1
+	else
+		return 0
+	fi
+}
+
+is_xen_domU()
+{
+	if [ $((is_xen)) -ne 1 ]; then
+	    return 0
+	fi
+
+	# PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
+	dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'; ret=$?
+	if [ $ret -eq 0 ]; then
+		return 0
+	fi
+
+	if [ $((is_xen_dom0)) -eq 0 ]; then
+		return 1
+	else
+		return 0
+	fi
+}
+
+
 if [ -r "$mcedb_cache" ]; then
 	mcedb_source="$mcedb_cache"
 	mcedb_info="local MCExtractor DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
@@ -3292,24 +3343,8 @@ check_CVE_2017_5754_linux()
 
 
 	# Test if the current host is a Xen PV Dom0 / DomU
-	if [ -d "$procfs/xen" ]; then
-		# XXX do we have a better way that relying on dmesg?
-		dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
-		if [ $ret -eq 2 ]; then
-			_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
-		elif [ $ret -eq 0 ]; then
-			if [ -e "$procfs/xen/capabilities" ] && grep -q "control_d" "$procfs/xen/capabilities"; then
-				xen_pv_domo=1
-			else
-				xen_pv_domu=1
-			fi
-			# PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
-			dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'; ret=$?
-			if [ $ret -eq 0 ]; then
-				xen_pv_domu=0
-			fi
-		fi
-	fi
+	xen_pv_domo=$((is_xen_dom0))
+	xen_pv_domu=$((is_xen_domU))
 
 	if [ "$opt_live" = 1 ]; then
 		# checking whether we're running under Xen PV 64 bits. If yes, we are affected by variant3
@@ -3851,8 +3886,28 @@ check_CVE_2018_3646_linux()
 					l1d_mode=2
 					pstatus green YES "unconditional flushes"
 				else
-					l1d_mode=-1
-					pstatus yellow UNKNOWN "unrecognized mode"
+					if [ $((is_xen_dom0)) -eq 1 ]; then
+						l1d_xen_hardware=$(xl dmesg | grep -Eq 'Hardware features:' | grep -Eq 'L1D_FLUSH' | head -1)
+						l1d_xen_hypervisor=$(xl dmesg | grep -Eq 'Xen settings:' | grep -Eq 'L1D_FLUSH' | head -1)
+						l1d_xen_pv_domU=$(xl dmesg | grep -Eq 'PV L1TF shadowing:' | grep -Eq 'DomU enabled' | head -1)
+
+						if [ -z "$l1d_xen_hardware" ] && [ -z "$l1d_xen_hypervisor" ] && [ -z "$l1d_xen_pv_domU" ]; then
+							l1d_mode=5
+							pstatus green YES "for XEN guests"
+						elif [ -z "$l1d_xen_hardware" ] && [ -z "$l1d_xen_hypervisor" ]; then
+							l1d_mode=4
+							pstatus green YES "for XEN guests (HVM only)"
+						elif [ -z "$l1d_xen_pv_domU" ]; then
+							l1d_mode=3
+							pstatus green YES "for XEN guests (PV only)"
+						else
+							l1d_mode=0
+							pstatus yellow NO "for XEN guests"
+						fi
+					else
+						l1d_mode=-1
+						pstatus yellow UNKNOWN "unrecognized mode"
+					fi
 				fi
 			else
 				l1d_mode=-1
@@ -3919,6 +3974,14 @@ check_CVE_2018_3646_linux()
 					pvulnstatus $cve VULN "enable L1D unconditional flushing and disable Hyper-Threading to fully mitigate the vulnerability"
 				fi
 			fi
+		fi
+
+		if [ $l1d_mode -gt 3 ]; then
+			_warn
+			_warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
+			_warn "with a kernel which contains CVE-2018-3646 mitigations."
+			_warn
+			_warn "See https://www.suse.com/support/kb/doc/?id=7023078 and XSA-273 for details."
 		fi
 	fi
 }
