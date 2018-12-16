@@ -3343,8 +3343,8 @@ check_CVE_2017_5754_linux()
 
 
 	# Test if the current host is a Xen PV Dom0 / DomU
-	xen_pv_domo=$((is_xen_dom0))
-	xen_pv_domu=$((is_xen_domU))
+	is_xen_dom0 && xen_pv_domo=1
+	is_xen_domU && xen_pv_domu=1
 
 	if [ "$opt_live" = 1 ]; then
 		# checking whether we're running under Xen PV 64 bits. If yes, we are affected by variant3
