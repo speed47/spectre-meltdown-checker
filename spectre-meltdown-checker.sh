@@ -3896,10 +3896,10 @@ check_CVE_2018_3646_linux()
 							pstatus green YES "for XEN guests"
 						elif [ -z "$l1d_xen_hardware" ] && [ -z "$l1d_xen_hypervisor" ]; then
 							l1d_mode=4
-							pstatus green YES "for XEN guests (HVM only)"
+							pstatus yellow YES "for XEN guests (HVM only)"
 						elif [ -z "$l1d_xen_pv_domU" ]; then
 							l1d_mode=3
-							pstatus green YES "for XEN guests (PV only)"
+							pstatus yellow YES "for XEN guests (PV only)"
 						else
 							l1d_mode=0
 							pstatus yellow NO "for XEN guests"
