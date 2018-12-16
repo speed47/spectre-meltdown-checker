@@ -3307,6 +3307,10 @@ check_CVE_2017_5754_linux()
 				# Red Hat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
 				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
+			elif is_xen_dom0; then
+				pti_xen_pv_domU=$(xl dmesg | grep 'XPTI' | grep 'DomU enabled' | head -1)
+
+				[ -n "$pti_xen_pv_domU" ] && kpti_enabled=1
 			fi
 			if [ -z "$kpti_enabled" ]; then
 				dmesg_grep "$dmesg_grep"; ret=$?
