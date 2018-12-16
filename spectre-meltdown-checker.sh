@@ -3891,13 +3891,13 @@ check_CVE_2018_3646_linux()
 						l1d_xen_hypervisor=$(xl dmesg | grep 'Xen settings:' | grep 'L1D_FLUSH' | head -1)
 						l1d_xen_pv_domU=$(xl dmesg | grep 'PV L1TF shadowing:' | grep 'DomU enabled' | head -1)
 
-						if [ -z "$l1d_xen_hardware" ] && [ -z "$l1d_xen_hypervisor" ] && [ -z "$l1d_xen_pv_domU" ]; then
+						if [ -n "$l1d_xen_hardware" ] && [ -n "$l1d_xen_hypervisor" ] && [ -n "$l1d_xen_pv_domU" ]; then
 							l1d_mode=5
 							pstatus green YES "for XEN guests"
-						elif [ -z "$l1d_xen_hardware" ] && [ -z "$l1d_xen_hypervisor" ]; then
+						elif [ -n "$l1d_xen_hardware" ] && [ -n "$l1d_xen_hypervisor" ]; then
 							l1d_mode=4
 							pstatus yellow YES "for XEN guests (HVM only)"
-						elif [ -z "$l1d_xen_pv_domU" ]; then
+						elif [ -n "$l1d_xen_pv_domU" ]; then
 							l1d_mode=3
 							pstatus yellow YES "for XEN guests (PV only)"
 						else
@@ -3920,7 +3920,7 @@ check_CVE_2018_3646_linux()
 
 		_info_nol "  * Hardware-backed L1D flush supported: "
 		if [ "$opt_live" = 1 ]; then
-			if grep -qw flush_l1d "$procfs/cpuinfo" || [ -z "$l1d_xen_hardware" ]; then
+			if grep -qw flush_l1d "$procfs/cpuinfo" || [ -n "$l1d_xen_hardware" ]; then
 				pstatus green YES "performance impact of the mitigation will be greatly reduced"
 			else
 				pstatus blue NO "flush will be done in software, this is slower"
