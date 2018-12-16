@@ -1417,50 +1417,50 @@ is_zen_cpu()
 # Test if the current host is a Xen PV Dom0 / DomU
 is_xen() {
 	if [ ! -d "$procfs/xen" ]; then
-	    return 0
+		return 1
 	fi
 
 	# XXX do we have a better way that relying on dmesg?
 	dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
 	if [ $ret -eq 2 ]; then
 		_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
-		return 0
-	elif [ $ret -eq 0 ]; then
 		return 1
-	else
+	elif [ $ret -eq 0 ]; then
 		return 0
+	else
+		return 1
 	fi
 }
 
 is_xen_dom0()
 {
-	if [ $((is_xen)) -ne 1 ]; then
-	    return 0
+	if ! is_xen; then
+		return 1
 	fi
 
 	if [ -e "$procfs/xen/capabilities" ] && grep -q "control_d" "$procfs/xen/capabilities"; then
-		return 1
-	else
 		return 0
+	else
+		return 1
 	fi
 }
 
 is_xen_domU()
 {
-	if [ $((is_xen)) -ne 1 ]; then
-	    return 0
+	if ! is_xen; then
+		return 1
 	fi
 
 	# PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
 	dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'; ret=$?
 	if [ $ret -eq 0 ]; then
-		return 0
+		return 1
 	fi
 
-	if [ $((is_xen_dom0)) -eq 0 ]; then
-		return 1
-	else
+	if ! is_xen_dom0; then
 		return 0
+	else
+		return 1
 	fi
 }
 
@@ -3886,7 +3886,7 @@ check_CVE_2018_3646_linux()
 					l1d_mode=2
 					pstatus green YES "unconditional flushes"
 				else
-					if [ $((is_xen_dom0)) -eq 1 ]; then
+					if is_xen_dom0; then
 						l1d_xen_hardware=$(xl dmesg | grep -Eq 'Hardware features:' | grep -Eq 'L1D_FLUSH' | head -1)
 						l1d_xen_hypervisor=$(xl dmesg | grep -Eq 'Xen settings:' | grep -Eq 'L1D_FLUSH' | head -1)
 						l1d_xen_pv_domU=$(xl dmesg | grep -Eq 'PV L1TF shadowing:' | grep -Eq 'DomU enabled' | head -1)
