@@ -3920,7 +3920,7 @@ check_CVE_2018_3646_linux()
 
 		_info_nol "  * Hardware-backed L1D flush supported: "
 		if [ "$opt_live" = 1 ]; then
-			if grep -qw flush_l1d "$procfs/cpuinfo"; then
+			if grep -qw flush_l1d "$procfs/cpuinfo" || [ -z "$l1d_xen_hardware" ]; then
 				pstatus green YES "performance impact of the mitigation will be greatly reduced"
 			else
 				pstatus blue NO "flush will be done in software, this is slower"
