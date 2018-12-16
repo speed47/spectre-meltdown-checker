@@ -3887,9 +3887,9 @@ check_CVE_2018_3646_linux()
 					pstatus green YES "unconditional flushes"
 				else
 					if is_xen_dom0; then
-						l1d_xen_hardware=$(xl dmesg | grep -Eq 'Hardware features:' | grep -Eq 'L1D_FLUSH' | head -1)
-						l1d_xen_hypervisor=$(xl dmesg | grep -Eq 'Xen settings:' | grep -Eq 'L1D_FLUSH' | head -1)
-						l1d_xen_pv_domU=$(xl dmesg | grep -Eq 'PV L1TF shadowing:' | grep -Eq 'DomU enabled' | head -1)
+						l1d_xen_hardware=$(xl dmesg | grep 'Hardware features:' | grep 'L1D_FLUSH' | head -1)
+						l1d_xen_hypervisor=$(xl dmesg | grep 'Xen settings:' | grep 'L1D_FLUSH' | head -1)
+						l1d_xen_pv_domU=$(xl dmesg | grep 'PV L1TF shadowing:' | grep 'DomU enabled' | head -1)
 
 						if [ -z "$l1d_xen_hardware" ] && [ -z "$l1d_xen_hypervisor" ] && [ -z "$l1d_xen_pv_domU" ]; then
 							l1d_mode=5
