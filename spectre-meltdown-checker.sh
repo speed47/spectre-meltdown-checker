@@ -318,10 +318,12 @@ is_cpu_vulnerable()
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
 		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown vulnerable
 		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
-		if grep -qE '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' "$procfs/cpuinfo"; then
-			variant1=vuln
-			[ -z "$variant2" ] && variant2=immune
-			variant3=vuln
+		if [ -e "$procfs/cpuinfo" ]; then
+			if grep -qE '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' "$procfs/cpuinfo"; then
+				variant1=vuln
+				[ -z "$variant2" ] && variant2=immune
+				variant3=vuln
+			fi
 		fi
 		if [ "$capabilities_rdcl_no" = 1 ]; then
 			# capability bit for future Intel processor that will explicitly state
