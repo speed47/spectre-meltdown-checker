@@ -377,7 +377,7 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: intel family < 6 is immune"
 			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
-	elif is_amd; then
+	elif is_amd || is_hygon; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
 		variant1=vuln
@@ -573,7 +573,10 @@ is_cpu_ssb_free()
 			[ "$cpu_family" = "15" ]; then 
 			return 0
 		fi
-	fi			
+	fi
+	if is_hygon; then
+		return 1
+	fi
 	[ "$cpu_family" = 4 ] && return 0
 	return 1
 }
@@ -1287,6 +1290,11 @@ parse_cpu_details()
 	}
 	parse_cpu_details_done=1
 }
+is_hygon()
+{
+	[ "$cpu_vendor" = HygonGenuine ] && return 0
+	return 1
+}
 
 is_amd()
 {
@@ -1413,7 +1421,13 @@ is_zen_cpu()
 	[ "$cpu_family" = 23 ] && return 0
 	return 1
 }
-
+is_moksha_cpu()
+{
+	parse_cpu_details
+	is_hygon || return 1
+	[ "$cpu_family" = 24 ] && return 0
+	return 1
+}
 if [ -r "$mcedb_cache" ]; then
 	mcedb_source="$mcedb_cache"
 	mcedb_info="local MCExtractor DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
@@ -1907,7 +1921,7 @@ check_cpu()
 			cpuid_spec_ctrl=1
 			cpuid_ibrs='SPEC_CTRL'
 		fi
-	elif is_amd; then
+	elif is_amd || is_hygon; then
 		read_cpuid 0x80000008 $EBX 14 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES "IBRS_SUPPORT feature bit"
@@ -1924,9 +1938,9 @@ check_cpu()
 		cpuid_spec_ctrl=-1
 	fi
 
-	if is_amd; then
+	if is_amd || is_hygon; then
 		_info_nol "    * CPU indicates preferring IBRS always-on: "
-		# amd
+		# amd or hygon
 		read_cpuid 0x80000008 $EBX 16 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES
@@ -1935,7 +1949,7 @@ check_cpu()
 		fi
 
 		_info_nol "    * CPU indicates preferring IBRS over retpoline: "
-		# amd
+		# amd or hygon
 		read_cpuid 0x80000008 $EBX 18 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES
@@ -1995,7 +2009,7 @@ check_cpu()
 		else
 			pstatus yellow NO
 		fi
-	elif is_amd; then
+	elif is_amd || is_hygon; then
 		read_cpuid 0x80000008 $EBX 12 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			cpuid_ibpb='IBPB_SUPPORT'
@@ -2033,6 +2047,12 @@ check_cpu()
 			pstatus green YES "AMD STIBP feature bit"
 			#cpuid_stibp='AMD STIBP'
 		fi
+	elif is_hygon; then
+		read_cpuid 0x80000008 $EBX 15 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES "HYGON STIBP feature bit"
+			#cpuid_stibp='HYGON STIBP'
+		fi
 	else
 		ret=-1
 		pstatus yellow UNKNOWN "unknown CPU"
@@ -2044,7 +2064,7 @@ check_cpu()
 	fi
 
 
-	if is_amd; then
+	if is_amd || is_hygon; then
 		_info_nol "    * CPU indicates preferring STIBP always-on: "
 		read_cpuid 0x80000008 $EBX 17 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
@@ -2076,6 +2096,21 @@ check_cpu()
 		elif [ "$cpu_family" -ge 21 ] && [ "$cpu_family" -le 23 ]; then
 			cpuid_ssbd='AMD non-architectural MSR'
 		fi
+	elif is_hygon; then
+		_info     "  * Speculative Store Bypass Disable (SSBD)"
+		_info_nol "    * CPU indicates SSBD capability: "
+		read_cpuid 0x80000008 $EBX 24 1 1; ret24=$?
+		read_cpuid 0x80000008 $EBX 25 1 1; ret25=$?
+		
+		if [ $ret24 -eq 0 ]; then
+			cpuid_ssbd='HYGON SSBD in SPEC_CTRL'
+			#hygon cpuid_ssbd_spec_ctrl=1
+		elif [ $ret25 -eq 0 ]; then
+			cpuid_ssbd='HYGON SSBD in VIRT_SPEC_CTRL'
+			#hygon cpuid_ssbd_virt_spec_ctrl=1
+		elif [ "$cpu_family" -ge 24 ]; then
+			cpuid_ssbd='HYGON non-architectural MSR'
+		fi
 	fi
 
 	if [ -n "$cpuid_ssbd" ]; then
@@ -2091,6 +2126,13 @@ check_cpu()
 		read_cpuid 0x80000008 $EBX 26 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			amd_ssb_no=1
+		fi
+	elif is_hygon; then
+		# indicate when speculative store bypass disable is no longer needed to prevent speculative loads bypassing older stores
+		read_cpuid 0x80000008 $EBX 26 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			hygon_ssb_no=1
+			_debug "hygon_ssb_no=1"
 		fi
 	fi
 
@@ -2242,7 +2284,7 @@ check_cpu()
 		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
 		if [ "$capabilities_ssb_no" = -1 ]; then
 			pstatus yellow UNKNOWN
-		elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ]; then
+		elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ] || [ "$hygon_ssb_no" = 1 ]; then
 			pstatus green YES
 		else
 			pstatus yellow NO
@@ -2976,10 +3018,10 @@ check_CVE_2017_5715_linux()
 			if is_vulnerable_to_empty_rsb; then
 				pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB+RSB filling, is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. You also need a recent-enough kernel that supports RSB filling if you plan to use retpoline. For Skylake+ CPUs, the IBRS + IBPB approach is generally preferred as it guarantees complete protection, and the performance impact is not as high as with older CPUs in comparison with retpoline. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
-			elif is_zen_cpu; then
+			elif is_zen_cpu || is_moksha_cpu; then
 				pvulnstatus $cve VULN "retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
-			elif is_intel || is_amd; then
+			elif is_intel || is_amd || is_hygon; then
 				pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. The retpoline + IBPB approach is generally preferred as the performance impact is lower. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
 			else
@@ -2997,7 +3039,7 @@ check_CVE_2017_5715_linux()
 		if [ "$opt_live" = 1 ] && [ "$vulnstatus" != "OK" ]; then
 			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under a hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor. You may need to reconfigure your VM to use a CPU model that has IBRS capability; in Libvirt, such CPUs are listed with an IBRS suffix."
 			# IBPB (amd & intel)
-			if ( [ -z "$ibpb_enabled" ] || [ "$ibpb_enabled" = 0 ] ) && ( is_intel || is_amd ); then
+			if ( [ -z "$ibpb_enabled" ] || [ "$ibpb_enabled" = 0 ] ) && ( is_intel || is_amd || is_hygon); then
 				if [ -z "$cpuid_ibpb" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -3022,7 +3064,7 @@ check_CVE_2017_5715_linux()
 			# /IBPB
 
 			# IBRS (amd & intel)
-			if ( [ -z "$ibrs_enabled" ] || [ "$ibrs_enabled" = 0 ] ) && ( is_intel || is_amd ); then
+			if ( [ -z "$ibrs_enabled" ] || [ "$ibrs_enabled" = 0 ] ) && ( is_intel || is_amd || is_hygon); then
 				if [ -z "$cpuid_ibrs" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -3040,8 +3082,8 @@ check_CVE_2017_5715_linux()
 			# /IBRS
 			unset _explain_hypervisor
 
-			# RETPOLINE (amd & intel)
-			if is_amd || is_intel; then
+			# RETPOLINE (amd & intel &hygon )
+			if is_amd || is_intel || is_hygon; then
 				if [ "$retpoline" = 0 ]; then
 					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with  a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 0 ]; then
