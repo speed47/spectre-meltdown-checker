@@ -3785,9 +3785,15 @@ check_CVE_2018_3646_linux()
 	msg=''
 	l1d_mode=-1
 
+	has_vmm=$opt_vmm
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" 'VMX:.*' silent; then
+		# if we can use /sys, and it has 'VMX', we are can run VMs
+		if [ "$opt_vmm" != 0 ]; then
+			has_vmm=1;
+		fi
+	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* This system is a host running a hypervisor: "
-		has_vmm=$opt_vmm
 		if [ "$has_vmm" = -1 ]; then
 			# Assumed to be running on bare metal unless evidence of vm is found.
 			has_vmm=0
