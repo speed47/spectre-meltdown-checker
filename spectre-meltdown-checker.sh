@@ -3792,60 +3792,60 @@ check_CVE_2018_3646_linux()
 			has_vmm=1;
 		fi
 	fi
-	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "* This system is a host running a hypervisor: "
-		if [ "$has_vmm" = -1 ]; then
-			# Assumed to be running on bare metal unless evidence of vm is found.
-			has_vmm=0
-			# if we have the 'kvm_intel' module loaded, well, we defintely can run VMs!
-			if lsmod | grep -q kvm_intel; then
-				has_vmm=1
-			fi
-			# test for presence of hypervisor flag - definitive if set
-			if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw hypervisor; then
-				has_vmm=1
-				_debug "hypervisor: present - hypervisor flag set in $procfs/cpuinfo"
-			else
-				_debug "hypervisor: unknown - hypervisor flag not set in $procfs/cpuinfo"
-			fi
-			# test for kernel detected hypervisor
-			dmesg_grep "Hypervisor detected:" ; ret=$?
+	_info_nol "* This system is a host running a hypervisor: "
+	if [ "$has_vmm" = -1 ] && [ "$opt_sysfs_only" != 1 ]; then
+		# Assumed to be running on bare metal unless evidence of vm is found.
+		has_vmm=0
+		# if we have the 'kvm_intel' module loaded, well, we defintely can run VMs!
+		if lsmod | grep -q kvm_intel; then
+			has_vmm=1
+		fi
+		# test for presence of hypervisor flag - definitive if set
+		if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw hypervisor; then
+			has_vmm=1
+			_debug "hypervisor: present - hypervisor flag set in $procfs/cpuinfo"
+		else
+			_debug "hypervisor: unknown - hypervisor flag not set in $procfs/cpuinfo"
+		fi
+		# test for kernel detected hypervisor
+		dmesg_grep "Hypervisor detected:" ; ret=$?
+		if [ $ret -eq 0 ]; then
+			_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
+			has_vmm=1
+		elif [ $ret -eq 2 ]; then
+			_debug "hypervisor: dmesg truncated"
+		fi
+		# test for kernel detected paravirtualization
+		dmesg_grep "Booting paravirtualized kernel on bare hardware" ; ret=$?
+		if [ $ret -eq 0 ]; then
+			_debug "hypervisor: not present (bare hardware)- found in dmesg: $dmesg_grepped"
+		elif [ $ret -eq 2 ]; then
+			_debug "hypervisor: dmesg truncated"
+		else
+			dmesg_grep "Booting paravirtualized kernel on" ; ret=$?
 			if [ $ret -eq 0 ]; then
 				_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
 				has_vmm=1
 			elif [ $ret -eq 2 ]; then
 				_debug "hypervisor: dmesg truncated"
 			fi
-			# test for kernel detected paravirtualization 
-			dmesg_grep "Booting paravirtualized kernel on bare hardware" ; ret=$?
-			if [ $ret -eq 0 ]; then
-				_debug "hypervisor: not present (bare hardware)- found in dmesg: $dmesg_grepped"
-			elif [ $ret -eq 2 ]; then
-				_debug "hypervisor: dmesg truncated"
-			else
-				dmesg_grep "Booting paravirtualized kernel on" ; ret=$?
-				if [ $ret -eq 0 ]; then
-					_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
-					has_vmm=1
-				elif [ $ret -eq 2 ]; then
-					_debug "hypervisor: dmesg truncated"
-				fi
-			fi
 		fi
-		if [ "$has_vmm" = 0 ]; then
-			if [ "$opt_vmm" != -1 ]; then
-				pstatus green NO "forced from command line"
-			else
-				pstatus green NO
-			fi
+	fi
+	if [ "$has_vmm" = 0 ]; then
+		if [ "$opt_vmm" != -1 ]; then
+			pstatus green NO "forced from command line"
 		else
-			if [ "$opt_vmm" != -1 ]; then
-				pstatus blue YES "forced from command line"
-			else
-				pstatus blue YES
-			fi
+			pstatus green NO
 		fi
+	else
+		if [ "$opt_vmm" != -1 ]; then
+			pstatus blue YES "forced from command line"
+		else
+			pstatus blue YES
+		fi
+	fi
 
+	if [ "$opt_sysfs_only" != 1 ]; then
 		_info "* Mitigation 1 (KVM)"
 		_info_nol "  * EPT is disabled: "
 		if [ "$opt_live" = 1 ]; then
