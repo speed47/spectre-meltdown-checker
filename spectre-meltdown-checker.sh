@@ -3845,7 +3845,9 @@ check_CVE_2018_3646_linux()
 		fi
 	fi
 
-	if [ "$opt_sysfs_only" != 1 ]; then
+	# until we find it is actually off, let's assume enabled
+	ept_disabled=0
+	if [ "$opt_no_sysfs" != 1 ]; then
 		_info "* Mitigation 1 (KVM)"
 		_info_nol "  * EPT is disabled: "
 		if [ "$opt_live" = 1 ]; then
@@ -3860,7 +3862,9 @@ check_CVE_2018_3646_linux()
 		else
 			pstatus blue N/A "not testable in offline mode"
 		fi
+	fi
 
+	if [ "$opt_sysfs_only" != 1 ]; then
 		_info "* Mitigation 2"
 		_info_nol "  * L1D flush is supported by kernel: "
 		if [ "$opt_live" = 1 ] && grep -qw flush_l1d "$procfs/cpuinfo"; then
