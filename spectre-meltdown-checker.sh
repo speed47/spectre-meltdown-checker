@@ -3783,7 +3783,6 @@ check_CVE_2018_3646_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	l1d_mode=-1
 
 	has_vmm=$opt_vmm
 	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" 'VMX:.*' silent; then
@@ -3864,30 +3863,30 @@ check_CVE_2018_3646_linux()
 		fi
 	fi
 
+	_info "* Mitigation 2"
+	_info_nol "  * L1D flush is supported by kernel: "
+	if [ "$opt_live" = 1 ] && grep -qw flush_l1d "$procfs/cpuinfo"; then
+		l1d_kernel="found flush_l1d in $procfs/cpuinfo"
+	fi
+	if [ -z "$l1d_kernel" ]; then
+		if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			l1d_kernel_err="missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
+		elif [ -n "$kernel_err" ]; then
+			l1d_kernel_err="$kernel_err"
+		elif "${opt_arch_prefix}strings" "$kernel" | grep -qw flush_l1d; then
+			l1d_kernel='found flush_l1d in kernel image'
+		fi
+	fi
+	if [ -n "$l1d_kernel" ]; then
+		pstatus green YES "$l1d_kernel"
+	elif [ -n "$l1d_kernel_err" ]; then
+		pstatus yellow UNKNOWN "$l1d_kernel_err"
+	else
+		pstatus yellow NO
+	fi
+
+	l1d_mode=-1
 	if [ "$opt_sysfs_only" != 1 ]; then
-		_info "* Mitigation 2"
-		_info_nol "  * L1D flush is supported by kernel: "
-		if [ "$opt_live" = 1 ] && grep -qw flush_l1d "$procfs/cpuinfo"; then
-			l1d_kernel="found flush_l1d in $procfs/cpuinfo"
-		fi
-		if [ -z "$l1d_kernel" ]; then
-			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
-				l1d_kernel_err="missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
-			elif [ -n "$kernel_err" ]; then
-				l1d_kernel_err="$kernel_err"
-			elif "${opt_arch_prefix}strings" "$kernel" | grep -qw flush_l1d; then
-				l1d_kernel='found flush_l1d in kernel image'
-			fi
-		fi
-
-		if [ -n "$l1d_kernel" ]; then
-			pstatus green YES "$l1d_kernel"
-		elif [ -n "$l1d_kernel_err" ]; then
-			pstatus yellow UNKNOWN "$l1d_kernel_err"
-		else
-			pstatus yellow NO
-		fi
-
 		_info_nol "  * L1D flush enabled: "
 		if [ "$opt_live" = 1 ]; then
 			if [ -r "/sys/devices/system/cpu/vulnerabilities/l1tf" ]; then
@@ -3916,7 +3915,10 @@ check_CVE_2018_3646_linux()
 			l1d_mode=-1
 			pstatus blue N/A "not testable in offline mode"
 		fi
+	fi
 
+
+	if [ "$opt_no_sysfs" != 1 ]; then
 		_info_nol "  * Hardware-backed L1D flush supported: "
 		if [ "$opt_live" = 1 ]; then
 			if grep -qw flush_l1d "$procfs/cpuinfo"; then
@@ -3927,7 +3929,10 @@ check_CVE_2018_3646_linux()
 		else
 			pstatus blue N/A "not testable in offline mode"
 		fi
+	fi
 
+	smt_enabled=-1
+	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "  * Hyper-Threading (SMT) is enabled: "
 		is_cpu_smt_enabled; smt_enabled=$?
 		if [ "$smt_enabled" = 0 ]; then
@@ -3952,6 +3957,8 @@ check_CVE_2018_3646_linux()
 			else
 				pvulnstatus $cve VULN "disable EPT or enabled L1D flushing to mitigate the vulnerability"
 			fi
+		elif [ "$smt_enabled" = -1 ]; then
+			pvulnstatus $cve UNK "could not figure out whether SMT is enabled or not"
 		else
 			if [ "$l1d_mode" -ge 2 ]; then
 				if [ "$smt_enabled" = 1 ]; then
