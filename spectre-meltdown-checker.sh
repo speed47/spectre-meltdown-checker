@@ -3783,10 +3783,8 @@ check_CVE_2018_3646_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" 'VMX:.*' silent; then
-		# this kernel has the /sys interface, trust it over everything
-		sys_interface_available=1
-	fi
+	l1d_mode=-1
+
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* This system is a host running a hypervisor: "
 		has_vmm=$opt_vmm
@@ -3925,16 +3923,9 @@ check_CVE_2018_3646_linux()
 		else
 			pstatus yellow UNKNOWN
 		fi
-
-	elif [ "$sys_interface_available" = 0 ]; then
-		# we have no sysfs but were asked to use it only!
-		msg="/sys vulnerability interface use forced, but it's not available!"
-		status=UNK
-		l1d_mode=-1
 	fi
 
 	if ! is_cpu_vulnerable "$cve"; then
-		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	elif [ "$has_vmm" = 0 ]; then
 		pvulnstatus $cve OK "this system is not running a hypervisor"
