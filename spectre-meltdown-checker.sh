@@ -3797,6 +3797,10 @@ check_CVE_2018_3646_linux()
 		if [ "$has_vmm" = -1 ]; then
 			# Assumed to be running on bare metal unless evidence of vm is found.
 			has_vmm=0
+			# if we have the 'kvm_intel' module loaded, well, we defintely can run VMs!
+			if lsmod | grep -q kvm_intel; then
+				has_vmm=1
+			fi
 			# test for presence of hypervisor flag - definitive if set
 			if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw hypervisor; then
 				has_vmm=1
