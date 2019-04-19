@@ -3932,16 +3932,25 @@ check_CVE_2018_3646_linux()
 	fi
 
 	smt_enabled=-1
-	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "  * Hyper-Threading (SMT) is enabled: "
-		is_cpu_smt_enabled; smt_enabled=$?
-		if [ "$smt_enabled" = 0 ]; then
-			pstatus yellow YES
-		elif [ "$smt_enabled" = 1 ]; then
-			pstatus green NO
+	_info_nol "  * Hyper-Threading (SMT) is enabled: "
+	if [ "$opt_sysfs_only" = 1 ]; then
+		# if SMT is on, `siblings_list` has more than one element,
+		# separated by ','. Also, it is safe enough to assume that
+		# cpu0 (1) always exists, and (2) is always online.
+		if ! grep -q ',' /sys/devices/system/cpu/cpu0/topology/thread_siblings_list ; then
+			smt_enabled=1 # means disabled!
 		else
-			pstatus yellow UNKNOWN
+			smt_enabled=0
 		fi
+	else
+		is_cpu_smt_enabled; smt_enabled=$?
+	fi
+	if [ "$smt_enabled" = 0 ]; then
+		pstatus yellow YES
+	elif [ "$smt_enabled" = 1 ]; then
+		pstatus green NO
+	else
+		pstatus yellow UNKNOWN
 	fi
 
 	if ! is_cpu_vulnerable "$cve"; then
