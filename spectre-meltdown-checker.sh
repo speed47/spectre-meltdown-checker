@@ -27,6 +27,7 @@ exit_cleanup()
 	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
 	[ "$insmod_msr"      = 1 ] && rmmod msr 2>/dev/null
 	[ "$kldload_cpuctl"  = 1 ] && kldunload cpuctl 2>/dev/null
+	[ "$kldload_vmm"     = 1 ] && kldunload vmm    2>/dev/null
 }
 
 # if we were git clone'd, adjust VERSION
@@ -3741,6 +3742,12 @@ check_CVE_2018_3620_linux()
 check_CVE_2018_3620_bsd()
 {
 	_info_nol "* Kernel reserved the memory page at physical address 0x0: "
+	if ! kldstat -q -m vmm; then
+		kldload vmm 2>/dev/null && kldload_vmm=1
+		_debug "attempted to load module vmm, kldload_vmm=$kldload_vmm"
+	else
+		_debug "vmm module already loaded"
+	fi
 	if sysctl hw.vmm.vmx.l1d_flush >/dev/null 2>&1; then
 		# https://security.FreeBSD.org/patches/SA-18:09/l1tf-11.2.patch
 		# this is very difficult to detect that the kernel reserved the 0 page, but this fix
