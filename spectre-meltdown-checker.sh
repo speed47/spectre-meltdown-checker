@@ -3524,7 +3524,7 @@ check_CVE_2018_3639_linux()
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "* Kernel supports speculation store bypass: "
+		_info_nol "* Kernel supports disabling speculative store bypass (SSB): "
 		if [ "$opt_live" = 1 ]; then
 			if grep -Eq 'Speculation.?Store.?Bypass:' "$procfs/self/status" 2>/dev/null; then
 				kernel_ssb="found in $procfs/self/status"
@@ -3546,6 +3546,36 @@ check_CVE_2018_3639_linux()
 			pstatus yellow NO
 		fi
 
+		kernel_ssbd_enabled=-1
+		if [ "$opt_live" = 1 ]; then
+			# https://elixir.bootlin.com/linux/v5.0/source/fs/proc/array.c#L340
+			_info_nol "* SSB mitigation is enabled and active: "
+			if grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+thread' "$procfs/self/status" 2>/dev/null; then
+				kernel_ssbd_enabled=1
+				pstatus green YES "per-thread through prctl"
+			elif grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+globally mitigated' "$procfs/self/status" 2>/dev/null; then
+				kernel_ssbd_enabled=2
+				pstatus green YES "global"
+			elif grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+vulnerable' "$procfs/self/status" 2>/dev/null; then
+				kernel_ssbd_enabled=0
+				pstatus yellow NO
+			elif grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+not vulnerable' "$procfs/self/status" 2>/dev/null; then
+				kernel_ssbd_enabled=-2
+				pstatus blue NO "not vulnerable"
+			fi
+
+			if [ "$kernel_ssbd_enabled" = 1 ]; then
+				_info_nol "* SSB mitigation currently active for selected processes: "
+				mitigated_processes=$(grep -El 'Speculation.?Store.?Bypass:[[:space:]]+thread (force )?mitigated' /proc/*/status \
+					| sed s/status/exe/ | xargs -n1 readlink -f | xargs -n1 basename | sort -u | tr "\n" " " | sed 's/ $//')
+				if [ -n "$mitigated_processes" ]; then
+					pstatus green YES "$mitigated_processes"
+				else
+					pstatus yellow NO "no process found using SSB mitigation through prctl"
+				fi
+			fi
+		fi
+
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
@@ -3559,7 +3589,15 @@ check_CVE_2018_3639_linux()
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ -n "$cpuid_ssbd" ]; then
 			if [ -n "$kernel_ssb" ]; then
-				pvulnstatus $cve OK "your system provides the necessary tools for software mitigation"
+				if [ "$opt_live" = 1 ]; then
+					if [ "$kernel_ssbd_enabled" -gt 0 ]; then
+						pvulnstatus $cve OK "your CPU and kernel both support SSBD and mitigation is enabled"
+					else
+						pvulnstatus $cve VULN "your CPU and kernel both support SSBD but the mitigation is not active"
+					fi
+				else
+					pvulnstatus $cve OK "your system provides the necessary tools for software mitigation"
+				fi
 			else
 				pvulnstatus $cve VULN "your kernel needs to be updated"
 				explain "You have a recent-enough CPU microcode but your kernel is too old to use the new features exported by your CPU's microcode. If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel from recent-enough sources."
