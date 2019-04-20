@@ -2696,7 +2696,7 @@ check_CVE_2017_5715_linux()
 					ibrs_fw_enabled=1
 				fi
 				# when IBRS is enabled on 4.15+, we can see it in sysfs
-				if grep -q -e 'IBRS' -e 'Indirect Branch Restricted Speculation' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if grep -q -e '\<IBRS\>' -e 'Indirect Branch Restricted Speculation' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
 					_debug "ibrs: found IBRS in sysfs"
 					[ -z "$ibrs_supported" ] && ibrs_supported='found IBRS in sysfs'
 					[ -z "$ibrs_enabled"   ] && ibrs_enabled=3
