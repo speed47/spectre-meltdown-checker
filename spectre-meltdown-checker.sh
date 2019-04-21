@@ -3835,7 +3835,12 @@ check_CVE_2018_3646_linux()
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* This system is a host running a hypervisor: "
 		has_vmm=$opt_vmm
-		if [ "$has_vmm" = -1 ]; then
+		if [ "$has_vmm" = -1 ] && [ "$opt_paranoid" = 1 ]; then
+			# In paranoid mode, if --vmm was not specified on the command-line,
+			# we want to be secure before everything else, so assume we're running
+			# a hypervisor, as this requires more mitigations
+			has_vmm=2
+		elif [ "$has_vmm" = -1 ]; then
 			# Assumed to be running on bare metal unless evidence of vm is found.
 			has_vmm=0
 			# test for presence of hypervisor flag - definitive if set
@@ -3878,6 +3883,8 @@ check_CVE_2018_3646_linux()
 		else
 			if [ "$opt_vmm" != -1 ]; then
 				pstatus blue YES "forced from command line"
+			elif [ "$has_vmm" = 2 ]; then
+				pstatus blue YES "paranoid mode"
 			else
 				pstatus blue YES
 			fi
