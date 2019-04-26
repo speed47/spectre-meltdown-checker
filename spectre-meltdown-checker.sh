@@ -76,7 +76,7 @@ show_usage()
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
-		--variant [1,2,3,3a,4,l1tf]	specify which variant you'd like to check, by default all variants are checked
+		--variant [1,2,3,3a,4,l1tf,msbds,mfbds,mlpds,mdsum]	specify which variant you'd like to check, by default all variants are checked
 		--cve [cve1,cve2,...]		specify which CVE you'd like to check, by default all supported CVEs are checked
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--hw-only		only check for CPU information, don't check for any variant
@@ -153,7 +153,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -263,14 +263,18 @@ explain()
 cve2name()
 {
 	case "$1" in
-		CVE-2017-5753) echo "Spectre Variant 1, bounds check bypass";;
-		CVE-2017-5715) echo "Spectre Variant 2, branch target injection";;
-		CVE-2017-5754) echo "Variant 3, Meltdown, rogue data cache load";;
-		CVE-2018-3640) echo "Variant 3a, rogue system register read";;
-		CVE-2018-3639) echo "Variant 4, speculative store bypass";;
-		CVE-2018-3615) echo "Foreshadow (SGX), L1 terminal fault";;
-		CVE-2018-3620) echo "Foreshadow-NG (OS), L1 terminal fault";;
-		CVE-2018-3646) echo "Foreshadow-NG (VMM), L1 terminal fault";;
+		CVE-2017-5753)	echo "Spectre Variant 1, bounds check bypass";;
+		CVE-2017-5715)	echo "Spectre Variant 2, branch target injection";;
+		CVE-2017-5754)	echo "Variant 3, Meltdown, rogue data cache load";;
+		CVE-2018-3640)	echo "Variant 3a, rogue system register read";;
+		CVE-2018-3639)	echo "Variant 4, speculative store bypass";;
+		CVE-2018-3615)	echo "Foreshadow (SGX), L1 terminal fault";;
+		CVE-2018-3620)	echo "Foreshadow-NG (OS), L1 terminal fault";;
+		CVE-2018-3646)	echo "Foreshadow-NG (VMM), L1 terminal fault";;
+		CVE-2018-12126) echo "Microarchitectural Store Buffer Data Sampling (MSBDS)";;
+		CVE-2018-12130) echo "Microarchitectural Fill Buffer Data Sampling (MFBDS)";;
+		CVE-2018-12127) echo "Microarchitectural Load Port Data Sampling (MLPDS)";;
+		CVE-2019-11091) echo "Microarchitectural Data Sampling Uncacheable Memory (MDSUM)";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -288,6 +292,10 @@ _is_cpu_vulnerable_cached()
 		CVE-2018-3615) return $variantl1tf_sgx;;
 		CVE-2018-3620) return $variantl1tf;;
 		CVE-2018-3646) return $variantl1tf;;
+		CVE-2018-12126) return $variant_msbds;;
+		CVE-2018-12130) return $variant_mfbds;;
+		CVE-2018-12127) return $variant_mlpds;;
+		CVE-2019-11091) return $variant_mdsum;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2; exit 255;;
 	esac
 }
@@ -310,6 +318,10 @@ is_cpu_vulnerable()
 	variant3a=''
 	variant4=''
 	variantl1tf=''
+	variant_msbds=''
+	variant_mfbds=''
+	variant_mlpds=''
+	variant_mdsum=''
 
 	if is_cpu_specex_free; then
 		variant1=immune
@@ -318,6 +330,10 @@ is_cpu_vulnerable()
 		variant3a=immune
 		variant4=immune
 		variantl1tf=immune
+		variant_msbds=immune
+		variant_mfbds=immune
+		variant_mlpds=immune
+		variant_mdsum=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
@@ -346,6 +362,13 @@ is_cpu_vulnerable()
 		if is_cpu_ssb_free; then
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
+		fi
+		if is_cpu_mds_free; then
+			[ -z "$variant_msbds" ] && variant_msbds=immune
+			[ -z "$variant_mfbds" ] && variant_mfbds=immune
+			[ -z "$variant_mlpds" ] && variant_mlpds=immune
+			[ -z "$variant_mdsum" ] && variant_mdsum=immune
+			_debug "is_cpu_vulnerable: cpu not affected by Microarchitectural Data Sampling"
 		fi
 		# variant 4a for xeon phi
 		if [ "$cpu_family" = 6 ]; then
@@ -394,6 +417,13 @@ is_cpu_vulnerable()
 		if is_cpu_ssb_free; then
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
+		fi
+		if is_cpu_mds_free; then
+			[ -z "$variant_msbds" ] && variant_msbds=immune
+ 			[ -z "$variant_mfbds" ] && variant_mfbds=immune
+			[ -z "$variant_mlpds" ] && variant_mlpds=immune
+			[ -z "$variant_mdsum" ] && variant_mdsum=immune
+			 _debug "is_cpu_vulnerable: cpu not affected by Microarchitectural Data Sampling"
 		fi
 		variantl1tf=immune
 	elif [ "$cpu_vendor" = CAVIUM ]; then
@@ -490,12 +520,16 @@ is_cpu_vulnerable()
 		variantl1tf=immune
 	fi
 	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
-	[ "$variant1"    = "immune" ] && variant1=1    || variant1=0
-	[ "$variant2"    = "immune" ] && variant2=1    || variant2=0
-	[ "$variant3"    = "immune" ] && variant3=1    || variant3=0
-	[ "$variant3a"   = "immune" ] && variant3a=1   || variant3a=0
-	[ "$variant4"    = "immune" ] && variant4=1    || variant4=0
-	[ "$variantl1tf" = "immune" ] && variantl1tf=1 || variantl1tf=0
+	[ "$variant1"      = "immune" ] && variant1=1      || variant1=0
+	[ "$variant2"      = "immune" ] && variant2=1      || variant2=0
+	[ "$variant3"      = "immune" ] && variant3=1      || variant3=0
+	[ "$variant3a"     = "immune" ] && variant3a=1     || variant3a=0
+	[ "$variant4"      = "immune" ] && variant4=1      || variant4=0
+	[ "$variantl1tf"   = "immune" ] && variantl1tf=1   || variantl1tf=0
+	[ "$variant_msbds" = "immune" ] && variant_msbds=1 || variant_msbds=0
+	[ "$variant_mfbds" = "immune" ] && variant_mfbds=1 || variant_mfbds=0
+	[ "$variant_mlpds" = "immune" ] && variant_mlpds=1 || variant_mlpds=0
+	[ "$variant_mdsum" = "immune" ] && variant_mdsum=1 || variant_mdsum=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are vulnerable to L1TF, if there's no SGX, we're safe for the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
@@ -536,6 +570,51 @@ is_cpu_specex_free()
 	fi
 	[ "$cpu_family" = 4 ] && return 0
 	return 1
+}
+
+is_cpu_mds_free()
+{
+	# return true (0) if the CPU isn't affected by microarchitectural data sampling, false (1) if it does.
+	# if it's not in the list we know, return false (1).
+	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+	#VULNWL_INTEL(ATOM_GOLDMONT,             NO_MDS | NO_L1TF),
+	#VULNWL_INTEL(ATOM_GOLDMONT_X,           NO_MDS | NO_L1TF),
+	#VULNWL_INTEL(ATOM_GOLDMONT_PLUS,        NO_MDS | NO_L1TF),
+
+	#/* AMD Family 0xf - 0x12 */
+	#VULNWL_AMD(0x0f,        NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
+	#VULNWL_AMD(0x10,        NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
+	#VULNWL_AMD(0x11,        NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
+	#VULNWL_AMD(0x12,        NO_MELTDOWN | NO_SSB | NO_L1TF | NO_MDS),
+
+	#/* FAMILY_ANY must be last, otherwise 0x0f - 0x12 matches won't work */
+	#VULNWL_AMD(X86_FAMILY_ANY,      NO_MELTDOWN | NO_L1TF | NO_MDS),
+	#VULNWL_HYGON(X86_FAMILY_ANY,    NO_MELTDOWN | NO_L1TF | NO_MDS),
+	parse_cpu_details
+        if is_intel; then
+		if [ "$cpu_family" = 6 ]; then
+                        if [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_X" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
+                                return 0
+                        fi
+                fi
+	fi
+         
+	if is_amd; then
+		if [ "$cpu_family" = "18" ] || \
+			[ "$cpu_family" = "17" ] || \
+			[ "$cpu_family" = "16" ] || \
+			[ "$cpu_family" = "15" ]; then 
+			return 0
+		fi
+	fi
+	if is_hygon; then
+		return 0
+	fi
+	
+        return 1      
+	
 }
 
 is_cpu_ssb_free()
@@ -793,12 +872,16 @@ while [ -n "$1" ]; do
 			exit 255
 		fi
 		case "$2" in
-			1)    opt_cve_list="$opt_cve_list CVE-2017-5753"; opt_cve_all=0;;
-			2)    opt_cve_list="$opt_cve_list CVE-2017-5715"; opt_cve_all=0;;
-			3)    opt_cve_list="$opt_cve_list CVE-2017-5754"; opt_cve_all=0;;
-			3a)   opt_cve_list="$opt_cve_list CVE-2018-3640"; opt_cve_all=0;;
-			4)    opt_cve_list="$opt_cve_list CVE-2018-3639"; opt_cve_all=0;;
-			l1tf) opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
+			1)		opt_cve_list="$opt_cve_list CVE-2017-5753"; opt_cve_all=0;;
+			2)		opt_cve_list="$opt_cve_list CVE-2017-5715"; opt_cve_all=0;;
+			3)		opt_cve_list="$opt_cve_list CVE-2017-5754"; opt_cve_all=0;;
+			3a)		opt_cve_list="$opt_cve_list CVE-2018-3640"; opt_cve_all=0;;
+			4)		opt_cve_list="$opt_cve_list CVE-2018-3639"; opt_cve_all=0;;
+			msbds)  opt_cve_list="$opt_cve_list CVE-2018-12126"; opt_cve_all=0;;
+			mfbds)  opt_cve_list="$opt_cve_list CVE-2018-12130"; opt_cve_all=0;;
+			mlpds)  opt_cve_list="$opt_cve_list CVE-2018-12127"; opt_cve_all=0;;
+			mdsum)  opt_cve_list="$opt_cve_list CVE-2019-11091"; opt_cve_all=0;;
+			l1tf)	opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4 or l1tf" >&2;
 				exit 255
@@ -872,6 +955,10 @@ pvulnstatus()
 			CVE-2018-3615) aka="L1TF SGX";;
 			CVE-2018-3620) aka="L1TF OS";;
 			CVE-2018-3646) aka="L1TF VMM";;
+			CVE-2018-12126) aka="MSBDS";;
+			CVE-2018-12130) aka="MFBDS";;
+			CVE-2018-12127) aka="MLPDS";;
+			CVE-2019-11091) aka="MDSUM";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -2267,6 +2354,8 @@ check_cpu()
 		fi
 
 		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
+		mds_no=-1
+		capabilities_mds_no=-1
 		capabilities_rdcl_no=-1
 		capabilities_ibrs_all=-1
 		capabilities_rsba=-1
@@ -2276,6 +2365,7 @@ check_cpu()
 			pstatus yellow UNKNOWN
 		elif [ "$cpuid_arch_capabilities" != 1 ]; then
 			capabilities_rdcl_no=0
+			capabilities_mds_no=0
 			capabilities_ibrs_all=0
 			capabilities_rsba=0
 			capabilities_l1dflush_no=0
@@ -2307,6 +2397,7 @@ check_cpu()
 			done
 			capabilities=$val_cap_msr
 			capabilities_rdcl_no=0
+			capabilities_mds_no=0
 			capabilities_ibrs_all=0
 			capabilities_rsba=0
 			capabilities_l1dflush_no=0
@@ -2318,7 +2409,8 @@ check_cpu()
 				[ $(( capabilities >> 2 & 1 )) -eq 1 ] && capabilities_rsba=1
 				[ $(( capabilities >> 3 & 1 )) -eq 1 ] && capabilities_l1dflush_no=1
 				[ $(( capabilities >> 4 & 1 )) -eq 1 ] && capabilities_ssb_no=1
-				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no"
+				[ $(( capabilities >> 5 & 1 )) -eq 1 ] && capabilities_mds_no=1
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no mds_no=$capabilities_mds_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
@@ -2372,6 +2464,15 @@ check_cpu()
 		else
 			pstatus blue NO
 		fi
+
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Microarchitectural Data Sampling (MDC_NO): "
+		if [ "$capabilities_mds_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_mds_no" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+        fi		
 	fi
 
 	_info_nol "  * CPU supports Software Guard Extensions (SGX): "
@@ -4111,6 +4212,111 @@ check_CVE_2018_3646_bsd()
 		else
 			pvulnstatus $cve VULN "your kernel needs to be updated"
 		fi
+	fi
+}
+
+###################
+# MSBDS SECTION
+
+# Microarchitectural Store Buffer Data Sampling
+check_CVE_2018_12126()
+{
+         cve='CVE-2018-12126'
+
+	 check_mds $cve
+}
+
+###################
+# MFBDS SECTION
+
+# Microarchitectural Fill Buffer Data Sampling
+check_CVE_2018_12130()
+{	
+         cve='CVE-2018-12130'
+
+	 check_mds $cve
+}
+
+###################
+# MLPDS SECTION
+
+# Microarchitectural Load Port Data Sampling
+check_CVE_2018_12127()
+{	
+         cve='CVE-2018-12127'
+
+	 check_mds $cve
+}
+
+###################
+# MDSUM SECTION
+
+# Microarchitectural Data Sampling Uncacheable Memory 
+check_CVE_2019_11091()
+{	
+         cve='CVE-2019-11091'
+
+	 check_mds $cve
+}
+
+# Microarchitectural Data Sampling
+check_mds()
+{
+	sys_interface_available=0
+
+	cve=$1
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+
+	if [ "$opt_live" != 1 ]; then
+		pstatus blue N/A "not testable in offline mode"
+		pvulnstatus $cve UNK
+		return
+	fi
+
+	if ! is_cpu_vulnerable "$cve" ; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		return
+	fi
+
+	if sys_interface_check '/sys/devices/system/cpu/vulnerabilities/mds'; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	fi
+
+	if [ "$sys_interface_available" = 1 ]; then
+		if grep -Eq 'Not affected' "/sys/devices/system/cpu/vulnerabilities/mds"; then
+			mds_mitigated=1
+		elif grep -Eq '(Mitigation: Clear CPU buffers)' "/sys/devices/system/cpu/vulnerabilities/mds"; then 
+			if grep -Eq '(SMT mitigated|disabled)' "/sys/devices/system/cpu/vulnerabilities/mds"; then
+				mds_mitigated=1
+			else
+				#Simultaneous multi-threading (aka SMT or HyperThreading) is enabled. System may be vulnerable in some environments.
+				mds_mitigated=0
+				_info_nol "* Disable SMT to have complete mitigation\n"
+			fi
+		elif grep -Eq 'Vulnerable' "/sys/devices/system/cpu/vulnerabilities/mds"; then
+			mds_mitigated=0
+			_info_nol "* For more info check Linux kernel Documentation/admin-guide/hw-vuln/mds.rst\n"
+		else
+			mds_mitigated=-1
+		fi
+
+		if grep -Eq 'no microcode' "/sys/devices/system/cpu/vulnerabilities/mds"; then	
+			mds_mitigated=0
+			_info_nol "* CPU microcode is needed to mitigate the vulnerability\n"
+		fi
+	else
+		pstatus yellow UNKNOWN "can't find or interpret /sys/devices/system/cpu/vulnerabilities/mds"
+		mds_mitigated=-1
+	fi
+
+	if [ $mds_mitigated = 0 ];then
+		pvulnstatus $cve VULN
+	elif [ $mds_mitigated = 1 ]; then
+		pvulnstatus $cve OK
+	else
+		pvulnstatus $cve UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/mds.rst"
 	fi
 }
 
