@@ -3854,37 +3854,17 @@ check_CVE_2018_3646_linux()
 			# a hypervisor, as this requires more mitigations
 			has_vmm=2
 		elif [ "$has_vmm" = -1 ]; then
-			# Assumed to be running on bare metal unless evidence of vm is found.
-			has_vmm=0
-			# test for presence of hypervisor flag - definitive if set
-			if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw hypervisor; then
+			# Here, we want to know if we are hosting a hypervisor, and running some VMs on it.
+			# If we find no evidence that this is the case, assume we're not (to avoid scaring users),
+			# this can always be overridden with --vmm in any case.
+			# ... ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
+			# shellcheck disable=SC2009
+			if command -v pgrep >/dev/null 2>&1 && { pgrep qemu >/dev/null || pgrep kvm >/dev/null || pgrep libvirtd >/dev/null; }; then
 				has_vmm=1
-				_debug "hypervisor: present - hypervisor flag set in $procfs/cpuinfo"
-			else
-				_debug "hypervisor: unknown - hypervisor flag not set in $procfs/cpuinfo"
-			fi
-			# test for kernel detected hypervisor
-			dmesg_grep "Hypervisor detected:" ; ret=$?
-			if [ $ret -eq 0 ]; then
-				_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
+			elif ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/libvirtd'; then
 				has_vmm=1
-			elif [ $ret -eq 2 ]; then
-				_debug "hypervisor: dmesg truncated"
-			fi
-			# test for kernel detected paravirtualization 
-			dmesg_grep "Booting paravirtualized kernel on bare hardware" ; ret=$?
-			if [ $ret -eq 0 ]; then
-				_debug "hypervisor: not present (bare hardware)- found in dmesg: $dmesg_grepped"
-			elif [ $ret -eq 2 ]; then
-				_debug "hypervisor: dmesg truncated"
 			else
-				dmesg_grep "Booting paravirtualized kernel on" ; ret=$?
-				if [ $ret -eq 0 ]; then
-					_debug "hypervisor: present - found in dmesg: $dmesg_grepped"
-					has_vmm=1
-				elif [ $ret -eq 2 ]; then
-					_debug "hypervisor: dmesg truncated"
-				fi
+				has_vmm=0
 			fi
 		fi
 		if [ "$has_vmm" = 0 ]; then
