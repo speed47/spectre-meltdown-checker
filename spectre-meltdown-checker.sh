@@ -158,10 +158,10 @@ supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
 # we'll try to avoid using shell builtins that might not take options
-echo_cmd_type=echo
+echo_cmd_type='echo'
 if which printf >/dev/null 2>&1; then
 	echo_cmd=$(which printf)
-	echo_cmd_type=printf
+	echo_cmd_type='printf'
 elif which echo >/dev/null 2>&1; then
 	echo_cmd=$(which echo)
 else
@@ -171,7 +171,7 @@ else
 	[ -x /system/bin/echo ] && echo_cmd=/system/bin/echo
 fi
 # still empty? fallback to builtin
-[ -z "$echo_cmd" ] && echo_cmd=echo
+[ -z "$echo_cmd" ] && echo_cmd='echo'
 __echo()
 {
 	opt="$1"
