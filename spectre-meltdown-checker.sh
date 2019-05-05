@@ -267,6 +267,7 @@ cve2name()
 		CVE-2018-3615) echo "Foreshadow (SGX), L1 terminal fault";;
 		CVE-2018-3620) echo "Foreshadow-NG (OS), L1 terminal fault";;
 		CVE-2018-3646) echo "Foreshadow-NG (VMM), L1 terminal fault";;
+		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
 
@@ -283,9 +284,8 @@ _is_cpu_vulnerable_cached()
 		CVE-2018-3615) return $variantl1tf_sgx;;
 		CVE-2018-3620) return $variantl1tf;;
 		CVE-2018-3646) return $variantl1tf;;
+		*) echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2; exit 255;;
 	esac
-	echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2
-	exit 255
 }
 
 is_cpu_vulnerable()
@@ -780,6 +780,7 @@ while [ -n "$1" ]; do
 			auto) opt_vmm=-1;;
 			yes)  opt_vmm=1;;
 			no)   opt_vmm=0;;
+			*)    echo "$0: error: expected one of (auto, yes, no) to option --vmm instead of '$2'" >&2; exit 255;;
 		esac
 		shift 2
 	elif [ "$1" = "--variant" ]; then
@@ -864,7 +865,10 @@ pvulnstatus()
 			CVE-2017-5754) aka="MELTDOWN";;
 			CVE-2018-3640) aka="VARIANT 3A";;
 			CVE-2018-3639) aka="VARIANT 4";;
-			CVE-2018-3615/3620/3646) aka="L1TF";;
+			CVE-2018-3615) aka="L1TF SGX";;
+			CVE-2018-3620) aka="L1TF OS";;
+			CVE-2018-3646) aka="L1TF VMM";;
+			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
 		case "$opt_batch_format" in
@@ -875,6 +879,7 @@ pvulnstatus()
 					UNK)  is_vuln="null";;
 					VULN) is_vuln="true";;
 					OK)   is_vuln="false";;
+					*)    echo "$0: error: unknown status '$2' passed to pvulnstatus()" >&2; exit 255;;
 				esac
 				json_output="${json_output:-[}{\"NAME\":\"$aka\",\"CVE\":\"$1\",\"VULNERABLE\":$is_vuln,\"INFOS\":\"$3\"},"
 				;;
@@ -890,6 +895,8 @@ pvulnstatus()
 	case "$2" in
 		UNK)  global_unknown="1";;
 		VULN) global_critical="1";;
+		OK)   ;;
+		*)    echo "$0: error: unknown status '$2' passed to pvulnstatus()" >&2; exit 255;;
 	esac
 
 	# display info if we're not in quiet/batch mode
@@ -900,6 +907,7 @@ pvulnstatus()
 		UNK)  pstatus yellow 'UNKNOWN'        "$@"; final_summary="$final_summary \033[43m\033[30m$pvulnstatus_last_cve:??\033[0m";;
 		VULN) pstatus red    'VULNERABLE'     "$@"; final_summary="$final_summary \033[41m\033[30m$pvulnstatus_last_cve:KO\033[0m";;
 		OK)   pstatus green  'NOT VULNERABLE' "$@"; final_summary="$final_summary \033[42m\033[30m$pvulnstatus_last_cve:OK\033[0m";;
+		*)    echo "$0: error: unknown status '$vulnstatus' passed to pvulnstatus()" >&2; exit 255;;
 	esac
 }
 
