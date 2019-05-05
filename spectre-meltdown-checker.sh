@@ -31,7 +31,7 @@ exit_cleanup()
 }
 
 # if we were git clone'd, adjust VERSION
-if [ -d "$(dirname "$0")/.git" ] && which git >/dev/null 2>&1; then
+if [ -d "$(dirname "$0")/.git" ] && command -v git >/dev/null 2>&1; then
 	describe=$(git -C "$(dirname "$0")" describe --tags --dirty 2>/dev/null)
 	[ -n "$describe" ] && VERSION=$(echo "$describe" | sed -e s/^v//)
 fi
@@ -159,8 +159,12 @@ supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-
 # because `printf` behavior is more standard across Linux/BSD
 # we'll try to avoid using shell builtins that might not take options
 echo_cmd_type='echo'
-if which printf >/dev/null 2>&1; then
-	echo_cmd=$(which printf)
+# ignore SC2230 here because `which` ignores builtins while `command -v` doesn't, and
+# we don't want builtins here. Even if `which` is not installed, we'll fallback to the
+# `echo` builtin anyway, so this is safe.
+# shellcheck disable=SC2230
+if command -v printf >/dev/null 2>&1; then
+	echo_cmd=$(command -v printf)
 	echo_cmd_type='printf'
 elif which echo >/dev/null 2>&1; then
 	echo_cmd=$(which echo)
@@ -465,7 +469,7 @@ is_cpu_vulnerable()
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
 					_debug "checking cpu$i: armv8 A76 non vulnerable to variant 2, 3 & 3a"
-				elif [ "$cpuarch" -le 7 ] || ( [ "$cpuarch" = 8 ] && [ $(( cpupart )) -lt $(( 0xd07 )) ] ) ; then
+				elif [ "$cpuarch" -le 7 ] || { [ "$cpuarch" = 8 ] && [ $(( cpupart )) -lt $(( 0xd07 )) ]; } ; then
 					[ -z "$variant1" ] && variant1=immune
 					[ -z "$variant2" ] && variant2=immune
 					[ -z "$variant3" ] && variant3=immune
@@ -603,11 +607,11 @@ update_mcedb()
 	mcedb_tmp="$(mktemp /tmp/mcedb-XXXXXX)"
 	mcedb_url='https://github.com/platomav/MCExtractor/raw/master/MCE.db'
 	_info_nol "Fetching MCE.db from the MCExtractor project... "
-	if which wget >/dev/null 2>&1; then
+	if command -v wget >/dev/null 2>&1; then
 		wget -q "$mcedb_url" -O "$mcedb_tmp"; ret=$?
-	elif which curl >/dev/null 2>&1; then
+	elif command -v curl >/dev/null 2>&1; then
 		curl -sL "$mcedb_url" -o "$mcedb_tmp"; ret=$?
-	elif which fetch >/dev/null 2>&1; then
+	elif command -v fetch >/dev/null 2>&1; then
 		fetch -q "$mcedb_url" -o "$mcedb_tmp"; ret=$?
 	else
 		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
@@ -621,7 +625,7 @@ update_mcedb()
 
 	# now extract contents using sqlite
 	_info_nol "Extracting data... "
-	if ! which sqlite3 >/dev/null 2>&1; then
+	if ! command -v sqlite3 >/dev/null 2>&1; then
 		echo ERROR "please install the \`sqlite3\` program"
 		return 1
 	fi
@@ -888,6 +892,7 @@ pvulnstatus()
 			prometheus)
 				prometheus_output="${prometheus_output:+$prometheus_output\n}specex_vuln_status{name=\"$aka\",cve=\"$1\",status=\"$2\",info=\"$3\"} 1"
 				;;
+			*) echo "$0: error: invalid batch format '$opt_batch_format' specified" >&2; exit 255;;
 		esac
 	fi
 
@@ -972,7 +977,7 @@ try_decompress()
 	for     pos in $(tr "$1\n$2" "\n$2=" < "$6" | grep -abo "^$2")
 	do
 		_debug "try_decompress: magic for $3 found at offset $pos"
-		if ! which "$3" >/dev/null 2>&1; then
+		if ! command -v "$3" >/dev/null 2>&1; then
 			kernel_err="missing '$3' tool, please install it, usually it's in the '$5' package"
 			return 0
 		fi
@@ -1165,7 +1170,7 @@ dmesg_grep()
 
 is_coreos()
 {
-	which coreos-install >/dev/null 2>&1 && which toolbox >/dev/null 2>&1 && return 0
+	command -v coreos-install >/dev/null 2>&1 && command -v toolbox >/dev/null 2>&1 && return 0
 	return 1
 }
 
@@ -1679,7 +1684,7 @@ if [ "$os" = Linux ]; then
 fi
 
 if [ -e "$opt_kernel" ]; then
-	if ! which "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
+	if ! command -v "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
 		_debug "readelf not found"
 		kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
 	elif [ "$opt_sysfs_only" = 1 ] || [ "$opt_hw_only" = 1 ]; then
@@ -1790,11 +1795,11 @@ write_msr()
 		if [ ! -w /dev/cpu/"$_cpu"/msr ]; then
 			ret=200 # permission error
 		# if wrmsr is available, use it
-		elif which wrmsr >/dev/null 2>&1 && [ "$SMC_NO_WRMSR" != 1 ]; then
+		elif command -v wrmsr >/dev/null 2>&1 && [ "$SMC_NO_WRMSR" != 1 ]; then
 			_debug "write_msr: using wrmsr"
 			wrmsr $_msr 0 2>/dev/null; ret=$?
 		# or if we have perl, use it, any 5.x version will work
-		elif which perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
+		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
 			_debug "write_msr: using perl"
 			ret=1
 			perl -e "open(M,'>','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
@@ -1836,11 +1841,11 @@ read_msr()
 		if [ ! -r /dev/cpu/"$_cpu"/msr ]; then
 			return 200 # permission error
 		# if rdmsr is available, use it
-		elif which rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
+		elif command -v rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
 			_debug "read_msr: using rdmsr"
 			read_msr_value=$(rdmsr -r $_msr 2>/dev/null | od -t u8 -A n)
 		# or if we have perl, use it, any 5.x version will work
-		elif which perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
+		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
 			_debug "read_msr: using perl"
 			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and read(M,\$_,8) and print" | od -t u8 -A n)
 		# fallback to dd if it supports skip_bytes
@@ -2376,7 +2381,7 @@ check_redhat_canonical_spectre()
 	# if we were already called, don't do it again
 	[ -n "$redhat_canonical_spectre" ] && return
 
-	if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+	if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 		redhat_canonical_spectre=-1
 	elif [ -n "$kernel_err" ]; then
 		redhat_canonical_spectre=-2
@@ -2460,7 +2465,7 @@ check_CVE_2017_5753_linux()
 		# http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
 		if [ -n "$kernel_err" ]; then
 			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
-		elif ! which perl >/dev/null 2>&1; then
+		elif ! command -v perl >/dev/null 2>&1; then
 			pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
 		else
 			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
@@ -2517,9 +2522,9 @@ check_CVE_2017_5753_linux()
 			pstatus yellow NO
 		elif [ -n "$kernel_err" ]; then
 			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
-		elif ! which perl >/dev/null 2>&1; then
+		elif ! command -v perl >/dev/null 2>&1; then
 			pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-		elif ! which "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+		elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
 			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
 		else
 			"${opt_arch_prefix}objdump" -d "$kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'; ret=$?
@@ -2531,14 +2536,14 @@ check_CVE_2017_5753_linux()
 			fi
 		fi
 
-		if [ "$opt_verbose" -ge 2 ] || ( [ -z "$v1_mask_nospec" ] && [ "$redhat_canonical_spectre" != 1 ] && [ "$redhat_canonical_spectre" != 2 ] ); then
+		if [ "$opt_verbose" -ge 2 ] || { [ -z "$v1_mask_nospec" ] && [ "$redhat_canonical_spectre" != 1 ] && [ "$redhat_canonical_spectre" != 2 ]; }; then
 			# this is a slow heuristic and we don't need it if we already know the kernel is patched
 			# but still show it in verbose mode
 			_info_nol "* Checking count of LFENCE instructions following a jump in kernel... "
 			if [ -n "$kernel_err" ]; then
 				pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 			else
-				if ! which "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+				if ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
 					pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
 				else
 					# here we disassemble the kernel and count the number of occurrences of the LFENCE opcode
@@ -2577,7 +2582,7 @@ check_CVE_2017_5753_linux()
 			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
 		elif [ "$v1_lfence" = 1 ]; then
 			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
-		elif [ "$kernel_err" ]; then
+		elif [ -n "$kernel_err" ]; then
 			pvulnstatus $cve UNK "Couldn't find kernel image or tools missing to execute the checks"
 			explain "Re-run this script with root privileges, after installing the missing tools indicated above"
 		else
@@ -2722,7 +2727,7 @@ check_CVE_2017_5715_linux()
 			fi
 		fi
 		if [ -z "$ibrs_supported" ] && [ -n "$kernel" ]; then
-			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				:
 			else
 				ibrs_can_tell=1
@@ -2743,7 +2748,7 @@ check_CVE_2017_5715_linux()
 		# recent (4.15) vanilla kernels have IBPB but not IBRS, and without the debugfs tunables of Red Hat
 		# we can detect it directly in the image
 		if [ -z "$ibpb_supported" ] && [ -n "$kernel" ]; then
-			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				:
 			else
 				ibpb_can_tell=1
@@ -2907,7 +2912,7 @@ check_CVE_2017_5715_linux()
 				fi
 			elif [ -n "$kernel" ]; then
 				# look for the symbol
-				if which "${opt_arch_prefix}nm" >/dev/null 2>&1; then
+				if command -v "${opt_arch_prefix}nm" >/dev/null 2>&1; then
 					# the proper way: use nm and look for the symbol
 					if "${opt_arch_prefix}nm" "$kernel" 2>/dev/null | grep -qw 'noretpoline_setup'; then
 						retpoline_compiler=1
@@ -2955,7 +2960,7 @@ check_CVE_2017_5715_linux()
 		# only for information, in verbose mode
 		if [ "$opt_verbose" -ge 2 ]; then
 			_info_nol "    * Local gcc is retpoline-aware: "
-			if which gcc >/dev/null 2>&1; then
+			if command -v gcc >/dev/null 2>&1; then
 				if [ -n "$(gcc -mindirect-branch=thunk-extern --version 2>&1 >/dev/null)" ]; then
 					pstatus blue NO
 				else
@@ -2968,7 +2973,7 @@ check_CVE_2017_5715_linux()
 
 		if is_vulnerable_to_empty_rsb || [ "$opt_verbose" -ge 2 ]; then
 			_info_nol "  * Kernel supports RSB filling: "
-			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 			elif [ -z "$kernel" ]; then
 				pstatus yellow UNKNOWN "kernel image missing"
@@ -3048,7 +3053,7 @@ check_CVE_2017_5715_linux()
 		if [ "$opt_live" = 1 ] && [ "$vulnstatus" != "OK" ]; then
 			_explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under a hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor. You may need to reconfigure your VM to use a CPU model that has IBRS capability; in Libvirt, such CPUs are listed with an IBRS suffix."
 			# IBPB (amd & intel)
-			if ( [ -z "$ibpb_enabled" ] || [ "$ibpb_enabled" = 0 ] ) && ( is_intel || is_amd || is_hygon); then
+			if { [ -z "$ibpb_enabled" ] || [ "$ibpb_enabled" = 0 ]; } && { is_intel || is_amd || is_hygon; }; then
 				if [ -z "$cpuid_ibpb" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -3073,7 +3078,7 @@ check_CVE_2017_5715_linux()
 			# /IBPB
 
 			# IBRS (amd & intel)
-			if ( [ -z "$ibrs_enabled" ] || [ "$ibrs_enabled" = 0 ] ) && ( is_intel || is_amd || is_hygon); then
+			if { [ -z "$ibrs_enabled" ] || [ "$ibrs_enabled" = 0 ]; } && { is_intel || is_amd || is_hygon; }; then
 				if [ -z "$cpuid_ibrs" ]; then
 					explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $_explain_hypervisor"
 				fi
@@ -3149,7 +3154,7 @@ check_CVE_2017_5715_bsd()
 	if [ -n "$kernel_err" ]; then
 		pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 	else
-		if ! which "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
+		if ! command -v "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
 			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the binutils package"
 		else
 			nb_thunks=$("${opt_arch_prefix}readelf" -s "$kernel" | grep -c -e __llvm_retpoline_ -e __llvm_external_retpoline_ -e __x86_indirect_thunk_)
@@ -3265,7 +3270,7 @@ check_CVE_2017_5754_linux()
 			# nopti option that is part of the patch (kernel command line option)
 			# 'kpti=': arm
 			kpti_can_tell=1
-			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 			else
 				kpti_support=$("${opt_arch_prefix}strings" "$kernel" | grep -w -e nopti -e kpti=)
@@ -3730,7 +3735,7 @@ check_CVE_2018_3620_linux()
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* Kernel supports PTE inversion: "
-		if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+		if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 			pteinv_supported=-1
 		else
 			if "${opt_arch_prefix}strings" "$kernel" | grep -Fq 'PTE Inversion'; then
@@ -3919,7 +3924,7 @@ check_CVE_2018_3646_linux()
 			l1d_kernel="found flush_l1d in $procfs/cpuinfo"
 		fi
 		if [ -z "$l1d_kernel" ]; then
-			if ! which "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				l1d_kernel_err="missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
 			elif [ -n "$kernel_err" ]; then
 				l1d_kernel_err="$kernel_err"
