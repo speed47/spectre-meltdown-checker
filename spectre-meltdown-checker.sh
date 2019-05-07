@@ -1442,6 +1442,57 @@ is_moksha_cpu()
 	[ "$cpu_family" = 24 ] && return 0
 	return 1
 }
+
+# Test if the current host is a Xen PV Dom0 / DomU
+is_xen() {
+	if [ ! -d "$procfs/xen" ]; then
+		return 1
+	fi
+
+	# XXX do we have a better way that relying on dmesg?
+	dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
+	if [ $ret -eq 2 ]; then
+		_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
+		return 1
+	elif [ $ret -eq 0 ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+is_xen_dom0()
+{
+	if ! is_xen; then
+		return 1
+	fi
+
+	if [ -e "$procfs/xen/capabilities" ] && grep -q "control_d" "$procfs/xen/capabilities"; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+is_xen_domU()
+{
+	if ! is_xen; then
+		return 1
+	fi
+
+	# PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
+	dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'; ret=$?
+	if [ $ret -eq 0 ]; then
+		return 1
+	fi
+
+	if ! is_xen_dom0; then
+		return 0
+	else
+		return 1
+	fi
+}
+
 if [ -r "$mcedb_cache" ]; then
 	mcedb_source="$mcedb_cache"
 	mcedb_info="local MCExtractor DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
@@ -3312,6 +3363,10 @@ check_CVE_2017_5754_linux()
 				# Red Hat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
 				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
+			elif is_xen_dom0; then
+				pti_xen_pv_domU=$(xl dmesg | grep 'XPTI' | grep 'DomU enabled' | head -1)
+
+				[ -n "$pti_xen_pv_domU" ] && kpti_enabled=1
 			fi
 			if [ -z "$kpti_enabled" ]; then
 				dmesg_grep "$dmesg_grep"; ret=$?
@@ -3348,24 +3403,8 @@ check_CVE_2017_5754_linux()
 
 
 	# Test if the current host is a Xen PV Dom0 / DomU
-	if [ -d "$procfs/xen" ]; then
-		# XXX do we have a better way that relying on dmesg?
-		dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
-		if [ $ret -eq 2 ]; then
-			_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
-		elif [ $ret -eq 0 ]; then
-			if [ -e "$procfs/xen/capabilities" ] && grep -q "control_d" "$procfs/xen/capabilities"; then
-				xen_pv_domo=1
-			else
-				xen_pv_domu=1
-			fi
-			# PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
-			dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'; ret=$?
-			if [ $ret -eq 0 ]; then
-				xen_pv_domu=0
-			fi
-		fi
-	fi
+	is_xen_dom0 && xen_pv_domo=1
+	is_xen_domU && xen_pv_domu=1
 
 	if [ "$opt_live" = 1 ]; then
 		# checking whether we're running under Xen PV 64 bits. If yes, we are affected by variant3
@@ -3941,8 +3980,28 @@ check_CVE_2018_3646_linux()
 					l1d_mode=2
 					pstatus green YES "unconditional flushes"
 				else
-					l1d_mode=-1
-					pstatus yellow UNKNOWN "unrecognized mode"
+					if is_xen_dom0; then
+						l1d_xen_hardware=$(xl dmesg | grep 'Hardware features:' | grep 'L1D_FLUSH' | head -1)
+						l1d_xen_hypervisor=$(xl dmesg | grep 'Xen settings:' | grep 'L1D_FLUSH' | head -1)
+						l1d_xen_pv_domU=$(xl dmesg | grep 'PV L1TF shadowing:' | grep 'DomU enabled' | head -1)
+
+						if [ -n "$l1d_xen_hardware" ] && [ -n "$l1d_xen_hypervisor" ] && [ -n "$l1d_xen_pv_domU" ]; then
+							l1d_mode=5
+							pstatus green YES "for XEN guests"
+						elif [ -n "$l1d_xen_hardware" ] && [ -n "$l1d_xen_hypervisor" ]; then
+							l1d_mode=4
+							pstatus yellow YES "for XEN guests (HVM only)"
+						elif [ -n "$l1d_xen_pv_domU" ]; then
+							l1d_mode=3
+							pstatus yellow YES "for XEN guests (PV only)"
+						else
+							l1d_mode=0
+							pstatus yellow NO "for XEN guests"
+						fi
+					else
+						l1d_mode=-1
+						pstatus yellow UNKNOWN "unrecognized mode"
+					fi
 				fi
 			else
 				l1d_mode=-1
@@ -3955,7 +4014,7 @@ check_CVE_2018_3646_linux()
 
 		_info_nol "  * Hardware-backed L1D flush supported: "
 		if [ "$opt_live" = 1 ]; then
-			if grep -qw flush_l1d "$procfs/cpuinfo"; then
+			if grep -qw flush_l1d "$procfs/cpuinfo" || [ -n "$l1d_xen_hardware" ]; then
 				pstatus green YES "performance impact of the mitigation will be greatly reduced"
 			else
 				pstatus blue NO "flush will be done in software, this is slower"
@@ -4009,6 +4068,14 @@ check_CVE_2018_3646_linux()
 					pvulnstatus $cve VULN "enable L1D unconditional flushing and disable Hyper-Threading to fully mitigate the vulnerability"
 				fi
 			fi
+		fi
+
+		if [ $l1d_mode -gt 3 ]; then
+			_warn
+			_warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
+			_warn "with a kernel which contains CVE-2018-3646 mitigations."
+			_warn
+			_warn "See https://www.suse.com/support/kb/doc/?id=7023078 and XSA-273 for details."
 		fi
 	fi
 }
