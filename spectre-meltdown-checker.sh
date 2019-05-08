@@ -3898,13 +3898,14 @@ check_CVE_2018_3646_linux()
 			# this can always be overridden with --vmm in any case.
 			has_vmm=0
 			if command -v pgrep >/dev/null 2>&1; then
-				if pgrep qemu >/dev/null || pgrep kvm >/dev/null || pgrep libvirtd >/dev/null; then
+				if pgrep qemu >/dev/null || pgrep kvm >/dev/null || pgrep libvirtd >/dev/null || \
+					pgrep xenbus >/dev/null || pgrep xenwatch >/dev/null || pgrep xenstored >/dev/null || pgrep xenconsoled >/dev/null; then
 					has_vmm=1
 				fi
 			else
 				# ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
 				# shellcheck disable=SC2009
-				if ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/libvirtd'; then
+				if ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/libvirtd' -e '\[xenbus\]' -e '\[xenwatch\]' -e '/xenstored' -e '/xenconsoled'; then
 					has_vmm=1
 				fi
 			fi
