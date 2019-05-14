@@ -11,7 +11,7 @@ A shell script to tell if your system is vulnerable against the several "specula
 - CVE-2018-3620 [L1 terminal fault] aka 'Foreshadow-NG (OS)'
 - CVE-2018-3646 [L1 terminal fault] aka 'Foreshadow-NG (VMM)'
 - CVE-2018-12126 [microarchitectural store buffer data sampling (MSBDS)] aka 'Fallout'
-- CVE-2018-12130 [microarchitectural fill buffer data sampling (MFBDS)] aka 'RIDL'
+- CVE-2018-12130 [microarchitectural fill buffer data sampling (MFBDS)] aka 'ZombieLoad'
 - CVE-2018-12127 [microarchitectural load port data sampling (MLPDS)] aka 'RIDL'
 - CVE-2019-11091 [microarchitectural data sampling uncacheable memory (MDSUM)] aka 'RIDL'
 
@@ -134,7 +134,7 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
 **CVE-2018-12126** [MSBDS] Microarchitectural Store Buffer Data Sampling (Fallout)
 
-**CVE-2018-12130** [MFBDS] Microarchitectural Fill Buffer Data Sampling (RIDL)
+**CVE-2018-12130** [MFBDS] Microarchitectural Fill Buffer Data Sampling (ZombieLoad)
 
 **CVE-2018-12127** [MLPDS] Microarchitectural Load Port Data Sampling (RIDL)
 
