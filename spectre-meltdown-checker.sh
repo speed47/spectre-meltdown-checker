@@ -2338,6 +2338,20 @@ check_cpu()
 	fi
 
 	if is_intel; then
+		_info "  * Microarchitecture Data Sampling"
+		_info_nol "    * MD_CLEAR instruction is available: "
+		read_cpuid 0x7 $EDX 10 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			#cpuid_md_clear=1
+			pstatus green YES
+		elif [ $ret -eq 2 ]; then
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		else
+			pstatus yellow NO
+		fi
+	fi
+
+	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 		cpuid_arch_capabilities=-1
