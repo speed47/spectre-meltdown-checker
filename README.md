@@ -140,10 +140,10 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
 **CVE-2019-11091** [MDSUM] Microarchitectural Data Sampling Uncacheable Memory (RIDL)
 
+   - Note: These 4 CVEs are similar and collectively named "MDS" vulnerabilities, the mitigation is identical for all
    - Impact: Kernel
-   - Mitigation: microcode update + kernel update making possible to protect various CPU internal buffers from unprivilaged speculative access to data
+   - Mitigation: microcode update + kernel update making possible to protect various CPU internal buffers from unprivileged speculative access to data
    - Performance impact of the mitigation: TBC
-   - Note: These 4 CVEs are similar and collectively named "MDS" vulnerabilities, the mitigation is identical same for all
 
 ## Understanding what this script does and doesn't
 
