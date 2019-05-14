@@ -2354,7 +2354,6 @@ check_cpu()
 		fi
 
 		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
-		mds_no=-1
 		capabilities_mds_no=-1
 		capabilities_rdcl_no=-1
 		capabilities_ibrs_all=-1
@@ -4269,13 +4268,13 @@ check_mds()
 
 	if [ "$opt_live" != 1 ]; then
 		pstatus blue N/A "not testable in offline mode"
-		pvulnstatus $cve UNK
+		pvulnstatus "$cve" UNK
 		return
 	fi
 
 	if ! is_cpu_vulnerable "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
 		return
 	fi
 
@@ -4312,11 +4311,11 @@ check_mds()
 	fi
 
 	if [ $mds_mitigated = 0 ];then
-		pvulnstatus $cve VULN
+		pvulnstatus "$cve" VULN
 	elif [ $mds_mitigated = 1 ]; then
-		pvulnstatus $cve OK
+		pvulnstatus "$cve" OK
 	else
-		pvulnstatus $cve UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/mds.rst"
+		pvulnstatus "$cve" UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/mds.rst"
 	fi
 }
 

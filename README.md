@@ -10,10 +10,10 @@ A shell script to tell if your system is vulnerable against the several "specula
 - CVE-2018-3615 [L1 terminal fault] aka 'Foreshadow (SGX)'
 - CVE-2018-3620 [L1 terminal fault] aka 'Foreshadow-NG (OS)'
 - CVE-2018-3646 [L1 terminal fault] aka 'Foreshadow-NG (VMM)'
-- CVE-2018-12126 [MSBDS] Microarchitectural Store Buffer Data Sampling 
-- CVE-2018-12130 [MFBDS] Microarchitectural Fill Buffer Data Sampling 
-- CVE-2018-12127 [MLPDS] Microarchitectural Load Port Data Sampling 
-- CVE-2019-11091 [MDSUM] Microarchitectural Data Sampling Uncacheable Memory 
+- CVE-2018-12126 [microarchitectural store buffer data sampling (MSBDS)] aka 'Fallout'
+- CVE-2018-12130 [microarchitectural fill buffer data sampling (MFBDS)] aka 'RIDL'
+- CVE-2018-12127 [microarchitectural load port data sampling (MLPDS)] aka 'RIDL'
+- CVE-2019-11091 [microarchitectural data sampling uncacheable memory (MDSUM)] aka 'RIDL'
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -125,21 +125,25 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Impact: Kernel & System management mode
    - Mitigation: updated kernel (with PTE inversion)
    - Performance impact of the mitigation: negligible
-   
+
 **CVE-2018-3646** l1 terminal fault (Foreshadow-NG VMM)
 
    - Impact: Virtualization software and Virtual Machine Monitors
-   - Mitigation: disable ept (extended page tables), disable hyper-threading (SMT), or
-                 updated kernel (with L1d flush)
+   - Mitigation: disable ept (extended page tables), disable hyper-threading (SMT), or updated kernel (with L1d flush)
    - Performance impact of the mitigation: low to significant
 
-**CVE-2018-12126** [MSBDS] Microarchitectural Store Buffer Data Sampling 
-**CVE-2018-12130** [MFBDS] Microarchitectural Fill Buffer Data Sampling 
-**CVE-2018-12127** [MLPDS] Microarchitectural Load Port Data Sampling 
-**CVE-2019-11091** [MDSUM] Microarchitectural Data Sampling Uncacheable Memory 
+**CVE-2018-12126** [MSBDS] Microarchitectural Store Buffer Data Sampling (Fallout)
+
+**CVE-2018-12130** [MFBDS] Microarchitectural Fill Buffer Data Sampling (RIDL)
+
+**CVE-2018-12127** [MLPDS] Microarchitectural Load Port Data Sampling (RIDL)
+
+**CVE-2019-11091** [MDSUM] Microarchitectural Data Sampling Uncacheable Memory (RIDL)
 
    - Impact: Kernel
    - Mitigation: microcode update + kernel update making possible to protect various CPU internal buffers from unprivilaged speculative access to data
+   - Performance impact of the mitigation: TBC
+   - Note: These 4 CVEs are similar and collectively named "MDS" vulnerabilities, the mitigation is identical same for all
 
 ## Understanding what this script does and doesn't
 
