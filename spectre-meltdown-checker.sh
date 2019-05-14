@@ -63,6 +63,7 @@ show_usage()
 		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
 		--paranoid		require IBPB to deem Variant 2 as mitigated
 					also require SMT disabled + unconditional L1D flush to deem Foreshadow-NG VMM as mitigated
+					also require SMT disabled to deem MDS vulnerabilities mitigated
 
 		--no-sysfs		don't use the /sys interface even if present [Linux]
 		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
@@ -76,8 +77,9 @@ show_usage()
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
-		--variant [1,2,3,3a,4,l1tf,msbds,mfbds,mlpds,mdsum]	specify which variant you'd like to check, by default all variants are checked
-		--cve [cve1,cve2,...]		specify which CVE you'd like to check, by default all supported CVEs are checked
+		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked
+					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum
+		--cve [cve1,cve2,...]	specify which CVE you'd like to check, by default all supported CVEs are checked
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
@@ -271,10 +273,10 @@ cve2name()
 		CVE-2018-3615)	echo "Foreshadow (SGX), L1 terminal fault";;
 		CVE-2018-3620)	echo "Foreshadow-NG (OS), L1 terminal fault";;
 		CVE-2018-3646)	echo "Foreshadow-NG (VMM), L1 terminal fault";;
-		CVE-2018-12126) echo "Microarchitectural Store Buffer Data Sampling (MSBDS)";;
-		CVE-2018-12130) echo "Microarchitectural Fill Buffer Data Sampling (MFBDS)";;
-		CVE-2018-12127) echo "Microarchitectural Load Port Data Sampling (MLPDS)";;
-		CVE-2019-11091) echo "Microarchitectural Data Sampling Uncacheable Memory (MDSUM)";;
+		CVE-2018-12126) echo "Fallout, microarchitectural store buffer data sampling (MSBDS)";;
+		CVE-2018-12130) echo "ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)";;
+		CVE-2018-12127) echo "RIDL, microarchitectural load port data sampling (MLPDS)";;
+		CVE-2019-11091) echo "RIDL, microarchitectural data sampling uncacheable memory (MDSUM)";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -1877,6 +1879,7 @@ sys_interface_check()
 	mode="$3"
 	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ] || return 1
 	[ -n "$regex" ] || regex='.*'
+	fullmsg=$(cat "$file")
 	msg=$(grep -Eo "$regex" "$file")
 	if [ "$mode" = silent ]; then
 		_info "* Information from the /sys interface: $msg"
@@ -1886,18 +1889,18 @@ sys_interface_check()
 	if echo "$msg" | grep -qi '^not affected'; then
 		# Not affected
 		status=OK
-		pstatus green YES "$msg"
+		pstatus green YES "$fullmsg"
 	elif echo "$msg" | grep -qi '^mitigation'; then
 		# Mitigation: PTI
 		status=OK
-		pstatus green YES "$msg"
+		pstatus green YES "$fullmsg"
 	elif echo "$msg" | grep -qi '^vulnerable'; then
 		# Vulnerable
 		status=VULN
-		pstatus yellow NO "$msg"
+		pstatus yellow NO "$fullmsg"
 	else
 		status=UNK
-		pstatus yellow UNKNOWN "$msg"
+		pstatus yellow UNKNOWN "$fullmsg"
 	fi
 	_debug "sys_interface_check: $file=$msg (re=$regex)"
 	return 0
@@ -2339,14 +2342,16 @@ check_cpu()
 
 	if is_intel; then
 		_info "  * Microarchitecture Data Sampling"
-		_info_nol "    * MD_CLEAR instruction is available: "
+		_info_nol "    * VERW instruction is available: "
 		read_cpuid 0x7 $EDX 10 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
-			#cpuid_md_clear=1
-			pstatus green YES
+			cpuid_md_clear=1
+			pstatus green YES "MD_CLEAR feature bit"
 		elif [ $ret -eq 2 ]; then
+			cpuid_md_clear=-1
 			pstatus yellow UNKNOWN "is cpuid kernel module available?"
 		else
+			cpuid_md_clear=0
 			pstatus yellow NO
 		fi
 	fi
@@ -3998,6 +4003,7 @@ check_CVE_2018_3646_linux()
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 	fi
+	l1d_mode=-1
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* This system is a host running a hypervisor: "
 		has_vmm=$opt_vmm
@@ -4167,7 +4173,7 @@ check_CVE_2018_3646_linux()
 			if [ "$l1d_mode" -ge 1 ]; then
 				pvulnstatus $cve OK "L1D flushing is enabled and mitigates the vulnerability"
 			else
-				pvulnstatus $cve VULN "disable EPT or enabled L1D flushing to mitigate the vulnerability"
+				pvulnstatus $cve VULN "disable EPT or enable L1D flushing to mitigate the vulnerability"
 			fi
 		else
 			if [ "$l1d_mode" -ge 2 ]; then
@@ -4234,9 +4240,8 @@ check_CVE_2018_3646_bsd()
 # Microarchitectural Store Buffer Data Sampling
 check_CVE_2018_12126()
 {
-         cve='CVE-2018-12126'
-
-	 check_mds $cve
+	cve='CVE-2018-12126'
+	check_mds $cve
 }
 
 ###################
@@ -4244,10 +4249,9 @@ check_CVE_2018_12126()
 
 # Microarchitectural Fill Buffer Data Sampling
 check_CVE_2018_12130()
-{	
-         cve='CVE-2018-12130'
-
-	 check_mds $cve
+{
+	cve='CVE-2018-12130'
+	check_mds $cve
 }
 
 ###################
@@ -4255,10 +4259,9 @@ check_CVE_2018_12130()
 
 # Microarchitectural Load Port Data Sampling
 check_CVE_2018_12127()
-{	
-         cve='CVE-2018-12127'
-
-	 check_mds $cve
+{
+	cve='CVE-2018-12127'
+	check_mds $cve
 }
 
 ###################
@@ -4266,70 +4269,126 @@ check_CVE_2018_12127()
 
 # Microarchitectural Data Sampling Uncacheable Memory 
 check_CVE_2019_11091()
-{	
-         cve='CVE-2019-11091'
-
-	 check_mds $cve
+{
+	cve='CVE-2019-11091'
+	check_mds $cve
 }
 
 # Microarchitectural Data Sampling
 check_mds()
 {
-	sys_interface_available=0
-
 	cve=$1
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
-	if [ "$opt_live" != 1 ]; then
-		pstatus blue N/A "not testable in offline mode"
-		pvulnstatus "$cve" UNK
-		return
-	fi
-
-	if ! is_cpu_vulnerable "$cve" ; then
-		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
-		return
-	fi
-
-	if sys_interface_check '/sys/devices/system/cpu/vulnerabilities/mds'; then
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/mds" '^[^;]+'; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 	fi
-
-	if [ "$sys_interface_available" = 1 ]; then
-		if grep -Eq 'Not affected' "/sys/devices/system/cpu/vulnerabilities/mds"; then
-			mds_mitigated=1
-		elif grep -Eq '(Mitigation: Clear CPU buffers)' "/sys/devices/system/cpu/vulnerabilities/mds"; then 
-			if grep -Eq '(SMT mitigated|disabled)' "/sys/devices/system/cpu/vulnerabilities/mds"; then
-				mds_mitigated=1
-			else
-				#Simultaneous multi-threading (aka SMT or HyperThreading) is enabled. System may be vulnerable in some environments.
-				mds_mitigated=0
-				_info_nol "* Disable SMT to have complete mitigation\n"
-			fi
-		elif grep -Eq 'Vulnerable' "/sys/devices/system/cpu/vulnerabilities/mds"; then
-			mds_mitigated=0
-			_info_nol "* For more info check Linux kernel Documentation/admin-guide/hw-vuln/mds.rst\n"
+	if [ "$opt_sysfs_only" != 1 ]; then
+		_info_nol "* CPU supports the MD_CLEAR functionality: "
+		if [ "$cpuid_md_clear" = 1 ]; then
+			pstatus green YES
+		elif [ "$cpuid_md_clear" = 0 ]; then
+			pstatus yellow NO
 		else
-			mds_mitigated=-1
+			pstatus yellow UNKNOWN "is cpuid module loaded?"
 		fi
 
-		if grep -Eq 'no microcode' "/sys/devices/system/cpu/vulnerabilities/mds"; then	
-			mds_mitigated=0
-			_info_nol "* CPU microcode is needed to mitigate the vulnerability\n"
+		_info_nol "* Kernel supports using MD_CLEAR mitigation: "
+		kernel_md_clear=''
+		kernel_md_clear_can_tell=1
+		if [ "$opt_live" = 1 ] && grep ^flags $procfs/cpuinfo | grep -qw md_clear; then
+			kernel_md_clear="md_clear found in $procfs/cpuinfo"
+			pstatus green YES "$kernel_md_clear"
 		fi
-	else
-		pstatus yellow UNKNOWN "can't find or interpret /sys/devices/system/cpu/vulnerabilities/mds"
-		mds_mitigated=-1
+		if [ -z "$kernel_md_clear" ]; then
+			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+				kernel_md_clear_can_tell=0
+			elif [ -n "$kernel_err" ]; then
+				kernel_md_clear_can_tell=0
+			elif "${opt_arch_prefix}strings" "$kernel" | grep -q 'Clear CPU buffers'; then
+				_debug "md_clear: found 'Clear CPU buffers' string in kernel image"
+				kernel_md_clear='found md_clear implementation evidence in kernel image'
+				pstatus green YES "$kernel_md_clear"
+			fi
+		fi
+		if [ -z "$kernel_md_clear" ]; then
+			if [ "$kernel_md_clear_can_tell" = 1 ]; then
+				pstatus yellow NO
+			else
+				pstatus yellow UNKNOWN
+			fi
+		fi
+
+		if [ "$opt_live" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+			_info_nol "* Kernel mitigation is enabled and active: "
+			if grep -qi ^mitigation /sys/devices/system/cpu/vulnerabilities/mds; then
+				mds_mitigated=1
+				pstatus green YES
+			else
+				mds_mitigated=0
+				pstatus yellow NO
+			fi
+			_info_nol "* SMT is either mitigated or disabled: "
+			if grep -Eq 'SMT (disabled|mitigated)' /sys/devices/system/cpu/vulnerabilities/mds; then
+				mds_smt_mitigated=1
+				pstatus green YES
+			else
+				mds_smt_mitigated=0
+				pstatus yellow NO
+			fi
+		fi
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
 	fi
 
-	if [ $mds_mitigated = 0 ];then
-		pvulnstatus "$cve" VULN
-	elif [ $mds_mitigated = 1 ]; then
-		pvulnstatus "$cve" OK
+	if ! is_cpu_vulnerable "$cve"; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		if [ "$cpuid_md_clear" = 1 ]; then
+			if [ -n "$kernel_md_clear" ]; then
+				if [ "$opt_live" = 1 ]; then
+					# mitigation must also be enabled
+					if [ "$mds_mitigated" = 1 ]; then
+						if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
+							pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+						else
+							pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but your must disable SMT (Hyper-Threading) for a complete mitigation"
+						fi
+					else
+						pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
+					fi
+				else
+					pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation"
+				fi
+			else
+				pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
+			fi
+		else
+			if [ -n "$kernel_md_clear" ]; then
+				pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+			else
+				pvulnstatus "$cve" VULN "Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
+			fi
+		fi
 	else
-		pvulnstatus "$cve" UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/mds.rst"
+		if [ "$opt_paranoid" = 1 ]; then
+			# in paranoid mode, we don't only need microcode + kernel update, we also want SMT mitigation
+			if grep -qF -e 'SMT mitigated' -e 'SMT disabled' /sys/devices/system/cpu/vulnerabilities/mds; then
+				pvulnstatus "$cve" OK "$fullmsg"
+			else
+				pvulnstatus "$cve" VULN "Your kernel and microcode partially mitigate the vulnerability, but you must disable SMT (Hyper-Threading) for a complete mitigation"
+			fi
+		else
+			pvulnstatus "$cve" "$status" "$fullmsg"
+		fi
 	fi
 }
 
