@@ -325,6 +325,14 @@ is_cpu_vulnerable()
 	variant_mlpds=''
 	variant_mdsum=''
 
+	if is_cpu_mds_free; then
+		[ -z "$variant_msbds" ] && variant_msbds=immune
+		[ -z "$variant_mfbds" ] && variant_mfbds=immune
+		[ -z "$variant_mlpds" ] && variant_mlpds=immune
+		[ -z "$variant_mdsum" ] && variant_mdsum=immune
+		_debug "is_cpu_vulnerable: cpu not affected by Microarchitectural Data Sampling"
+	fi
+
 	if is_cpu_specex_free; then
 		variant1=immune
 		variant2=immune
@@ -364,13 +372,6 @@ is_cpu_vulnerable()
 		if is_cpu_ssb_free; then
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
-		fi
-		if is_cpu_mds_free; then
-			[ -z "$variant_msbds" ] && variant_msbds=immune
-			[ -z "$variant_mfbds" ] && variant_mfbds=immune
-			[ -z "$variant_mlpds" ] && variant_mlpds=immune
-			[ -z "$variant_mdsum" ] && variant_mdsum=immune
-			_debug "is_cpu_vulnerable: cpu not affected by Microarchitectural Data Sampling"
 		fi
 		# variant 4a for xeon phi
 		if [ "$cpu_family" = 6 ]; then
@@ -419,13 +420,6 @@ is_cpu_vulnerable()
 		if is_cpu_ssb_free; then
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
-		fi
-		if is_cpu_mds_free; then
-			[ -z "$variant_msbds" ] && variant_msbds=immune
- 			[ -z "$variant_mfbds" ] && variant_mfbds=immune
-			[ -z "$variant_mlpds" ] && variant_mlpds=immune
-			[ -z "$variant_mdsum" ] && variant_mdsum=immune
-			 _debug "is_cpu_vulnerable: cpu not affected by Microarchitectural Data Sampling"
 		fi
 		variantl1tf=immune
 	elif [ "$cpu_vendor" = CAVIUM ]; then
@@ -602,7 +596,7 @@ is_cpu_mds_free()
                         fi
                 fi
 	fi
-         
+
 	if is_amd; then
 		if [ "$cpu_family" = "18" ] || \
 			[ "$cpu_family" = "17" ] || \
@@ -611,12 +605,16 @@ is_cpu_mds_free()
 			return 0
 		fi
 	fi
+
 	if is_hygon; then
 		return 0
+	elif [ "$cpu_vendor" = CAVIUM ]; then
+		return 0
+	elif [ "$cpu_vendor" = ARM ]; then
+		return 0
 	fi
-	
-        return 1      
-	
+
+        return 1
 }
 
 is_cpu_ssb_free()
