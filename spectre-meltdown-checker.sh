@@ -883,7 +883,7 @@ while [ -n "$1" ]; do
 			mdsum)  opt_cve_list="$opt_cve_list CVE-2019-11091"; opt_cve_all=0;;
 			l1tf)	opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
 			*)
-				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4 or l1tf" >&2;
+				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, or l1tf" >&2;
 				exit 255
 				;;
 		esac
