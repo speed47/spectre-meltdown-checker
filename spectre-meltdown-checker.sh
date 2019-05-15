@@ -589,14 +589,14 @@ is_cpu_mds_free()
 	#VULNWL_AMD(X86_FAMILY_ANY,      NO_MELTDOWN | NO_L1TF | NO_MDS),
 	#VULNWL_HYGON(X86_FAMILY_ANY,    NO_MELTDOWN | NO_L1TF | NO_MDS),
 	parse_cpu_details
-        if is_intel; then
+	if is_intel; then
 		if [ "$cpu_family" = 6 ]; then
-                        if [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_X" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
-                                return 0
-                        fi
-                fi
+				return 0
+			fi
+		fi
 		[ "$capabilities_mds_no" = 1 ] && return 0
 	fi
 
@@ -613,7 +613,7 @@ is_cpu_mds_free()
 		return 0
 	fi
 
-        return 1
+	return 1
 }
 
 is_cpu_ssb_free()
@@ -2609,7 +2609,7 @@ check_cpu()
 			pstatus green YES
 		else
 			pstatus yellow NO
-        fi		
+		fi
 	fi
 
 	_info_nol "  * CPU supports Software Guard Extensions (SGX): "
@@ -4404,7 +4404,114 @@ check_mds()
 {
 	cve=$1
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_mds_linux "$cve"
+	elif echo "$os" | grep -q BSD; then
+		check_mds_bsd "$cve"
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
 
+check_mds_bsd()
+{
+	_info_nol "* Kernel supports using MD_CLEAR mitigation: "
+	if [ "$opt_live" = 1 ]; then
+		if sysctl hw.mds_disable >/dev/null 2>&1; then
+			pstatus green YES
+			kernel_md_clear=1
+		else
+			pstatus yellow NO
+			kernel_md_clear=0
+		fi
+	else
+		if command -v "strings" >/dev/null 2>&1; then
+			if strings /boot/kernel/kernel | grep -Fq hw.mds_disable; then
+				pstatus green YES
+				kernel_md_clear=1
+			else
+				kernel_md_clear=0
+				pstatus yellow NO
+			fi
+		else
+			pstatus yellow UNKNOWN
+		fi
+	fi
+
+	_info_nol "* CPU Hyper-Threading (SMT) is disabled: "
+	if sysctl machdep.hyperthreading_allowed >/dev/null 2>&1; then
+		kernel_smt_allowed=$(sysctl -n machdep.hyperthreading_allowed 2>/dev/null)
+		if [ "$kernel_smt_allowed" = 1 ]; then
+			pstatus yellow NO
+		else
+			pstatus green YES
+		fi
+	else
+		pstatus yellow UNKNOWN "sysctl machdep.hyperthreading_allowed doesn't exist"
+	fi
+
+	_info_nol "* Kernel mitigation is enabled: "
+	if [ "$kernel_md_clear" = 1 ]; then
+		kernel_mds_enabled=$(sysctl -n hw.mds_disable 2>/dev/null)
+	else
+		kernel_mds_enabled=0
+	fi
+	case "$kernel_mds_enabled" in
+		0) pstatus yellow NO;;
+		1) pstatus green YES "with microcode support";;
+		2) pstatus green YES "software-only support (SLOW)";;
+		3) pstatus green YES;;
+		*) pstatus yellow UNKNOWN "unknown value $kernel_mds_enabled"
+	esac
+
+	_info_nol "* Kernel mitigation is active: "
+	if [ "$kernel_md_clear" = 1 ]; then
+		kernel_mds_state=$(sysctl -n hw.mds_disable_state 2>/dev/null)
+	else
+		kernel_mds_state=inactive
+	fi
+	# https://github.com/freebsd/freebsd/blob/master/sys/x86/x86/cpu_machdep.c#L953
+	case "$kernel_mds_state" in
+		inactive)  pstatus yellow NO;;
+		VERW)      pstatus green YES "with microcode support";;
+		software*) pstatus green YES "software-only support (SLOW)";;
+		*)         pstatus yellow UNKNOWN
+	esac
+
+	if ! is_cpu_vulnerable "$cve"; then
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		if [ "$cpuid_md_clear" = 1 ]; then
+			if [ "$kernel_md_clear" = 1 ]; then
+				if [ "$opt_live" = 1 ]; then
+					# mitigation must also be enabled
+					if [ "$kernel_mds_enabled" -ge 1 ]; then
+						if [ "$opt_paranoid" != 1 ] || [ "$kernel_smt_allowed" = 0 ]; then
+							pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+						else
+							pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but your must disable SMT (Hyper-Threading) for a complete mitigation"
+						fi
+					else
+						pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
+					fi
+				else
+					pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation"
+				fi
+			else
+				pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
+			fi
+		else
+			if [ "$kernel_md_clear" = 1 ]; then
+				pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+			else
+				pvulnstatus "$cve" VULN "Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
+			fi
+		fi
+	fi
+}
+
+check_mds_linux()
+{
 	status=UNK
 	sys_interface_available=0
 	msg=''
