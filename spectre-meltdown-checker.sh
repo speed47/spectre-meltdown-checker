@@ -597,16 +597,12 @@ is_cpu_mds_free()
                 fi
 	fi
 
+	# official statement from AMD says none of their CPUs are vulnerable
+	# https://www.amd.com/en/corporate/product-security
+	# https://www.amd.com/system/files/documents/security-whitepaper.pdf
 	if is_amd; then
-		if [ "$cpu_family" = "18" ] || \
-			[ "$cpu_family" = "17" ] || \
-			[ "$cpu_family" = "16" ] || \
-			[ "$cpu_family" = "15" ]; then 
-			return 0
-		fi
-	fi
-
-	if is_hygon; then
+		return 0
+	elif is_hygon; then
 		return 0
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		return 0
