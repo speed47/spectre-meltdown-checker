@@ -4013,14 +4013,15 @@ check_CVE_2018_3646_linux()
 			has_vmm=0
 			if command -v pgrep >/dev/null 2>&1; then
 				# remove xenbus and xenwatch, also present inside domU
-				if pgrep qemu >/dev/null || pgrep kvm >/dev/null || pgrep libvirtd >/dev/null || \
+				# remove libvirtd as it can also be used to manage containers and not VMs
+				if pgrep qemu >/dev/null || pgrep kvm >/dev/null || \
 					pgrep xenstored >/dev/null || pgrep xenconsoled >/dev/null; then
 					has_vmm=1
 				fi
 			else
 				# ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
 				# shellcheck disable=SC2009
-				if ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/libvirtd' -e '/xenstored' -e '/xenconsoled'; then
+				if ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
 					has_vmm=1
 				fi
 			fi
