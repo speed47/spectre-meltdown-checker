@@ -595,6 +595,7 @@ is_cpu_mds_free()
                                 return 0
                         fi
                 fi
+		[ "$capabilities_mds_no" = 1 ] && return 0
 	fi
 
 	# official statement from AMD says none of their CPUs are vulnerable
@@ -2441,7 +2442,7 @@ check_cpu()
 			fi
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to Meltdown (RDCL_NO): "
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Meltdown/L1TF (RDCL_NO): "
 		if [ "$capabilities_rdcl_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_rdcl_no" = 1 ]; then
@@ -2477,7 +2478,7 @@ check_cpu()
 			pstatus blue NO
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to Microarchitectural Data Sampling (MDC_NO): "
+		_info_nol "  * CPU explicitly indicates not being vulnerable to Microarchitectural Data Sampling (MDS_NO): "
 		if [ "$capabilities_mds_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_mds_no" = 1 ]; then
