@@ -1910,6 +1910,8 @@ sys_interface_check()
 	file="$1"
 	regex="$2"
 	mode="$3"
+	msg=''
+	fullmsg=''
 	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ] || return 1
 	[ -n "$regex" ] || regex='.*'
 	_mockvarname="SMC_MOCK_SYSFS_$(basename "$file")"
@@ -1924,7 +1926,9 @@ sys_interface_check()
 		msg=$(grep -Eo "$regex" "$file")
 	fi
 	if [ "$mode" = silent ]; then
-		_info "* Information from the /sys interface: $msg"
+		return 0
+	elif [ "$mode" = quiet ]; then
+		_info "* Information from the /sys interface: $fullmsg"
 		return 0
 	fi
 	_info_nol "* Mitigated according to the /sys interface: "
@@ -2913,21 +2917,21 @@ check_CVE_2017_5715_linux()
 					# XXX and what about ibpb ?
 				fi
 			fi
-			if [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
+			if [ -n "$fullmsg" ]; then
 				# when IBPB is enabled on 4.15+, we can see it in sysfs
-				if grep -q 'IBPB' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if echo "$fullmsg" | grep -q 'IBPB'; then
 					_debug "ibpb: found enabled in sysfs"
 					[ -z "$ibpb_supported" ] && ibpb_supported='IBPB found enabled in sysfs'
 					[ -z "$ibpb_enabled"   ] && ibpb_enabled=1
 				fi
 				# when IBRS_FW is enabled on 4.15+, we can see it in sysfs
-				if grep -q ', IBRS_FW' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if echo "$fullmsg" | grep -q ', IBRS_FW'; then
 					_debug "ibrs: found IBRS_FW in sysfs"
 					[ -z "$ibrs_supported" ] && ibrs_supported='found IBRS_FW in sysfs'
 					ibrs_fw_enabled=1
 				fi
 				# when IBRS is enabled on 4.15+, we can see it in sysfs
-				if grep -q -e '\<IBRS\>' -e 'Indirect Branch Restricted Speculation' "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+				if echo "$fullmsg" | grep -q -e '\<IBRS\>' -e 'Indirect Branch Restricted Speculation'; then
 					_debug "ibrs: found IBRS in sysfs"
 					[ -z "$ibrs_supported" ] && ibrs_supported='found IBRS in sysfs'
 					[ -z "$ibrs_enabled"   ] && ibrs_enabled=3
@@ -3112,9 +3116,9 @@ check_CVE_2017_5715_linux()
 			#
 			# if there is "retpoline" in the file and NOT "minimal", then it's full retpoline
 			# (works for vanilla and Red Hat variants)
-			if [ "$opt_live" = 1 ] && [ -e "/sys/devices/system/cpu/vulnerabilities/spectre_v2" ]; then
-				if grep -qwi retpoline /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
-					if grep -qwi minimal /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
+			if [ "$opt_live" = 1 ] && [ -n "$fullmsg" ]; then
+				if echo "$fullmsg" | grep -qwi retpoline; then
+					if echo "$fullmsg" | grep -qwi minimal; then
 						retpoline_compiler=0
 						retpoline_compiler_reason="kernel reports minimal retpoline compilation"
 					else
@@ -3935,7 +3939,7 @@ check_CVE_2018_3620_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" '^[^;]+'; then
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 	fi
@@ -3956,8 +3960,8 @@ check_CVE_2018_3620_linux()
 
 		_info_nol "* PTE inversion enabled and active: "
 		if [ "$opt_live" = 1 ]; then
-			if [ "$sys_interface_available" = 1 ]; then
-				if grep -q 'Mitigation: PTE Inversion' /sys/devices/system/cpu/vulnerabilities/l1tf; then
+			if [ -n "$fullmsg" ]; then
+				if echo "$fullmsg" | grep -q 'Mitigation: PTE Inversion'; then
 					pstatus green YES
 					pteinv_active=1
 				else
@@ -4047,7 +4051,7 @@ check_CVE_2018_3646_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" 'VMX:.*' silent; then
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" '.*' quiet; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 	fi
@@ -4136,18 +4140,19 @@ check_CVE_2018_3646_linux()
 
 		_info_nol "  * L1D flush enabled: "
 		if [ "$opt_live" = 1 ]; then
-			if [ -r "/sys/devices/system/cpu/vulnerabilities/l1tf" ]; then
+			if [ -n "$fullmsg" ]; then
 				# vanilla: VMX: $l1dstatus, SMT $smtstatus
 				# Red Hat: VMX: SMT $smtstatus, L1D $l1dstatus
 				# $l1dstatus is one of (auto|vulnerable|conditional cache flushes|cache flushes|EPT disabled|flush not necessary)
 				# $smtstatus is one of (vulnerable|disabled)
-				if grep -Eq '(VMX:|L1D) (EPT disabled|vulnerable|flush not necessary)' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				# can also just be "Not affected"
+				if echo "$fullmsg" | grep -Eq -e 'Not affected' -e '(VMX:|L1D) (EPT disabled|vulnerable|flush not necessary)'; then
 					l1d_mode=0
 					pstatus yellow NO
-				elif grep -Eq '(VMX:|L1D) conditional cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				elif echo "$fullmsg" | grep -Eq '(VMX:|L1D) conditional cache flushes'; then
 					l1d_mode=1
 					pstatus green YES "conditional flushes"
-				elif grep -Eq '(VMX:|L1D) cache flushes' "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+				elif echo "$fullmsg" | grep -Eq '(VMX:|L1D) cache flushes'; then
 					l1d_mode=2
 					pstatus green YES "unconditional flushes"
 				else
@@ -4214,6 +4219,9 @@ check_CVE_2018_3646_linux()
 	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ "$fullmsg" = "Not affected" ]; then
+		# just in case a very recent kernel knows better than we do
+		pvulnstatus $cve OK "your kernel reported your CPU model as not vulnerable"
 	elif [ "$has_vmm" = 0 ]; then
 		pvulnstatus $cve OK "this system is not running a hypervisor"
 	else
@@ -4375,7 +4383,7 @@ check_mds()
 
 		if [ "$opt_live" = 1 ] && [ "$sys_interface_available" = 1 ]; then
 			_info_nol "* Kernel mitigation is enabled and active: "
-			if grep -qi ^mitigation /sys/devices/system/cpu/vulnerabilities/mds; then
+			if echo "$fullmsg" | grep -qi ^mitigation; then
 				mds_mitigated=1
 				pstatus green YES
 			else
@@ -4383,7 +4391,7 @@ check_mds()
 				pstatus yellow NO
 			fi
 			_info_nol "* SMT is either mitigated or disabled: "
-			if grep -Eq 'SMT (disabled|mitigated)' /sys/devices/system/cpu/vulnerabilities/mds; then
+			if echo "$fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
 				mds_smt_mitigated=1
 				pstatus green YES
 			else
@@ -4431,7 +4439,7 @@ check_mds()
 	else
 		if [ "$opt_paranoid" = 1 ]; then
 			# in paranoid mode, we don't only need microcode + kernel update, we also want SMT mitigation
-			if grep -qF -e 'SMT mitigated' -e 'SMT disabled' /sys/devices/system/cpu/vulnerabilities/mds; then
+			if echo "$fullmsg" | grep -qF -e 'SMT mitigated' -e 'SMT disabled'; then
 				pvulnstatus "$cve" OK "$fullmsg"
 			else
 				pvulnstatus "$cve" VULN "Your kernel and microcode partially mitigate the vulnerability, but you must disable SMT (Hyper-Threading) for a complete mitigation"
