@@ -402,7 +402,7 @@ is_cpu_vulnerable()
 				[ -z "$variantl1tf" ] && variantl1tf=immune
 			else
 				_debug "is_cpu_vulnerable: intel family 6 is vuln"
-				variantl1tf=vuln
+				[ -z "$variantl1tf" ] && variantl1tf=vuln
 			fi
 		elif [ "$cpu_family" -lt 6 ]; then
 			_debug "is_cpu_vulnerable: intel family < 6 is immune"
