@@ -1211,6 +1211,12 @@ read_cpuid()
 	fi
 
 	_debug "cpuid: leaf$_leaf on cpu0, eax-ebx-ecx-edx: $_cpuid"
+	_mockvarname="SMC_MOCK_CPUID_${_leaf}"
+	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+		_cpuid="$(eval echo \$$_mockvarname)"
+		_debug "read_cpuid: MOCKING enabled for leaf $_leaf, will return $_cpuid"
+		mocked=1
+	fi
 	[ -z "$_cpuid" ] && return 2
 	# get the value of the register we want
 	_reg=$(echo "$_cpuid" | awk '{print $'"$_register"'}')
@@ -1294,6 +1300,32 @@ parse_cpu_details()
 		cpu_friendly_name=$(sysctl -n hw.model)
 	fi
 
+	if [ -n "$SMC_MOCK_CPU_FRIENDLY_NAME" ]; then
+		cpu_friendly_name="$SMC_MOCK_CPU_FRIENDLY_NAME"
+		_debug "parse_cpu_details: MOCKING cpu friendly name to $cpu_friendly_name"
+		mocked=1
+	fi
+	if [ -n "$SMC_MOCK_CPU_VENDOR" ]; then
+		cpu_vendor="$SMC_MOCK_CPU_VENDOR"
+		_debug "parse_cpu_details: MOCKING cpu vendor to $cpu_vendor"
+		mocked=1
+	fi
+	if [ -n "$SMC_MOCK_CPU_FAMILY" ]; then
+		cpu_family="$SMC_MOCK_CPU_FAMILY"
+		_debug "parse_cpu_details: MOCKING cpu family to $cpu_family"
+		mocked=1
+	fi
+	if [ -n "$SMC_MOCK_CPU_MODEL" ]; then
+		cpu_model="$SMC_MOCK_CPU_MODEL"
+		_debug "parse_cpu_details: MOCKING cpu model to $cpu_model"
+		mocked=1
+	fi
+	if [ -n "$SMC_MOCK_CPU_STEPPING" ]; then
+		cpu_stepping="$SMC_MOCK_CPU_STEPPING"
+		_debug "parse_cpu_details: MOCKING cpu stepping to $cpu_stepping"
+		mocked=1
+	fi
+
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
 	if read_cpuid 0x1 $EAX 0 0xFFFFFFFF; then
 		cpu_cpuid="$read_cpuid_value"
@@ -1320,6 +1352,12 @@ parse_cpu_details()
 
 	# if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
 	[ -z "$cpu_ucode" ] && cpu_ucode=0x0
+
+	if [ -n "$SMC_MOCK_CPU_UCODE" ]; then
+		cpu_ucode="$SMC_MOCK_CPU_UCODE"
+		_debug "parse_cpu_details: MOCKING cpu ucode to $cpu_ucode"
+		mocked=1
+	fi
 
 	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$(( cpu_ucode ))
 	ucode_found=$(printf "model 0x%x family 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_model" "$cpu_family" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid")
@@ -1874,8 +1912,17 @@ sys_interface_check()
 	mode="$3"
 	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ] || return 1
 	[ -n "$regex" ] || regex='.*'
-	fullmsg=$(cat "$file")
-	msg=$(grep -Eo "$regex" "$file")
+	_mockvarname="SMC_MOCK_SYSFS_$(basename "$file")"
+	# shellcheck disable=SC2086
+	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+		fullmsg="$(eval echo \$$_mockvarname)"
+		msg=$(echo "$fullmsg" | grep -Eo "$regex")
+		_debug "sysfs: MOCKING enabled for $file, will return $fullmsg"
+		mocked=1
+	else
+		fullmsg=$(cat "$file")
+		msg=$(grep -Eo "$regex" "$file")
+	fi
 	if [ "$mode" = silent ]; then
 		_info "* Information from the /sys interface: $msg"
 		return 0
@@ -1961,7 +2008,13 @@ read_msr()
 	# cpu index, starting from 0:
 	_cpu="$2"
 	read_msr_value=''
-	if [ "$os" != Linux ]; then
+	_mockvarname="SMC_MOCK_MSR_${_msr}"
+	# shellcheck disable=SC2086
+	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+		read_msr_value="$(eval echo \$$_mockvarname)"
+		_debug "read_msr: MOCKING enabled for msr $_msr, returning $read_msr_value"
+		mocked=1
+	elif [ "$os" != Linux ]; then
 		_msr=$(cpucontrol -m "$_msr" "/dev/cpuctl$_cpu" 2>/dev/null); ret=$?
 		[ $ret -ne 0 ] && return 1
 		# MSR 0x10: 0x000003e1 0xb106dded
@@ -4421,6 +4474,12 @@ if [ "$opt_explain" = 0 ]; then
 fi
 
 _info "A false sense of security is worse than no security at all, see --disclaimer"
+
+if [ "$mocked" = 1 ]; then
+	_info ""
+	_warn "One or several values have been mocked. This should only be done when debugging/testing this script."
+	_warn "The results do NOT reflect the actual status of the system we're running on."
+fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
 	if [ -n "$nrpe_vuln" ]; then
