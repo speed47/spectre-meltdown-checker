@@ -86,6 +86,7 @@ show_usage()
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor (for CVE-2018-3646), default: auto
 		--update-mcedb		update our local copy of the CPU microcodes versions database (from the awesome MCExtractor project)
 		--update-builtin-mcedb	same as --update-mcedb but update builtin DB inside the script itself
+		--dump-mock-data	used to mimick a CPU on an other system, mainly used to help debugging this script
 
 	Return codes:
 		0 (not vulnerable), 2 (vulnerable), 3 (unknown), 255 (error)
@@ -150,6 +151,7 @@ opt_no_hw=0
 opt_vmm=-1
 opt_explain=0
 opt_paranoid=0
+opt_mock=0
 
 global_critical=0
 global_unknown=0
@@ -816,6 +818,9 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--update-builtin-mcedb" ]; then
 		update_mcedb builtin
 		exit $?
+	elif [ "$1" = "--dump-mock-data" ]; then
+		opt_mock=1
+		shift
 	elif [ "$1" = "--explain" ]; then
 		opt_explain=1
 		shift
@@ -1216,6 +1221,8 @@ read_cpuid()
 		_cpuid="$(eval echo \$$_mockvarname)"
 		_debug "read_cpuid: MOCKING enabled for leaf $_leaf, will return $_cpuid"
 		mocked=1
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPUID_${_leaf}='$_cpuid'")
 	fi
 	[ -z "$_cpuid" ] && return 2
 	# get the value of the register we want
@@ -1304,26 +1311,36 @@ parse_cpu_details()
 		cpu_friendly_name="$SMC_MOCK_CPU_FRIENDLY_NAME"
 		_debug "parse_cpu_details: MOCKING cpu friendly name to $cpu_friendly_name"
 		mocked=1
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_FRIENDLY_NAME='$cpu_friendly_name'")
 	fi
 	if [ -n "$SMC_MOCK_CPU_VENDOR" ]; then
 		cpu_vendor="$SMC_MOCK_CPU_VENDOR"
 		_debug "parse_cpu_details: MOCKING cpu vendor to $cpu_vendor"
 		mocked=1
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_VENDOR='$cpu_vendor'")
 	fi
 	if [ -n "$SMC_MOCK_CPU_FAMILY" ]; then
 		cpu_family="$SMC_MOCK_CPU_FAMILY"
 		_debug "parse_cpu_details: MOCKING cpu family to $cpu_family"
 		mocked=1
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_FAMILY='$cpu_family'")
 	fi
 	if [ -n "$SMC_MOCK_CPU_MODEL" ]; then
 		cpu_model="$SMC_MOCK_CPU_MODEL"
 		_debug "parse_cpu_details: MOCKING cpu model to $cpu_model"
 		mocked=1
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_MODEL='$cpu_model'")
 	fi
 	if [ -n "$SMC_MOCK_CPU_STEPPING" ]; then
 		cpu_stepping="$SMC_MOCK_CPU_STEPPING"
 		_debug "parse_cpu_details: MOCKING cpu stepping to $cpu_stepping"
 		mocked=1
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_STEPPING='$cpu_stepping'")
 	fi
 
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
@@ -1357,6 +1374,8 @@ parse_cpu_details()
 		cpu_ucode="$SMC_MOCK_CPU_UCODE"
 		_debug "parse_cpu_details: MOCKING cpu ucode to $cpu_ucode"
 		mocked=1
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_UCODE='$cpu_ucode'")
 	fi
 
 	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$(( cpu_ucode ))
@@ -1912,7 +1931,22 @@ sys_interface_check()
 	mode="$3"
 	msg=''
 	fullmsg=''
-	[ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ] || return 1
+
+	if [ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
+		:
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_SYSFS_$(basename "$file")_RET=1")
+		return 1
+	fi
+
+	_mockvarname="SMC_MOCK_SYSFS_$(basename "$file")_RET"
+	# shellcheck disable=SC2086
+	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+		_debug "sysfs: MOCKING enabled for $file func returns $(eval echo \$$_mockvarname)"
+		mocked=1
+		return "$(eval echo \$$_mockvarname)"
+	fi
+
 	[ -n "$regex" ] || regex='.*'
 	_mockvarname="SMC_MOCK_SYSFS_$(basename "$file")"
 	# shellcheck disable=SC2086
@@ -1924,6 +1958,7 @@ sys_interface_check()
 	else
 		fullmsg=$(cat "$file")
 		msg=$(grep -Eo "$regex" "$file")
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_SYSFS_$(basename "$file")='$fullmsg'")
 	fi
 	if [ "$mode" = silent ]; then
 		return 0
@@ -1965,94 +2000,128 @@ number_of_cpus()
 	return "$n"
 }
 
-# $1 - msr number
-# $2 - cpu index
+# write_msr
+# param1 (mandatory): MSR, can be in hex or decimal.
+# param2 (optional): CPU index, starting from 0. Default 0.
 write_msr()
 {
-	# _msr must be in hex, in the form 0x1234:
-	_msr="$1"
-	# cpu index, starting from 0:
+	_msr_dec=$(( $1 ))
+	_msr=$(printf "0x%x" "$_msr_dec")
 	_cpu="$2"
+	[ -z "$_cpu" ] && _cpu=0
+
+	_mockvarname="SMC_MOCK_WRMSR_${_msr}_RET"
+	# shellcheck disable=SC2086
+	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+		_debug "write_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
+		mocked=1
+		return "$(eval echo \$$_mockvarname)"
+	fi
+
 	if [ "$os" != Linux ]; then
 		cpucontrol -m "$_msr=0" "/dev/cpuctl$_cpu" >/dev/null 2>&1; ret=$?
 	else
 		# for Linux
 		# convert to decimal
-		_msr=$(( _msr ))
 		if [ ! -w /dev/cpu/"$_cpu"/msr ]; then
 			ret=200 # permission error
 		# if wrmsr is available, use it
 		elif command -v wrmsr >/dev/null 2>&1 && [ "$SMC_NO_WRMSR" != 1 ]; then
 			_debug "write_msr: using wrmsr"
-			wrmsr $_msr 0 2>/dev/null; ret=$?
+			wrmsr $_msr_dec 0 2>/dev/null; ret=$?
 		# or if we have perl, use it, any 5.x version will work
 		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
 			_debug "write_msr: using perl"
 			ret=1
-			perl -e "open(M,'>','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
+			perl -e "open(M,'>','/dev/cpu/$_cpu/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
 		# fallback to dd if it supports seek_bytes
-		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr" oflag=seek_bytes 2>/dev/null; then
+		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; then
 			_debug "write_msr: using dd"
-			dd if=/dev/zero of=/dev/cpu/"$_cpu"/msr bs=8 count=1 seek="$_msr" oflag=seek_bytes 2>/dev/null; ret=$?
+			dd if=/dev/zero of=/dev/cpu/"$_cpu"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
 		else
 			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=201")
 			return 201 # missing tool error
 		fi
 	fi
 	# normalize ret
 	[ "$ret" != 0 ] && ret=1
 	_debug "write_msr: for cpu $_cpu on msr $_msr, ret=$ret"
+	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$ret")
 	return $ret
 }
 
+# read_msr
+# param1 (mandatory): MSR, can be in hex or decimal.
+# param2 (optional): CPU index, starting from 0. Default 0.
 read_msr()
 {
-	# _msr must be in hex, in the form 0x1234:
-	_msr="$1"
-	# cpu index, starting from 0:
+	_msr_dec=$(( $1 ))
+	_msr=$(printf "0x%x" "$_msr_dec")
 	_cpu="$2"
+	[ -z "$_cpu" ] && _cpu=0
+
 	read_msr_value=''
-	_mockvarname="SMC_MOCK_MSR_${_msr}"
+
+	_mockvarname="SMC_MOCK_RDMSR_${_msr}"
 	# shellcheck disable=SC2086
 	if [ -n "$(eval echo \$$_mockvarname)" ]; then
 		read_msr_value="$(eval echo \$$_mockvarname)"
 		_debug "read_msr: MOCKING enabled for msr $_msr, returning $read_msr_value"
 		mocked=1
-	elif [ "$os" != Linux ]; then
+		return 0
+	else
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}='$read_msr_value'")
+	fi
+
+	_mockvarname="SMC_MOCK_RDMSR_${_msr}_RET"
+	# shellcheck disable=SC2086
+	if [ -n "$(eval echo \$$_mockvarname)" ] && [ "$(eval echo \$$_mockvarname)" -ne 0 ]; then
+		_debug "read_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
+		mocked=1
+		return "$(eval echo \$$_mockvarname)"
+	fi
+
+	if [ "$os" != Linux ]; then
+		# for BSD
 		_msr=$(cpucontrol -m "$_msr" "/dev/cpuctl$_cpu" 2>/dev/null); ret=$?
-		[ $ret -ne 0 ] && return 1
+		if [ $ret -ne 0 ]; then
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=1")
+			return 1
+		fi
 		# MSR 0x10: 0x000003e1 0xb106dded
 		_msr_h=$(echo "$_msr" | awk '{print $3}');
 		_msr_l=$(echo "$_msr" | awk '{print $4}');
 		read_msr_value=$(( _msr_h << 32 | _msr_l ))
 	else
 		# for Linux
-		# convert to decimal
-		_msr=$(( _msr ))
 		if [ ! -r /dev/cpu/"$_cpu"/msr ]; then
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=200")
 			return 200 # permission error
 		# if rdmsr is available, use it
 		elif command -v rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
 			_debug "read_msr: using rdmsr"
-			read_msr_value=$(rdmsr -r $_msr 2>/dev/null | od -t u8 -A n)
+			read_msr_value=$(rdmsr -r $_msr_dec 2>/dev/null | od -t u8 -A n)
 		# or if we have perl, use it, any 5.x version will work
 		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
 			_debug "read_msr: using perl"
-			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr,0) and read(M,\$_,8) and print" | od -t u8 -A n)
+			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
 		# fallback to dd if it supports skip_bytes
-		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null; then
+		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null; then
 			_debug "read_msr: using dd"
-			read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
+			read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
 		else
 			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=201")
 			return 201 # missing tool error
 		fi
 		if [ -z "$read_msr_value" ]; then
 			# MSR doesn't exist, don't check for $? because some versions of dd still return 0!
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=1")
 			return 1
 		fi
 	fi
-	_debug "read_msr: MSR=$1 value is $read_msr_value"
+	_debug "read_msr: MSR=$_msr value is $read_msr_value"
 	return 0
 }
 
@@ -4463,8 +4532,27 @@ if [ "$bad_accuracy" = 1 ]; then
 	_warn "We're missing some kernel info (see -v), accuracy might be reduced"
 fi
 
-_vars=$(set | grep -Ev '^[A-Z_[:space:]]' | sort | tr "\n" '|')
+_vars=$(set | grep -Ev '^[A-Z_[:space:]]' | grep -v -F 'mockme=' | sort | tr "\n" '|')
 _debug "variables at end of script: $_vars"
+
+if [ -n "$mockme" ] && [ "$opt_mock" = 1 ]; then
+	if command -v "gzip" >/dev/null 2>&1; then
+		# not a useless use of cat: gzipping cpuinfo directly doesn't work well
+		# shellcheck disable=SC2002
+		if command -v "base64" >/dev/null 2>&1; then
+			mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | base64 -w0)"
+		elif command -v "uuencode" >/dev/null 2>&1; then
+			mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | uuencode -m - | grep -Fv 'begin-base64' | grep -Fxv -- '====' | tr -d "\n")"
+		fi
+	fi
+	if [ -n "$mock_cpuinfo" ]; then
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPUINFO='$mock_cpuinfo'")
+		unset mock_cpuinfo
+	fi
+	_info ""
+	# shellcheck disable=SC2046
+	_warn "To mock this CPU, set those vars: "$(echo "$mockme" | sort -u)
+fi
 
 if [ "$opt_explain" = 0 ]; then
 	_info "Need more detailed information about mitigation options? Use --explain"
