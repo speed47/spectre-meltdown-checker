@@ -841,6 +841,7 @@ while [ -n "$1" ]; do
 		esac
 	elif [ "$1" = "-v" ] || [ "$1" = "--verbose" ]; then
 		opt_verbose=$(( opt_verbose + 1 ))
+		[ "$opt_verbose" -ge 2 ] && opt_mock=1
 		shift
 	elif [ "$1" = "--cve" ]; then
 		if [ -z "$2" ]; then

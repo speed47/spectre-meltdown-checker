@@ -143,7 +143,7 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Note: These 4 CVEs are similar and collectively named "MDS" vulnerabilities, the mitigation is identical for all
    - Impact: Kernel
    - Mitigation: microcode update + kernel update making possible to protect various CPU internal buffers from unprivileged speculative access to data
-   - Performance impact of the mitigation: TBC
+   - Performance impact of the mitigation: low to significant
 
 ## Understanding what this script does and doesn't
 
