@@ -2023,10 +2023,8 @@ read_msr()
 		[ $ret -ne 0 ] && return 1
 		# MSR 0x10: 0x000003e1 0xb106dded
 		_msr_h=$(echo "$_msr" | awk '{print $3}');
-		_msr_h="$(( _msr_h >> 24 & 0xFF )) $(( _msr_h >> 16 & 0xFF )) $(( _msr_h >> 8 & 0xFF )) $(( _msr_h & 0xFF ))"
 		_msr_l=$(echo "$_msr" | awk '{print $4}');
-		_msr_l="$(( _msr_l >> 24 & 0xFF )) $(( _msr_l >> 16 & 0xFF )) $(( _msr_l >> 8 & 0xFF )) $(( _msr_l & 0xFF ))"
-		read_msr_value="$_msr_h $_msr_l"
+		read_msr_value=$(( _msr_h << 32 | _msr_l ))
 	else
 		# for Linux
 		# convert to decimal
