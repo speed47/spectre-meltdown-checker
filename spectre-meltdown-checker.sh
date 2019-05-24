@@ -4344,15 +4344,6 @@ check_mds()
 		sys_interface_available=1
 	fi
 	if [ "$opt_sysfs_only" != 1 ]; then
-		_info_nol "* CPU supports the MD_CLEAR functionality: "
-		if [ "$cpuid_md_clear" = 1 ]; then
-			pstatus green YES
-		elif [ "$cpuid_md_clear" = 0 ]; then
-			pstatus yellow NO
-		else
-			pstatus yellow UNKNOWN "is cpuid module loaded?"
-		fi
-
 		_info_nol "* Kernel supports using MD_CLEAR mitigation: "
 		kernel_md_clear=''
 		kernel_md_clear_can_tell=1
