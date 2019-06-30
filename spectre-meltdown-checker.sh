@@ -3055,8 +3055,10 @@ check_CVE_2017_5715_linux()
 			if [ "$ibrs_can_tell" = 1 ]; then
 				pstatus yellow NO
 			else
-				# if we're in offline mode without System.map, we can't really know
-				pstatus yellow UNKNOWN "in offline mode, we need the kernel image and System.map to be able to tell"
+				# problem obtaining/inspecting kernel or strings not installed, but if the later is true,
+				# then readelf is not installed either (both in binutils) which makes the former true, so
+				# either way kernel_err should be set
+				pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 			fi
 		else
 			if [ "$opt_verbose" -ge 2 ]; then
@@ -3265,8 +3267,8 @@ check_CVE_2017_5715_linux()
 			_info_nol "  * Kernel supports RSB filling: "
 			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
-			elif [ -z "$kernel" ]; then
-				pstatus yellow UNKNOWN "kernel image missing"
+			elif [ -n "$kernel_err" ]; then
+				pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 			else
 				rsb_filling=$("${opt_arch_prefix}strings" "$kernel" | grep -w 'Filling RSB on context switch')
 				if [ -n "$rsb_filling" ]; then
