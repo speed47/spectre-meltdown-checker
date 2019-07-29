@@ -2939,6 +2939,8 @@ check_CVE_2017_5715_linux()
 		ibpb_can_tell=0
 		ibpb_supported=''
 		ibpb_enabled=''
+		need_enhanced_ibrs=0
+		enhanced_ibrs=''
 
 		if [ "$opt_live" = 1 ]; then
 			# in live mode, we can check for the ibrs_enabled file in debugfs
@@ -3004,6 +3006,11 @@ check_CVE_2017_5715_linux()
 					[ -z "$ibrs_supported" ] && ibrs_supported='found IBRS in sysfs'
 					[ -z "$ibrs_enabled"   ] && ibrs_enabled=3
 				fi
+				# checking for 'Enhanced IBRS' in sysfs
+				if echo "$fullmsg" | grep -q -e 'Enhanced IBRS'; then
+					need_enhanced_ibrs=1
+					enhanced_ibrs="Enhanced"
+				fi
 			fi
 			# in live mode, if ibrs or ibpb is supported and we didn't find these are enabled, then they are not
 			[ -n "$ibrs_supported" ] && [ -z "$ibrs_enabled" ] && ibrs_enabled=0
@@ -3049,7 +3056,7 @@ check_CVE_2017_5715_linux()
 				fi
 			fi
 		fi
-
+		
 		_info_nol "  * Kernel is compiled with IBRS support: "
 		if [ -z "$ibrs_supported" ]; then
 			if [ "$ibrs_can_tell" = 1 ]; then
@@ -3066,7 +3073,11 @@ check_CVE_2017_5715_linux()
 			fi
 		fi
 
-		_info_nol "    * IBRS enabled and active: "
+		if [ "$need_enhanced_ibrs" = 1 ]; then
+			_info_nol "  * $enhanced_ibrs IBRS enabled and active: "
+		else
+			_info_nol "  * IBRS enabled and active: "
+		fi
 		if [ "$opt_live" = 1 ]; then
 			if [ "$ibpb_enabled" = 2 ]; then
 				# if ibpb=2, ibrs is forcefully=0
@@ -3298,6 +3309,11 @@ check_CVE_2017_5715_linux()
 			fi
 		elif [ -n "$ibrs_enabled" ] && [ -n "$ibpb_enabled" ] && [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
 			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
+			if [ "$need_enhanced_ibrs" = 1 ]; then
+				pvulnstatus $cve OK "$enhanced_ibrs IBRS + IBPB are mitigating the vulnerability"
+			else
+				pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
+			fi
 		elif [ "$ibpb_enabled" = 2 ] && ! is_cpu_smt_enabled; then
 			pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
 		elif [ -n "$bp_harden" ]; then
