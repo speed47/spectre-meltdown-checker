@@ -2939,8 +2939,6 @@ check_CVE_2017_5715_linux()
 		ibpb_can_tell=0
 		ibpb_supported=''
 		ibpb_enabled=''
-		need_enhanced_ibrs=0
-		enhanced_ibrs=''
 
 		if [ "$opt_live" = 1 ]; then
 			# in live mode, we can check for the ibrs_enabled file in debugfs
@@ -3001,15 +2999,19 @@ check_CVE_2017_5715_linux()
 					ibrs_fw_enabled=1
 				fi
 				# when IBRS is enabled on 4.15+, we can see it in sysfs
+				# on a more recent kernel, classic "IBRS" is not even longer an option, because of the performance impact.
+				# only "Enhanced IBRS" is available (on CPUs with the IBRS_ALL flag)
 				if echo "$fullmsg" | grep -q -e '\<IBRS\>' -e 'Indirect Branch Restricted Speculation'; then
 					_debug "ibrs: found IBRS in sysfs"
 					[ -z "$ibrs_supported" ] && ibrs_supported='found IBRS in sysfs'
 					[ -z "$ibrs_enabled"   ] && ibrs_enabled=3
 				fi
-				# checking for 'Enhanced IBRS' in sysfs
+				# checking for 'Enhanced IBRS' in sysfs, enabled on CPUs with IBRS_ALL
 				if echo "$fullmsg" | grep -q -e 'Enhanced IBRS'; then
-					need_enhanced_ibrs=1
-					enhanced_ibrs="Enhanced"
+					[ -z "$ibrs_supported" ] && ibrs_supported='found Enhanced IBRS in sysfs'
+					# 4 isn't actually a valid value of the now extinct "ibrs_enabled" flag file,
+					# that only went from 0 to 3, so we use 4 as "enhanced ibrs is enabled"
+					ibrs_enabled=4
 				fi
 			fi
 			# in live mode, if ibrs or ibpb is supported and we didn't find these are enabled, then they are not
@@ -3056,7 +3058,7 @@ check_CVE_2017_5715_linux()
 				fi
 			fi
 		fi
-		
+
 		_info_nol "  * Kernel is compiled with IBRS support: "
 		if [ -z "$ibrs_supported" ]; then
 			if [ "$ibrs_can_tell" = 1 ]; then
@@ -3073,11 +3075,7 @@ check_CVE_2017_5715_linux()
 			fi
 		fi
 
-		if [ "$need_enhanced_ibrs" = 1 ]; then
-			_info_nol "  * $enhanced_ibrs IBRS enabled and active: "
-		else
-			_info_nol "  * IBRS enabled and active: "
-		fi
+		_info_nol "    * IBRS enabled and active: "
 		if [ "$opt_live" = 1 ]; then
 			if [ "$ibpb_enabled" = 2 ]; then
 				# if ibpb=2, ibrs is forcefully=0
@@ -3087,6 +3085,7 @@ check_CVE_2017_5715_linux()
 				# 1 is enabled only for kernel space
 				# 2 is enabled for kernel and user space
 				# 3 is enabled
+				# 4 is enhanced ibrs enabled
 				case "$ibrs_enabled" in
 					0)
 						if [ "$ibrs_fw_enabled" = 1 ]; then
@@ -3098,6 +3097,7 @@ check_CVE_2017_5715_linux()
 					1)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel space and firmware code"; else pstatus green YES "for kernel space"; fi;;
 					2)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel, user space, and firmware code" ; else pstatus green YES "for both kernel and user space"; fi;;
 					3)	if [ "$ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel and firmware code"; else pstatus green YES; fi;;
+					4)	pstatus green YES "Enhanced flavor, performance impact will be greatly reduced";;
 					*)	if [ "$cpuid_ibrs" != 'SPEC_CTRL' ] && [ "$cpuid_ibrs" != 'IBRS_SUPPORT' ] && [ "$cpuid_spec_ctrl" != -1 ]; 
 							then pstatus yellow NO; _debug "ibrs: known cpu not supporting SPEC-CTRL or IBRS"; 
 						else 
@@ -3308,9 +3308,8 @@ check_CVE_2017_5715_linux()
 				_warn "IBPB is considered as a good addition to retpoline for Variant 2 mitigation, but your CPU microcode doesn't support it"
 			fi
 		elif [ -n "$ibrs_enabled" ] && [ -n "$ibpb_enabled" ] && [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
-			pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
-			if [ "$need_enhanced_ibrs" = 1 ]; then
-				pvulnstatus $cve OK "$enhanced_ibrs IBRS + IBPB are mitigating the vulnerability"
+			if [ "$ibrs_enabled" = 4 ]; then
+				pvulnstatus $cve OK "Enhanced IBRS + IBPB are mitigating the vulnerability"
 			else
 				pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
 			fi
