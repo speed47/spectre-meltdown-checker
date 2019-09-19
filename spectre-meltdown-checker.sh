@@ -1782,7 +1782,7 @@ if [ "$opt_live" = 1 ]; then
 	if [ ! -e "$opt_kernel" ]; then
 		# Fedora:
 		[ -e "/lib/modules/$(uname -r)/vmlinuz" ] && opt_kernel="/lib/modules/$(uname -r)/vmlinuz"
-		# Slackare:
+		# Slackware:
 		[ -e "/boot/vmlinuz"             ] && opt_kernel="/boot/vmlinuz"
 		# Arch aarch64:
 		[ -e "/boot/Image"               ] && opt_kernel="/boot/Image"
@@ -1908,7 +1908,7 @@ else
 		if [ "$opt_live" = 1 ]; then
 			_verbose "Kernel image is \033[35m$kernel_version"
 			if ! echo "$kernel_version" | grep -qF "$(uname -r)"; then
-				_warn "Possible disrepancy between your running kernel '$(uname -r)' and the image '$kernel_version' we found ($opt_kernel), results might be incorrect"
+				_warn "Possible discrepancy between your running kernel '$(uname -r)' and the image '$kernel_version' we found ($opt_kernel), results might be incorrect"
 			fi
 		else
 			_info "Kernel image is \033[35m$kernel_version"
@@ -2461,7 +2461,7 @@ check_cpu()
 	fi
 
 	if is_intel; then
-		_info "  * Microarchitecture Data Sampling"
+		_info "  * Microarchitectural Data Sampling"
 		_info_nol "    * VERW instruction is available: "
 		read_cpuid 0x7 $EDX 10 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
@@ -4071,7 +4071,7 @@ check_CVE_2018_3620_linux()
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$pteinv_supported" = 1 ]; then
 			if [ "$pteinv_active" = 1 ] || [ "$opt_live" != 1 ]; then
-				pvulnstatus $cve OK "PTE inversion mitigates the vunerability"
+				pvulnstatus $cve OK "PTE inversion mitigates the vulnerability"
 			else
 				pvulnstatus $cve VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
 			fi
