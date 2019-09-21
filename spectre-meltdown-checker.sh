@@ -2071,8 +2071,6 @@ read_msr()
 		_debug "read_msr: MOCKING enabled for msr $_msr, returning $read_msr_value"
 		mocked=1
 		return 0
-	else
-		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}='$read_msr_value'")
 	fi
 
 	_mockvarname="SMC_MOCK_RDMSR_${_msr}_RET"
@@ -2121,7 +2119,10 @@ read_msr()
 			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=1")
 			return 1
 		fi
+	# remove sparse spaces od might give us
+	read_msr_value=$(( read_msr_value ))
 	fi
+	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}='$read_msr_value'")
 	_debug "read_msr: MSR=$_msr value is $read_msr_value"
 	return 0
 }
