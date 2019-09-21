@@ -2118,6 +2118,18 @@ write_msr()
 			_debug "write_msr: using perl"
 			ret=1
 			perl -e "open(M,'>','/dev/cpu/$_cpu/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
+			if [ "$ret" = 1 ]; then
+				# Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
+				# when this mode is enabled and EFI secure boot is enabled (see issue #303)
+				# https://src.fedoraproject.org/rpms/kernel/blob/master/f/efi-lockdown.patch
+				# when this happens, any write will fail and dmesg will have a msg printed "msr: Direct access to MSR"
+				# we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
+				if dmesg | grep -qF "msr: Direct access to MSR"; then
+					_debug "write_msr: locked down kernel detected"
+					mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=202")
+					return 202 # lockdown error
+				fi
+			fi
 		# fallback to dd if it supports seek_bytes
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; then
 			_debug "write_msr: using dd"
@@ -2263,6 +2275,9 @@ check_cpu()
 		elif [ $val -eq 201 ]; then
 			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
 			spec_ctrl_msr=-1
+		elif [ $val -eq 202 ]; then
+			pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+			spec_ctrl_msr=-1
 		else
 			spec_ctrl_msr=0
 			pstatus yellow NO
@@ -2351,6 +2366,10 @@ check_cpu()
 			fi
 		elif [ $val -eq 200 ]; then
 			pstatus yellow UNKNOWN "is msr kernel module available?"
+		elif [ $val -eq 201 ]; then
+			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
+		elif [ $val -eq 202 ]; then
+			pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
 		else
 			pstatus yellow NO
 		fi
@@ -2529,6 +2548,10 @@ check_cpu()
 			fi
 		elif [ $val -eq 200 ]; then
 			pstatus yellow UNKNOWN "is msr kernel module available?"
+		elif [ $val -eq 201 ]; then
+			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
+		elif [ $val -eq 202 ]; then
+			pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
 		else
 			pstatus yellow NO
 		fi
@@ -2666,6 +2689,8 @@ check_cpu()
 				pstatus yellow UNKNOWN "is msr kernel module available?"
 			elif [ $val -eq 201 ]; then
 				pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
+			elif [ $val -eq 202 ]; then
+				pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
 			else
 				pstatus yellow NO
 			fi
