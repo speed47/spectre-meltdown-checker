@@ -4535,9 +4535,9 @@ check_mds_linux()
 	sys_interface_available=0
 	msg=''
 	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/mds" '^[^;]+'; then
-		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 	fi
+
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* Kernel supports using MD_CLEAR mitigation: "
 		kernel_md_clear=''
@@ -4592,44 +4592,60 @@ check_mds_linux()
 	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ -z "$msg" ]; then
-		# if msg is empty, sysfs check didn't fill it, rely on our own test
-		if [ "$cpuid_md_clear" = 1 ]; then
-			if [ -n "$kernel_md_clear" ]; then
-				if [ "$opt_live" = 1 ]; then
-					# mitigation must also be enabled
-					if [ "$mds_mitigated" = 1 ]; then
-						if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
-							pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+	else
+		if [ "$opt_sysfs_only" != 1 ]; then
+			# compute mystatus and mymsg from our own logic
+			if [ "$cpuid_md_clear" = 1 ]; then
+				if [ -n "$kernel_md_clear" ]; then
+					if [ "$opt_live" = 1 ]; then
+						# mitigation must also be enabled
+						if [ "$mds_mitigated" = 1 ]; then
+							if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
+								mystatus=OK
+								mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+							else
+								mystatus=VULN
+								mymsg="Your microcode and kernel are both up to date for this mitigation, but your must disable SMT (Hyper-Threading) for a complete mitigation"
+							fi
 						else
-							pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but your must disable SMT (Hyper-Threading) for a complete mitigation"
+							mystatus=VULN
+							mymsg="Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
 						fi
 					else
-						pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
+						mystatus=OK
+						mymsg="Your microcode and kernel are both up to date for this mitigation"
 					fi
 				else
-					pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation"
+					mystatus=VULN
+					mymsg="Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
 				fi
 			else
-				pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
+				if [ -n "$kernel_md_clear" ]; then
+					mystatus=VULN
+					mymsg="Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+				else
+					mystatus=VULN
+					mymsg="Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
+				fi
 			fi
 		else
-			if [ -n "$kernel_md_clear" ]; then
-				pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
-			else
-				pvulnstatus "$cve" VULN "Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
-			fi
-		fi
-	else
-		if [ "$opt_paranoid" = 1 ]; then
-			# in paranoid mode, we don't only need microcode + kernel update, we also want SMT mitigation
-			if echo "$fullmsg" | grep -qF -e 'SMT mitigated' -e 'SMT disabled'; then
-				pvulnstatus "$cve" OK "$fullmsg"
-			else
-				pvulnstatus "$cve" VULN "Your kernel and microcode partially mitigate the vulnerability, but you must disable SMT (Hyper-Threading) for a complete mitigation"
-			fi
-		else
+			# sysfs only: return the status/msg we got
 			pvulnstatus "$cve" "$status" "$fullmsg"
+			return
+		fi
+
+		# if we didn't get a msg+status from sysfs, use ours
+		if [ -z "$msg" ]; then
+			pvulnstatus "$cve" "$mystatus" "$mymsg"
+		elif [ "$opt_paranoid" = 1 ]; then
+			# if paranoid mode is enabled, we now that we won't agree on status, so take ours
+			pvulnstatus "$cve" "$mystatus" "$mymsg"
+		elif [ "$status" = "$mystatus" ]; then
+			# if we agree on status, we'll print the common status and our message (more detailed than the sysfs one)
+			pvulnstatus "$cve" "$status" "$mymsg"
+		else
+			# if we don't agree on status, maybe our logic is flawed due to a new kernel/mitigation? use the one from sysfs
+			pvulnstatus "$cve" "$status" "$msg"
 		fi
 	fi
 }
