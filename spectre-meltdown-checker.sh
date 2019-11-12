@@ -639,8 +639,7 @@ is_cpu_taa_free()
 	if ! is_intel; then
 		return 0
 	# is intel
-	elif [ "$capabilities_taa_no" = 0 ] || \
-		[ "$cpuid_rtm" = 0]; then
+	elif [ "$capabilities_taa_no" = 0 ] || [ "$cpuid_rtm" = 0 ]; then
 		return 0
 	fi
 
@@ -4732,13 +4731,13 @@ check_taa()
 
 	if [ "$opt_live" != 1 ]; then
 		pstatus blue N/A "not testable in offline mode"
-		pvulnstatus $cve UNK
+		pvulnstatus "$cve" UNK
 		return
 	fi
 
 	if ! is_cpu_vulnerable "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
 		return
 	fi
 	if sys_interface_check '/sys/devices/system/cpu/vulnerabilities/tsx_async_abort'; then
@@ -4774,11 +4773,11 @@ check_taa()
 	fi
 
 	if [ $taa_mitigated = 0 ];then
-		pvulnstatus $cve VULN
+		pvulnstatus "$cve" VULN
 	elif [ $taa_mitigated = 1 ]; then
-		pvulnstatus $cve OK
+		pvulnstatus "$cve" OK
 	else
-		pvulnstatus $cve UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/tsx_async_abort.rst"
+		pvulnstatus "$cve" UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/tsx_async_abort.rst"
 	fi
 }
 
