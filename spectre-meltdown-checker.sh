@@ -78,7 +78,7 @@ show_usage()
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
 		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked
-					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum
+					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--cve [cve1,cve2,...]	specify which CVE you'd like to check, by default all supported CVEs are checked
 		--hw-only		only check for CPU information, don't check for any variant
@@ -157,7 +157,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -279,6 +279,7 @@ cve2name()
 		CVE-2018-12130) echo "ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)";;
 		CVE-2018-12127) echo "RIDL, microarchitectural load port data sampling (MLPDS)";;
 		CVE-2019-11091) echo "RIDL, microarchitectural data sampling uncacheable memory (MDSUM)";;
+		CVE-2019-11135) echo "Transactional Synchronization Extensions (TSX) Asynchronous Abort (TAA)";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -300,6 +301,7 @@ _is_cpu_vulnerable_cached()
 		CVE-2018-12130) return $variant_mfbds;;
 		CVE-2018-12127) return $variant_mlpds;;
 		CVE-2019-11091) return $variant_mdsum;;
+		CVE-2019-11135) return $variant_taa;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2; exit 255;;
 	esac
 }
@@ -326,6 +328,7 @@ is_cpu_vulnerable()
 	variant_mfbds=''
 	variant_mlpds=''
 	variant_mdsum=''
+	variant_taa=''
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -333,6 +336,11 @@ is_cpu_vulnerable()
 		[ -z "$variant_mlpds" ] && variant_mlpds=immune
 		[ -z "$variant_mdsum" ] && variant_mdsum=immune
 		_debug "is_cpu_vulnerable: cpu not affected by Microarchitectural Data Sampling"
+	fi
+
+	if is_cpu_taa_free; then
+		[ -z "$variant_taa" ] && variant_taa=immune
+		_debug "is_cpu_vulnerable: cpu not affected by TSX Asynhronous Abort"
 	fi
 
 	if is_cpu_specex_free; then
@@ -346,6 +354,7 @@ is_cpu_vulnerable()
 		variant_mfbds=immune
 		variant_mlpds=immune
 		variant_mdsum=immune
+		variant_taa=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
@@ -528,6 +537,7 @@ is_cpu_vulnerable()
 	[ "$variant_mfbds" = "immune" ] && variant_mfbds=1 || variant_mfbds=0
 	[ "$variant_mlpds" = "immune" ] && variant_mlpds=1 || variant_mlpds=0
 	[ "$variant_mdsum" = "immune" ] && variant_mdsum=1 || variant_mdsum=0
+	[ "$variant_taa" = "immune" ] && variant_taa=1 || variant_taa=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are vulnerable to L1TF, if there's no SGX, we're safe for the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
@@ -610,6 +620,27 @@ is_cpu_mds_free()
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		return 0
 	elif [ "$cpu_vendor" = ARM ]; then
+		return 0
+	fi
+
+	return 1
+}
+
+
+is_cpu_taa_free()
+{
+	# return true (0) if the CPU isn't affected by tsx asynchronnous aborts, false (1) if it does.
+	# There are three types of processors that do not require additional mitigations.
+	# 1. CPUs that do not support Intel TSX are not affected.
+	# 2. CPUs that enumerate IA32_ARCH_CAPABILITIES[TAA_NO] (bit 8)=1 are not affected.
+	# 3. CPUs that support Intel TSX and do not enumerate IA32_ARCH_CAPABILITIES[MDS_NO] (bit 5)=1
+	# do not need additional mitigations beyond what is already required to mitigate MDS.
+
+	if ! is_intel; then
+		return 0
+	# is intel
+	elif [ "$capabilities_taa_no" = 0 ] || \
+		[ "$rtm" = 0]; then
 		return 0
 	fi
 
@@ -885,8 +916,9 @@ while [ -n "$1" ]; do
 			mlpds)  opt_cve_list="$opt_cve_list CVE-2018-12127"; opt_cve_all=0;;
 			mdsum)  opt_cve_list="$opt_cve_list CVE-2019-11091"; opt_cve_all=0;;
 			l1tf)	opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
+			taa)	opt_cve_list="$opt_cve_list CVE-2019-11135"; opt_cve_all=0;;
 			*)
-				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, or l1tf" >&2;
+				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, taa or l1tf" >&2;
 				exit 255
 				;;
 		esac
@@ -2478,6 +2510,22 @@ check_cpu()
 	fi
 
 	if is_intel; then
+		_info "  * TSX Asynchronous Abort"
+		_info_nol "    * TSX support is available: "
+		read_cpuid 0x7 $EDX 11 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			rtm=1
+			pstatus green YES "TSX RTM feature bit"
+		elif [ $ret -eq 2 ]; then
+			rtm=-1
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		else
+			rtm=0
+			pstatus yellow NO
+		fi
+	fi
+
+	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 		cpuid_arch_capabilities=-1
@@ -2494,6 +2542,7 @@ check_cpu()
 		fi
 
 		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
+		capabilities_taa_no=-1
 		capabilities_mds_no=-1
 		capabilities_rdcl_no=-1
 		capabilities_ibrs_all=-1
@@ -2504,6 +2553,7 @@ check_cpu()
 			pstatus yellow UNKNOWN
 		elif [ "$cpuid_arch_capabilities" != 1 ]; then
 			capabilities_rdcl_no=0
+			capabilities_taa_no=0
 			capabilities_mds_no=0
 			capabilities_ibrs_all=0
 			capabilities_rsba=0
@@ -2536,6 +2586,7 @@ check_cpu()
 			done
 			capabilities=$val_cap_msr
 			capabilities_rdcl_no=0
+			capabilities_taa_no=0
 			capabilities_mds_no=0
 			capabilities_ibrs_all=0
 			capabilities_rsba=0
@@ -2549,7 +2600,8 @@ check_cpu()
 				[ $(( capabilities >> 3 & 1 )) -eq 1 ] && capabilities_l1dflush_no=1
 				[ $(( capabilities >> 4 & 1 )) -eq 1 ] && capabilities_ssb_no=1
 				[ $(( capabilities >> 5 & 1 )) -eq 1 ] && capabilities_mds_no=1
-				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no mds_no=$capabilities_mds_no"
+				[ $(( capabilities >> 8 & 1 )) -eq 1 ] && capabilities_taa_no=1
+				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no mds_no=$capabilities_mds_no taa_no=$capabilities_taa_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
 					if [ $cpu_mismatch -eq 0 ]; then
 						pstatus green YES
@@ -2608,6 +2660,15 @@ check_cpu()
 		if [ "$capabilities_mds_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_mds_no" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
+
+		_info_nol "  * CPU explicitly indicates not being vulnerable to TSX Asynchrnonous Abort (TAA_NO): "
+		if [ "$capabilities_taa_no" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_taa_no" = 1 ]; then
 			pstatus green YES
 		else
 			pstatus yellow NO
@@ -4647,6 +4708,77 @@ check_mds_linux()
 			# if we don't agree on status, maybe our logic is flawed due to a new kernel/mitigation? use the one from sysfs
 			pvulnstatus "$cve" "$status" "$msg"
 		fi
+	fi
+}
+
+
+###################
+# TAA SECTION
+
+# Transactional Synchronization Extension (TSX) Asynchronous Abort
+check_CVE_2019_11135()
+{
+	cve='CVE-2019-11135'
+	check_taa $cve
+}
+
+# TSX Asynchronous Abort
+check_taa()
+{
+	sys_interface_available=0
+
+	cve=$1
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+
+	if [ "$opt_live" != 1 ]; then
+		pstatus blue N/A "not testable in offline mode"
+		pvulnstatus $cve UNK
+		return
+	fi
+
+	if ! is_cpu_vulnerable "$cve" ; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		return
+	fi
+	if sys_interface_check '/sys/devices/system/cpu/vulnerabilities/tsx_async_abort'; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	fi
+
+	if [ "$sys_interface_available" = 1 ]; then
+		if grep -Eq 'Not affected' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
+			taa_mitigated=1
+		elif grep -Eq 'Mitigation:' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
+			if grep -Eq '(SMT mitigated|disabled)' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
+				taa_mitigated=1
+			else
+				#Simultaneous multi-threading (aka SMT or HyperThreading) is enabled. System may be vulnerable in some environments.
+				taa_mitigated=1
+				_info_nol "* Disable SMT to have complete mitigation\n"
+			fi
+		elif grep -Eq 'Vulnerable' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
+			taa_mitigated=0
+			_info_nol "* For more info check Linux kernel Documentation/admin-guide/hw-vuln/tsx_async_abort.rst\n"
+		else
+			taa_mitigated=-1
+		fi
+
+		if grep -Eq 'no microcode' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
+			taa_mitigated=0
+			_info_nol "* CPU microcode is needed to mitigate the vulnerability\n"
+		fi
+	else
+		pstatus yellow UNKNOWN "can't find or interpret /sys/devices/system/cpu/vulnerabilities/tsx_async_abort"
+		taa_mitigated=-1
+	fi
+
+	if [ $taa_mitigated = 0 ];then
+		pvulnstatus $cve VULN
+	elif [ $taa_mitigated = 1 ]; then
+		pvulnstatus $cve OK
+	else
+		pvulnstatus $cve UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/tsx_async_abort.rst"
 	fi
 }
 
