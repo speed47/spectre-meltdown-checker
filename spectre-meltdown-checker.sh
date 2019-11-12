@@ -629,7 +629,7 @@ is_cpu_mds_free()
 
 is_cpu_taa_free()
 {
-	# return true (0) if the CPU isn't affected by tsx asynchronnous aborts, false (1) if it does.
+	# return true (0) if the CPU isn't affected by tsx asynchronous aborts, false (1) if it does.
 	# There are three types of processors that do not require additional mitigations.
 	# 1. CPUs that do not support Intel TSX are not affected.
 	# 2. CPUs that enumerate IA32_ARCH_CAPABILITIES[TAA_NO] (bit 8)=1 are not affected.
@@ -640,7 +640,7 @@ is_cpu_taa_free()
 		return 0
 	# is intel
 	elif [ "$capabilities_taa_no" = 0 ] || \
-		[ "$rtm" = 0]; then
+		[ "$cpuid_rtm" = 0]; then
 		return 0
 	fi
 
@@ -2514,13 +2514,13 @@ check_cpu()
 		_info_nol "    * TSX support is available: "
 		read_cpuid 0x7 $EDX 11 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
-			rtm=1
+			cpuid_rtm=1
 			pstatus green YES "TSX RTM feature bit"
 		elif [ $ret -eq 2 ]; then
-			rtm=-1
+			cpuid_rtm=-1
 			pstatus yellow UNKNOWN "is cpuid kernel module available?"
 		else
-			rtm=0
+			cpuid_rtm=0
 			pstatus yellow NO
 		fi
 	fi
