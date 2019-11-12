@@ -14,6 +14,7 @@ A shell script to tell if your system is vulnerable against the several "specula
 - CVE-2018-12130 [microarchitectural fill buffer data sampling (MFBDS)] aka 'ZombieLoad'
 - CVE-2018-12127 [microarchitectural load port data sampling (MLPDS)] aka 'RIDL'
 - CVE-2019-11091 [microarchitectural data sampling uncacheable memory (MDSUM)] aka 'RIDL'
+- CVE-2019-11135 [TSX asynchronous abort] aka 'TAA'
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -141,6 +142,12 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 **CVE-2019-11091** [MDSUM] Microarchitectural Data Sampling Uncacheable Memory (RIDL)
 
    - Note: These 4 CVEs are similar and collectively named "MDS" vulnerabilities, the mitigation is identical for all
+   - Impact: Kernel
+   - Mitigation: microcode update + kernel update making possible to protect various CPU internal buffers from unprivileged speculative access to data
+   - Performance impact of the mitigation: low to significant
+
+**CVE-2019-11135** TSX Asynchronous Abort (TAA)
+
    - Impact: Kernel
    - Mitigation: microcode update + kernel update making possible to protect various CPU internal buffers from unprivileged speculative access to data
    - Performance impact of the mitigation: low to significant
