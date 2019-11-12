@@ -993,6 +993,7 @@ pvulnstatus()
 			CVE-2018-12130) aka="MFBDS";;
 			CVE-2018-12127) aka="MLPDS";;
 			CVE-2019-11091) aka="MDSUM";;
+			CVE-2019-11135) aka="TAA";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
