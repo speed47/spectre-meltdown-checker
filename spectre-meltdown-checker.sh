@@ -4719,66 +4719,89 @@ check_mds_linux()
 check_CVE_2019_11135()
 {
 	cve='CVE-2019-11135'
-	check_taa $cve
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_2019_11135_linux
+	#elif echo "$os" | grep -q BSD; then
+	#	check_CVE_2019_11135_bsd
+	else
+		_warn "Unsupported OS ($os)"
+	fi
 }
 
-# TSX Asynchronous Abort
-check_taa()
+check_CVE_2019_11135_linux()
 {
+	status=UNK
 	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
+		_info_nol "* TAA mitigation is supported by kernel: "
+		kernel_taa=''
+		if [ -n "$kernel_err" ]; then
+			kernel_taa_err="$kernel_err"
+		elif grep -q 'tsx_async_abort' "$kernel"; then
+			kernel_taa="found tsx_async_abort in kernel image"
+		fi
+		if [ -n "$kernel_taa" ]; then
+			pstatus green YES "$kernel_taa"
+		elif [ -n "$kernel_taa_err" ]; then
+			pstatus yellow UNKNOWN "$kernel_taa_err"
+		else
+			pstatus yellow NO
+		fi
 
-	cve=$1
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-
-	if [ "$opt_live" != 1 ]; then
-		pstatus blue N/A "not testable in offline mode"
-		pvulnstatus "$cve" UNK
-		return
+		_info_nol "* TAA mitigation enabled and active: "
+		if [ "$opt_live" = 1 ]; then
+			if [ -n "$fullmsg" ]; then
+				if echo "$fullmsg" | grep -qE '^Mitigation'; then
+					pstatus green YES "$fullmsg"
+				else
+					pstatus yellow NO
+				fi
+			else
+				pstatus yellow NO "tsx_async_abort not found in sysfs hierarchy"
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
 	fi
 
 	if ! is_cpu_vulnerable "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
-		return
-	fi
-	if sys_interface_check '/sys/devices/system/cpu/vulnerabilities/tsx_async_abort'; then
-		# this kernel has the /sys interface, trust it over everything
-		sys_interface_available=1
-	fi
-
-	if [ "$sys_interface_available" = 1 ]; then
-		if grep -Eq 'Not affected' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
-			taa_mitigated=1
-		elif grep -Eq 'Mitigation:' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
-			if grep -Eq '(SMT mitigated|disabled)' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
-				taa_mitigated=1
-			else
-				#Simultaneous multi-threading (aka SMT or HyperThreading) is enabled. System may be vulnerable in some environments.
-				taa_mitigated=1
-				_info_nol "* Disable SMT to have complete mitigation\n"
-			fi
-		elif grep -Eq 'Vulnerable' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
-			taa_mitigated=0
-			_info_nol "* For more info check Linux kernel Documentation/admin-guide/hw-vuln/tsx_async_abort.rst\n"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		if [ "$opt_live" = 1 ]; then
+			# if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
+			pvulnstatus $cve VULN "Your kernel doesn't support TAA mitigation, update it"
 		else
-			taa_mitigated=-1
-		fi
-
-		if grep -Eq 'no microcode' "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
-			taa_mitigated=0
-			_info_nol "* CPU microcode is needed to mitigate the vulnerability\n"
+			if [ -n "$kernel_taa" ]; then
+				pvulnstatus $cve OK "Your kernel supports TAA mitigation"
+			else
+				pvulnstatus $cve VULN "Your kernel doesn't support TAA mitigation, update it"
+			fi
 		fi
 	else
-		pstatus yellow UNKNOWN "can't find or interpret /sys/devices/system/cpu/vulnerabilities/tsx_async_abort"
-		taa_mitigated=-1
-	fi
-
-	if [ $taa_mitigated = 0 ];then
-		pvulnstatus "$cve" VULN
-	elif [ $taa_mitigated = 1 ]; then
-		pvulnstatus "$cve" OK
-	else
-		pvulnstatus "$cve" UNK "further action may be needed to mitigate this vulnerability. For more info check Linux kernel Documentation/admin-guide/hw-vuln/tsx_async_abort.rst"
+		if [ "$opt_paranoid" = 1 ]; then
+			# in paranoid mode, TSX or SMT enabled are not OK, even if TAA is mitigated
+			if ! echo "$fullmsg" | grep -qF 'TSX disabled'; then
+				pvulnstatus $cve VULN "TSX must be disabled for full mitigation"
+			elif echo "$fullmsg" | grep -qF 'SMT vulnerable'; then
+				pvulnstatus $cve VULN "SMT (HyperThreading) must be disabled for full mitigation"
+			else
+				pvulnstatus $cve "$status" "$msg"
+			fi
+		else
+			pvulnstatus $cve "$status" "$msg"
+		fi
 	fi
 }
 
