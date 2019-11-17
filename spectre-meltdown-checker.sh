@@ -41,8 +41,9 @@ show_usage()
 	# shellcheck disable=SC2086
 	cat <<EOF
 	Usage:
-		Live mode:    $(basename $0) [options] [--live]
-		Offline mode: $(basename $0) [options] [--kernel <kernel_file>] [--config <kernel_config>] [--map <kernel_map_file>]
+		Live mode (auto):   $(basename $0) [options]
+		Live mode (manual): $(basename $0) [options] <[--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]> --live
+		Offline mode:       $(basename $0) [options] <[--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]>
 
 	Modes:
 		Two modes are available.
@@ -51,11 +52,15 @@ show_usage()
 		To run under this mode, just start the script without any option (you can also use --live explicitly)
 
 		Second mode is the "offline" mode, where you can inspect a non-running kernel.
-		You'll need to specify the location of the kernel file, config and System.map files:
+		This mode is automatically enabled when you specify the location of the kernel file, config and System.map files:
 
 		--kernel kernel_file	specify a (possibly compressed) Linux or BSD kernel file
 		--config kernel_config	specify a kernel config file (Linux only)
 		--map kernel_map_file	specify a kernel System.map file (Linux only)
+
+		If you want to use live mode while specifying the location of the kernel, config or map file yourself,
+		you can add --live to the above options, to tell the script to run in live mode instead of the offline mode,
+		which is enabled by default when at least one file is specified on the command line.
 
 	Options:
 		--no-color		don't use color codes
@@ -134,8 +139,7 @@ os=$(uname -s)
 opt_kernel=''
 opt_config=''
 opt_map=''
-opt_live_explicit=0
-opt_live=1
+opt_live=-1
 opt_no_color=0
 opt_batch=0
 opt_batch_format='text'
@@ -796,22 +800,19 @@ while [ -n "$1" ]; do
 		opt_kernel=$(parse_opt_file kernel "$2"); ret=$?
 		[ $ret -ne 0 ] && exit 255
 		shift 2
-		opt_live=0
 	elif [ "$1" = "--config" ]; then
 		opt_config=$(parse_opt_file config "$2"); ret=$?
 		[ $ret -ne 0 ] && exit 255
 		shift 2
-		opt_live=0
 	elif [ "$1" = "--map" ]; then
 		opt_map=$(parse_opt_file map "$2"); ret=$?
 		[ $ret -ne 0 ] && exit 255
 		shift 2
-		opt_live=0
 	elif [ "$1" = "--arch-prefix" ]; then
 		opt_arch_prefix="$2"
 		shift 2
 	elif [ "$1" = "--live" ]; then
-		opt_live_explicit=1
+		opt_live=1
 		shift
 	elif [ "$1" = "--no-color" ]; then
 		opt_no_color=1
@@ -952,6 +953,15 @@ fi
 if [ "$opt_no_hw" = 1 ] && [ "$opt_hw_only" = 1 ]; then
 	_warn "Incompatible options specified (--no-hw and --hw-only), aborting"
 	exit 255
+fi
+
+if [ "$opt_live" = -1 ]; then
+	if [ -n "$opt_kernel" ] || [ -n "$opt_config" ] || [ -n "$opt_map" ]; then
+		# no --live specified and we have a least one of the kernel/config/map files on the cmdline: offline mode
+		opt_live=0
+	else
+		opt_live=1
+	fi
 fi
 
 # print status function
@@ -1722,13 +1732,6 @@ if uname -a | grep -qE -- '-Microsoft #[0-9]+-Microsoft '; then
 fi
 
 # check for mode selection inconsistency
-if [ "$opt_live_explicit" = 1 ]; then
-	if [ -n "$opt_kernel" ] || [ -n "$opt_config" ] || [ -n "$opt_map" ]; then
-		show_usage
-		echo "$0: error: incompatible modes specified, use either --live or --kernel/--config/--map" >&2
-		exit 255
-	fi
-fi
 if [ "$opt_hw_only" = 1 ]; then
 	if [ "$opt_cve_all" = 0 ]; then
 		show_usage
@@ -1795,8 +1798,11 @@ if [ "$opt_live" = 1 ]; then
 	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
 	# try to find the image of the current running kernel
+	if [ -n "$opt_kernel" ]; then
+		# specified by user on cmdline, with --live, don't override
+		:
 	# first, look for the BOOT_IMAGE hint in the kernel cmdline
-	if [ -r "$procfs/cmdline" ] && grep -q 'BOOT_IMAGE=' "$procfs/cmdline"; then
+	elif [ -r "$procfs/cmdline" ] && grep -q 'BOOT_IMAGE=' "$procfs/cmdline"; then
 		opt_kernel=$(grep -Eo 'BOOT_IMAGE=[^ ]+' "$procfs/cmdline" | cut -d= -f2)
 		_debug "found opt_kernel=$opt_kernel in $procfs/cmdline"
 		# if the boot partition is within a btrfs subvolume, strip the subvolume name
@@ -1843,7 +1849,10 @@ if [ "$opt_live" = 1 ]; then
 	fi
 
 	# system.map
-	if [ -e "$procfs/kallsyms" ] ; then
+	if [ -n "$opt_map" ]; then
+		# specified by user on cmdline, with --live, don't override
+		:
+	elif [ -e "$procfs/kallsyms" ] ; then
 		opt_map="$procfs/kallsyms"
 	elif [ -e "/lib/modules/$(uname -r)/System.map" ] ; then
 		opt_map="/lib/modules/$(uname -r)/System.map"
@@ -1854,7 +1863,10 @@ if [ "$opt_live" = 1 ]; then
 	fi
 
 	# config
-	if [ -e "$procfs/config.gz" ] ; then
+	if [ -n "$opt_config" ]; then
+		# specified by user on cmdline, with --live, don't override
+		:
+	elif [ -e "$procfs/config.gz" ] ; then
 		dumped_config="$(mktemp /tmp/config-XXXXXX)"
 		gunzip -c "$procfs/config.gz" > "$dumped_config"
 		# dumped_config will be deleted at the end of the script
