@@ -1721,6 +1721,23 @@ is_latest_known_ucode()
 	return 2
 }
 
+get_cmdline()
+{
+	if [ -n "$kernel_cmdline" ]; then
+		return
+	fi
+
+	if [ -n "$SMC_MOCK_CMDLINE" ]; then
+		mocked=1
+		_debug "get_cmdline: using mocked cmdline '$SMC_MOCK_CMDLINE'"
+		kernel_cmdline="$SMC_MOCK_CMDLINE"
+		return
+	else
+		kernel_cmdline=$(cat "$procfs/cpuinfo")
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CMDLINE='$kernel_cmdline'")
+	fi
+}
+
 # ENTRYPOINT
 
 # we can't do anything useful under WSL
@@ -1785,6 +1802,8 @@ if echo "$os" | grep -q BSD; then
 fi
 
 parse_cpu_details
+get_cmdline
+
 if [ "$opt_live" = 1 ]; then
 	# root check (only for live mode, for offline mode, we already checked if we could read the files)
 	if [ "$(id -u)" -ne 0 ]; then
@@ -1802,8 +1821,8 @@ if [ "$opt_live" = 1 ]; then
 		# specified by user on cmdline, with --live, don't override
 		:
 	# first, look for the BOOT_IMAGE hint in the kernel cmdline
-	elif [ -r "$procfs/cmdline" ] && grep -q 'BOOT_IMAGE=' "$procfs/cmdline"; then
-		opt_kernel=$(grep -Eo 'BOOT_IMAGE=[^ ]+' "$procfs/cmdline" | cut -d= -f2)
+	elif echo "$kernel_cmdline" | grep -q 'BOOT_IMAGE='; then
+		opt_kernel=$(echo "$kernel_cmdline" | grep -Eo 'BOOT_IMAGE=[^ ]+' | cut -d= -f2)
 		_debug "found opt_kernel=$opt_kernel in $procfs/cmdline"
 		# if the boot partition is within a btrfs subvolume, strip the subvolume name
 		# if /boot is a separate subvolume, the remainder of the code in this section should handle it
@@ -3767,7 +3786,7 @@ check_CVE_2017_5754_linux()
 				if [ -n "$kpti_support" ]; then
 					if [ -e "/sys/kernel/debug/x86/pti_enabled" ]; then
 						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > /sys/kernel/debug/x86/pti_enabled\`"
-					elif grep -q -w -e nopti -e pti=off "$procfs/cmdline"; then
+					elif echo "$kernel_cmdline" | grep -q -w -e nopti -e pti=off; then
 						explain "Your kernel supports PTI but it has been disabled on command-line, remove the nopti or pti=off option from your bootloader configuration"
 					else
 						explain "Your kernel supports PTI but it has been disabled, check \`dmesg\` right after boot to find clues why the system disabled it"
