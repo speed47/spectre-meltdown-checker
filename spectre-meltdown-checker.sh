@@ -1733,7 +1733,7 @@ get_cmdline()
 		kernel_cmdline="$SMC_MOCK_CMDLINE"
 		return
 	else
-		kernel_cmdline=$(cat "$procfs/cpuinfo")
+		kernel_cmdline=$(cat "$procfs/cmdline")
 		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CMDLINE='$kernel_cmdline'")
 	fi
 }
@@ -1865,6 +1865,12 @@ if [ "$opt_live" = 1 ]; then
 		str_uname=$(uname -r)
 		clear_linux_kernel="/lib/kernel/org.clearlinux.${str_uname##*.}.${str_uname%.*}"
 		[ -e "$clear_linux_kernel" ] && opt_kernel=$clear_linux_kernel
+		# Custom Arch seems to have the kernel path in its cmdline in the form "\directory\kernelimage",
+		# with actual \'s instead of /'s:
+		custom_arch_kernel=$(echo "$kernel_cmdline" | grep -Eo "(^|\s)\\\\[\\\\a-zA-Z0-9_.-]+" | tr "\\\\" "/" | tr -d '[:space:]')
+		if [ -n "$custom_arch_kernel" ] && [ -e "$custom_arch_kernel" ]; then
+			opt_kernel="$custom_arch_kernel"
+		fi
 	fi
 
 	# system.map
