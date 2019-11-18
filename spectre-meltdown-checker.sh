@@ -2446,7 +2446,7 @@ check_cpu()
 		_info_nol "    * CPU indicates SSBD capability: "
 		read_cpuid 0x80000008 $EBX 24 1 1; ret24=$?
 		read_cpuid 0x80000008 $EBX 25 1 1; ret25=$?
-		
+
 		if [ $ret24 -eq 0 ]; then
 			cpuid_ssbd='HYGON SSBD in SPEC_CTRL'
 			#hygon cpuid_ssbd_spec_ctrl=1
