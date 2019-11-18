@@ -1,0 +1,56 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: install prerequisites
+      run: sudo apt-get install -y shellcheck jq
+    - name: shellcheck
+      run: shellcheck -s sh spectre-meltdown-checker.sh
+    - name: check indentation
+      run: |
+        if [ $(grep -cPv "^\t*\S|^$" spectre-meltdown-checker.sh) != 0 ]; then
+          echo "Badly indented lines found:"
+          grep -nPv "^\t*\S|^$" spectre-meltdown-checker.sh
+          exit 1
+        else
+          echo "Indentation seems correct."
+        fi
+    - name: check direct execution
+      run: |
+        expected=13
+        nb=$(sudo ./spectre-meltdown-checker.sh --batch json | jq '.[]|.CVE' | wc -l)
+        if [ "$nb" -ne "$expected" ]; then
+          echo "Invalid number of CVEs reported: $nb instead of $expected"
+          exit 1
+        else
+          echo "OK $nb CVEs reported"
+        fi
+    - name: check docker-compose run execution
+      run: |
+        expected=13
+        docker-compose build
+        nb=$(docker-compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
+        if [ "$nb" -ne "$expected" ]; then
+          echo "Invalid number of CVEs reported: $nb instead of $expected"
+          exit 1
+        else
+          echo "OK $nb CVEs reported"
+        fi
+    - name: check docker run execution
+      run: |
+        expected=13
+        docker build -t spectre-meltdown-checker .
+        nb=$(docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
+        if [ "$nb" -ne "$expected" ]; then
+          echo "Invalid number of CVEs reported: $nb instead of $expected"
+          exit 1
+        else
+          echo "OK $nb CVEs reported"
+        fi
