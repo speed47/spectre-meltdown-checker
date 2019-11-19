@@ -1176,7 +1176,7 @@ mount_debugfs()
 load_msr()
 {
 	if [ "$os" = Linux ]; then
-		if ! grep -e msr "$procfs/modules" 2>/dev/null; then
+		if ! grep -qw msr "$procfs/modules" 2>/dev/null; then
 			modprobe msr 2>/dev/null && insmod_msr=1
 			_debug "attempted to load module msr, insmod_msr=$insmod_msr"
 		else
@@ -1195,7 +1195,7 @@ load_msr()
 load_cpuid()
 {
 	if [ "$os" = Linux ]; then
-		if ! grep -e cpuid "$procfs/modules" 2>/dev/null; then
+		if ! grep -qw cpuid "$procfs/modules" 2>/dev/null; then
 			modprobe cpuid 2>/dev/null && insmod_cpuid=1
 			_debug "attempted to load module cpuid, insmod_cpuid=$insmod_cpuid"
 		else
