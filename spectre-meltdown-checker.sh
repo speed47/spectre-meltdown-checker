@@ -1111,6 +1111,7 @@ try_decompress()
 		_debug "try_decompress: magic for $3 found at offset $pos"
 		if ! command -v "$3" >/dev/null 2>&1; then
 			kernel_err="missing '$3' tool, please install it, usually it's in the '$5' package"
+			_debug "try_decompress: $kernel_err"
 			return 0
 		fi
 		pos=${pos%%:*}
@@ -1144,6 +1145,7 @@ extract_kernel()
 
 	# Initial attempt for uncompressed images or objects:
 	if check_kernel "$1"; then
+		_debug "extract_kernel: found kernel is valid, no decompression needed"
 		cat "$1" > "$kerneltmp"
 		kernel=$kerneltmp
 		return 0
@@ -4131,6 +4133,10 @@ check_CVE_2018_3620_linux()
 	if [ "$opt_sysfs_only" != 1 ]; then
 		_info_nol "* Kernel supports PTE inversion: "
 		if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'strings' tool, please install it"
+			pteinv_supported=-1
+		elif [ -n "$kernel_err" ]; then
+			pstatus yellow UNKNOWN "$kernel_err"
 			pteinv_supported=-1
 		else
 			if "${opt_arch_prefix}strings" "$kernel" | grep -Fq 'PTE Inversion'; then
