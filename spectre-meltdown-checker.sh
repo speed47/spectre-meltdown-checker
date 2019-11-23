@@ -3973,7 +3973,8 @@ check_CVE_2018_3639_linux()
 
 			if [ "$kernel_ssbd_enabled" = 1 ]; then
 				_info_nol "* SSB mitigation currently active for selected processes: "
-				mitigated_processes=$(grep -El 'Speculation.?Store.?Bypass:[[:space:]]+thread (force )?mitigated' /proc/*/status \
+				# silence grep's stderr here to avoid ENOENT errors from processes that have exited since the shell's expansion of the *
+				mitigated_processes=$(grep -El 'Speculation.?Store.?Bypass:[[:space:]]+thread (force )?mitigated' /proc/*/status 2>/dev/null \
 					| sed s/status/exe/ | xargs -r -n1 readlink -f | xargs -r -n1 basename | sort -u | tr "\n" " " | sed 's/ $//')
 				if [ -n "$mitigated_processes" ]; then
 					pstatus green YES "$mitigated_processes"
