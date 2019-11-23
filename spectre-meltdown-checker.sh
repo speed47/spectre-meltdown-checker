@@ -90,8 +90,9 @@ show_usage()
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor (for CVE-2018-3646), default: auto
-		--update-mcedb		update our local copy of the CPU microcodes versions database (from the awesome MCExtractor project)
-		--update-builtin-mcedb	same as --update-mcedb but update builtin DB inside the script itself
+		--update-fwdb		update our local copy of the CPU microcodes versions database (using the awesome MCExtractor project
+					and the Intel firmwares GitHub repository)
+		--update-builtin-fwdb	same as --update-fwdb but update builtin DB inside the script itself
 		--dump-mock-data	used to mimick a CPU on an other system, mainly used to help debugging this script
 
 	Return codes:
@@ -707,7 +708,7 @@ show_header()
 
 [ -z "$HOME" ] && HOME="$(getent passwd "$(whoami)" | cut -d: -f6)"
 mcedb_cache="$HOME/.mcedb"
-update_mcedb()
+update_fwdb()
 {
 	show_header
 
@@ -915,11 +916,11 @@ while [ -n "$1" ]; do
 		# deprecated, kept for compatibility
 		opt_explain=0
 		shift
-	elif [ "$1" = "--update-mcedb" ]; then
-		update_mcedb
+	elif [ "$1" = "--update-fwdb" ] || [ "$1" = "--update-mcedb" ]; then
+		update_fwdb
 		exit $?
-	elif [ "$1" = "--update-builtin-mcedb" ]; then
-		update_mcedb builtin
+	elif [ "$1" = "--update-builtin-fwdb" ] || [ "$1" = "--update-builtin-mcedb" ]; then
+		update_fwdb builtin
 		exit $?
 	elif [ "$1" = "--dump-mock-data" ]; then
 		opt_mock=1
@@ -1751,10 +1752,10 @@ is_xen_domU()
 
 if [ -r "$mcedb_cache" ]; then
 	mcedb_source="$mcedb_cache"
-	mcedb_info="local MCExtractor DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
+	mcedb_info="local firmwares DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
 else
 	mcedb_source="$0"
-	mcedb_info="builtin MCExtractor DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
+	mcedb_info="builtin firmwares DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
 fi
 read_mcedb()
 {
@@ -5000,11 +5001,8 @@ fi
 exit 0  # ok
 
 # We're using MCE.db from the excellent platomav's MCExtractor project
-# The builtin version follows, but the user can download an up-to-date copy (to be stored in his $HOME) by using --update-mcedb
-# To update the builtin version itself (by *modifying* this very file), use --update-builtin-mcedb
-
-# wget https://github.com/platomav/MCExtractor/raw/master/MCE.db
-# sqlite3 MCE.db "select '%%% MCEDB v'||revision||' - '||strftime('%Y/%m/%d', date, 'unixepoch') from MCE; select '# I,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from Intel group by cpuid order by cpuid asc; select '# A,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from AMD group by cpuid order by cpuid asc"
+# The builtin version follows, but the user can download an up-to-date copy (to be stored in his $HOME) by using --update-fwdb
+# To update the builtin version itself (by *modifying* this very file), use --update-builtin-fwdb
 
 # %%% MCEDB v130.20191104+i20191027
 # I,0x00000611,0x00000B27,19961218
