@@ -1750,12 +1750,21 @@ is_xen_domU()
 	fi
 }
 
+builtin_dbversion=$(awk '/^# %%% MCEDB / { print $4 }' "$0")
 if [ -r "$mcedb_cache" ]; then
-	mcedb_source="$mcedb_cache"
-	mcedb_info="local firmwares DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
-else
+	# we have a local cache file, but it might be older than the builtin version we have
+	local_dbversion=$(  awk '/^# %%% MCEDB / { print $4 }' "$mcedb_cache")
+	# sort -V sorts by version number
+	older_dbversion=$(printf "%b\n%b" "$local_dbversion" "$builtin_dbversion" | sort -V | head -n1)
+	if [ "$older_dbversion" = "$builtin_dbversion" ]; then
+		mcedb_source="$mcedb_cache"
+		mcedb_info="local firmwares DB $local_dbversion"
+	fi
+fi
+# if mcedb_source is not set, either we don't have a local cached db, or it is older than the builtin db
+if [ -z "$mcedb_source" ]; then
 	mcedb_source="$0"
-	mcedb_info="builtin firmwares DB "$(grep -E '^# %%% MCEDB ' "$mcedb_source" | cut -c13-)
+	mcedb_info="builtin firmwares DB $builtin_dbversion"
 fi
 read_mcedb()
 {
