@@ -1070,14 +1070,14 @@ kernel_err=''
 check_kernel()
 {
 	_file="$1"
-	_desperate_mode="$2"
+	_mode="$2"
 	# checking the return code of readelf -h is not enough, we could get
 	# a damaged ELF file and validate it, check for stderr warnings too
 	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$_file" 2>&1 >/dev/null | tr "\n" "/"); ret=$?
 	_readelf_sections=$("${opt_arch_prefix}readelf" -S "$_file" 2>/dev/null | grep -c -e data -e text -e init)
 	_kernel_size=$(stat -c %s "$_file" 2>/dev/null || stat -f %z "$_file" 2>/dev/null || echo 10000)
 	_debug "check_kernel: ret=$? size=$_kernel_size sections=$_readelf_sections warnings=$_readelf_warnings"
-	if [ -n "$_desperate_mode" ]; then
+	if [ "$_mode" = desperate ]; then
 		if "${opt_arch_prefix}strings" "$_file" | grep -Eq '^Linux version '; then
 			_debug "check_kernel (desperate): ... matched!"
 			return 0
@@ -1110,9 +1110,17 @@ try_decompress()
 	do
 		_debug "try_decompress: magic for $3 found at offset $pos"
 		if ! command -v "$3" >/dev/null 2>&1; then
-			kernel_err="missing '$3' tool, please install it, usually it's in the '$5' package"
-			_debug "try_decompress: $kernel_err"
-			return 0
+			if [ "$8" = 1 ]; then
+				# pass1: if the tool is not installed, just bail out silently
+				# and hope that the next decompression tool will be, and that
+				# it'll happen to be the proper one for this kernel
+				_debug "try_decompress: the '$3' tool is not installed (pass 1), try the next algo"
+			else
+				# pass2: if the tool is not installed, populate kernel_err this time
+				kernel_err="missing '$3' tool, please install it, usually it's in the '$5' package"
+				_debug "try_decompress: $kernel_err"
+			fi
+			return 1
 		fi
 		pos=${pos%%:*}
 		# shellcheck disable=SC2086
@@ -1152,16 +1160,20 @@ extract_kernel()
 	fi
 
 	# That didn't work, so retry after decompression.
-	for mode in '' 'desperate'; do
-		try_decompress '\037\213\010'     xy    gunzip  ''      gunzip      "$1" "$mode" && return 0
-		try_decompress '\3757zXZ\000'     abcde unxz    ''      xz-utils    "$1" "$mode" && return 0
-		try_decompress 'BZh'              xy    bunzip2 ''      bzip2       "$1" "$mode" && return 0
-		try_decompress '\135\0\0\0'       xxx   unlzma  ''      xz-utils    "$1" "$mode" && return 0
-		try_decompress '\211\114\132'     xy    'lzop'  '-d'    lzop        "$1" "$mode" && return 0
-		try_decompress '\002\041\114\030' xyy   'lz4'   '-d -l' liblz4-tool "$1" "$mode" && return 0
-		try_decompress '\177ELF'          xxy   'cat'   ''      cat         "$1" "$mode" && return 0
+	for pass in 1 2; do
+		for mode in normal desperate; do
+			_debug "extract_kernel: pass $pass $mode mode"
+			try_decompress '\037\213\010'     xy    gunzip  ''      gunzip      "$1" "$mode" "$pass" && return 0
+			try_decompress '\002\041\114\030' xyy   'lz4'   '-d -l' liblz4-tool "$1" "$mode" "$pass" && return 0
+			try_decompress '\3757zXZ\000'     abcde unxz    ''      xz-utils    "$1" "$mode" "$pass" && return 0
+			try_decompress 'BZh'              xy    bunzip2 ''      bzip2       "$1" "$mode" "$pass" && return 0
+			try_decompress '\135\0\0\0'       xxx   unlzma  ''      xz-utils    "$1" "$mode" "$pass" && return 0
+			try_decompress '\211\114\132'     xy    'lzop'  '-d'    lzop        "$1" "$mode" "$pass" && return 0
+			try_decompress '\177ELF'          xxy   'cat'   ''      cat         "$1" "$mode" "$pass" && return 0
+		done
 	done
-	_verbose "Couldn't extract the kernel image, accuracy might be reduced"
+	kernel_err="kernel compression format is unknown or image is invalid"
+	_verbose "Couldn't extract the kernel image ($kernel_err), accuracy might be reduced"
 	return 1
 }
 
