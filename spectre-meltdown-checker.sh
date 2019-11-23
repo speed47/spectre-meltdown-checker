@@ -22,6 +22,7 @@ exit_cleanup()
 	[ -n "$kerneltmp"     ] && [ -f "$kerneltmp"     ] && rm -f "$kerneltmp"
 	[ -n "$kerneltmp2"    ] && [ -f "$kerneltmp2"    ] && rm -f "$kerneltmp2"
 	[ -n "$mcedb_tmp"     ] && [ -f "$mcedb_tmp"     ] && rm -f "$mcedb_tmp"
+	[ -n "$intel_tmp"     ] && [ -f "$intel_tmp"     ] && rm -rf "$intel_tmp"
 	[ "$mounted_debugfs" = 1 ] && umount /sys/kernel/debug 2>/dev/null
 	[ "$mounted_procfs"  = 1 ] && umount "$procfs" 2>/dev/null
 	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
@@ -708,14 +709,13 @@ show_header()
 mcedb_cache="$HOME/.mcedb"
 update_mcedb()
 {
-	# We're using MCE.db from the excellent platomav's MCExtractor project
 	show_header
 
 	if [ -r "$mcedb_cache" ]; then
-		previous_mcedb_revision=$(awk '/^# %%% MCEDB / { print $4 }' "$mcedb_cache")
+		previous_dbversion=$(awk '/^# %%% MCEDB / { print $4 }' "$mcedb_cache")
 	fi
 
-	# first download the database
+	# first, download the MCE.db from the excellent platomav's MCExtractor project
 	mcedb_tmp="$(mktemp /tmp/mcedb-XXXXXX)"
 	mcedb_url='https://github.com/platomav/MCExtractor/raw/master/MCE.db'
 	_info_nol "Fetching MCE.db from the MCExtractor project... "
@@ -735,8 +735,29 @@ update_mcedb()
 	fi
 	echo DONE
 
-	# now extract contents using sqlite
-	_info_nol "Extracting data... "
+	# second, get the Intel firmwares from GitHub
+	intel_tmp="$(mktemp -d /tmp/intelfw-XXXXXX)"
+	intel_url="https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/archive/master.zip"
+	_info_nol "Fetching Intel firmwares... "
+	## https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files.git
+	if command -v wget >/dev/null 2>&1; then
+		wget -q "$intel_url" -O "$intel_tmp/fw.zip"; ret=$?
+	elif command -v curl >/dev/null 2>&1; then
+		curl -sL "$intel_url" -o "$intel_tmp/fw.zip"; ret=$?
+	elif command -v fetch >/dev/null 2>&1; then
+		fetch -q "$intel_url" -o "$intel_tmp/fw.zip"; ret=$?
+	else
+		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
+		return 1
+	fi
+	if [ "$ret" != 0 ]; then
+		echo ERROR "error $ret while downloading Intel firmwares"
+		return $ret
+	fi
+	echo DONE
+
+	# now extract MCEdb contents using sqlite
+	_info_nol "Extracting MCEdb data... "
 	if ! command -v sqlite3 >/dev/null 2>&1; then
 		echo ERROR "please install the \`sqlite3\` program"
 		return 1
@@ -747,17 +768,68 @@ update_mcedb()
 		echo ERROR "downloaded file seems invalid"
 		return 1
 	fi
+
 	echo OK "MCExtractor database revision $mcedb_revision dated $mcedb_date"
-	if [ -n "$previous_mcedb_revision" ]; then
-		if [ "$previous_mcedb_revision" = "v$mcedb_revision" ]; then
-			echo "We already have this version locally, no update needed"
-			[ "$1" != builtin ] && return 0
-		fi
+
+	# parse Intel firmwares to get their versions
+	_info_nol "Integrating Intel firmwares data to db... "
+	if ! command -v unzip >/dev/null 2>&1; then
+		echo ERROR "please install the \`unzip\` program"
+		return 1
 	fi
-	echo "# Spectre & Meltdown Checker" > "$mcedb_cache"
-	echo "# %%% MCEDB v$mcedb_revision - $mcedb_date" >> "$mcedb_cache"
-	sqlite3 "$mcedb_tmp" "select '# I,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from Intel group by cpuid order by cpuid asc; select '# A,0x'||cpuid||',0x'||version||','||max(yyyymmdd) from AMD group by cpuid order by cpuid asc" | grep -v '^# .,0x00000000,' >> "$mcedb_cache"
-	echo OK "local version updated"
+	( cd "$intel_tmp" && unzip fw.zip >/dev/null; )
+	if ! [ -d "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-master/intel-ucode" ]; then
+		echo ERROR "expected the 'intel-ucode' folder in the downloaded zip file"
+		return 1
+	fi
+
+	if ! command -v iucode_tool >/dev/null 2>&1; then
+		if ! command -v iucode-tool >/dev/null 2>&1; then
+			echo ERROR "please install the \`iucode-tool\` program"
+			return 1
+		else
+			iucode_tool="iucode-tool"
+		fi
+	else
+		iucode_tool="iucode_tool"
+	fi
+	#  079/001: sig 0x000106c2, pf_mask 0x01, 2009-04-10, rev 0x0217, size 5120
+	#  078/004: sig 0x000106ca, pf_mask 0x10, 2009-08-25, rev 0x0107, size 5120
+	$iucode_tool -l "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-master/intel-ucode" | grep -wF sig | while read -r _line
+	do
+		_line=$(   echo "$_line" | tr -d ',')
+		_cpuid=$(  echo "$_line" | awk '{print $3}')
+		_cpuid=$(( _cpuid ))
+		_cpuid=$(printf "0x%08X" "$_cpuid")
+		_date=$(   echo "$_line" | awk '{print $6}' | tr -d '-')
+		_version=$(echo "$_line" | awk '{print $8}')
+		_version=$(( _version ))
+		_version=$(printf "0x%08X" "$_version")
+		_sqlstm="$(printf "INSERT INTO Intel (cpuid,version,yyyymmdd) VALUES (\"%s\",\"%s\",\"%s\");" "$(printf "%08X" "$_cpuid")" "$(printf "%08X" "$_version")" "$_date")"
+		sqlite3 "$mcedb_tmp" "$_sqlstm"
+	done
+	_intel_latest_date=$(sqlite3 "$mcedb_tmp" "SELECT yyyymmdd from Intel ORDER BY yyyymmdd DESC LIMIT 1;")
+	echo DONE "(version $_intel_latest_date)"
+
+	dbdate=$(echo "$mcedb_date" | tr -d '/')
+	if [ "$dbdate" -lt "$_intel_latest_date" ]; then
+		dbdate="$_intel_latest_date"
+	fi
+	dbversion="$mcedb_revision.$dbdate+i$_intel_latest_date"
+
+	if [ "$1" != builtin ] && [ -n "$previous_dbversion" ] && [ "$previous_dbversion" = "v$dbversion" ]; then
+		echo "We already have this version locally, no update needed"
+		return 0
+	fi
+
+	_info_nol "Building local database... "
+	{
+		echo "# Spectre & Meltdown Checker";
+		echo "# %%% MCEDB v$dbversion";
+		sqlite3 "$mcedb_tmp" "SELECT '# I,0x'||t1.cpuid||',0x'||MAX(t1.version)||','||t1.yyyymmdd FROM Intel AS t1 LEFT OUTER JOIN Intel AS t2 ON t2.cpuid=t1.cpuid AND t2.yyyymmdd > t1.yyyymmdd WHERE t2.yyyymmdd IS NULL GROUP BY t1.cpuid ORDER BY t1.cpuid ASC;" | grep -v '^# .,0x00000000,';
+		sqlite3 "$mcedb_tmp" "SELECT '# A,0x'||t1.cpuid||',0x'||MAX(t1.version)||','||t1.yyyymmdd FROM AMD   AS t1 LEFT OUTER JOIN AMD   AS t2 ON t2.cpuid=t1.cpuid AND t2.yyyymmdd > t1.yyyymmdd WHERE t2.yyyymmdd IS NULL GROUP BY t1.cpuid ORDER BY t1.cpuid ASC;" | grep -v '^# .,0x00000000,';
+	} > "$mcedb_cache"
+	echo DONE "(version $dbversion)"
 
 	if [ "$1" = builtin ]; then
 		newfile=$(mktemp /tmp/smc-XXXXXX)
