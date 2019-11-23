@@ -1199,7 +1199,9 @@ check_kernel()
 	_mode="$2"
 	# checking the return code of readelf -h is not enough, we could get
 	# a damaged ELF file and validate it, check for stderr warnings too
-	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$_file" 2>&1 >/dev/null | tr "\n" "/"); ret=$?
+
+	# the warning "readelf: Warning: [16]: Link field (0) should index a symtab section./" can appear on valid kernels, ignore it
+	_readelf_warnings=$("${opt_arch_prefix}readelf" -S "$_file" 2>&1 >/dev/null | grep -v 'should index a symtab section' | tr "\n" "/"); ret=$?
 	_readelf_sections=$("${opt_arch_prefix}readelf" -S "$_file" 2>/dev/null | grep -c -e data -e text -e init)
 	_kernel_size=$(stat -c %s "$_file" 2>/dev/null || stat -f %z "$_file" 2>/dev/null || echo 10000)
 	_debug "check_kernel: ret=$? size=$_kernel_size sections=$_readelf_sections warnings=$_readelf_warnings"
@@ -3227,6 +3229,33 @@ check_CVE_2017_5753_linux()
 			if [ "$ret" -eq 9 ]; then
 				pstatus green YES "mask_nospec64 macro is present and used"
 				v1_mask_nospec="arm64 mask_nospec64"
+			else
+				pstatus yellow NO
+			fi
+		fi
+
+		_info_nol "* Kernel has array_index_nospec (arm64): "
+		# in 4.19+ kernels, the mask_nospec64 asm64 macro is replaced by array_index_nospec, defined in nospec.h, and used in invoke_syscall()
+		# ffffff8008090a4c:       2a0203e2        mov     w2, w2
+		# ffffff8008090a50:       eb0200bf        cmp     x5, x2
+		# ffffff8008090a54:       da1f03e2        ngc     x2, xzr
+		# ffffff8008090a58:       d503229f        hint    #0x14
+		# /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
+		#
+		# if we have v1_mask_nospec or redhat_canonical_spectre>0, don't bother disassembling the kernel, the answer is no.
+		if [ -n "$v1_mask_nospec" ] || [ "$redhat_canonical_spectre" -gt 0 ]; then
+			pstatus yellow NO
+		elif [ -n "$kernel_err" ]; then
+			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
+		elif ! command -v perl >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
+		elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+		else
+			"${opt_arch_prefix}objdump" -d "$kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\smov\s+(w\d+),\s+(w\d+)/ && $r[1]=~/\scmp\s+(x\d+),\s+(x\d+)/ && $r[2]=~/\sngc\s+$2,/ && exit(9); shift @r if @r>3'; ret=$?
+			if [ "$ret" -eq 9 ]; then
+				pstatus green YES "array_index_nospec macro is present and used"
+				v1_mask_nospec="arm64 array_index_nospec"
 			else
 				pstatus yellow NO
 			fi
