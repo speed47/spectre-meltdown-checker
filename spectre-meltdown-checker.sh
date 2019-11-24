@@ -1156,6 +1156,12 @@ check_kernel()
 	if [ "$_mode" = desperate ]; then
 		if "${opt_arch_prefix}strings" "$_file" | grep -Eq '^Linux version '; then
 			_debug "check_kernel (desperate): ... matched!"
+			if [ "$_readelf_sections" = 0 ] && grep -qF -e armv6 -e armv7 "$_file"; then
+				_debug "check_kernel (desperate): raw arm binary found, adjusting objdump options"
+				objdump_options="-D -b binary -marm"
+			else
+				objdump_options="-d"
+			fi
 			return 0
 		else
 			_debug "check_kernel (desperate): ... invalid"
@@ -1164,6 +1170,7 @@ check_kernel()
 		if [ $ret -eq 0 ] && [ -z "$_readelf_warnings" ] && [ "$_readelf_sections" -gt 0 ]; then
 			if [ "$_kernel_size" -ge 100000 ]; then
 				_debug "check_kernel: ... file is valid"
+				objdump_options="-d"
 				return 0
 			else
 				_debug "check_kernel: ... file seems valid but is too small, ignoring"
@@ -2994,7 +3001,7 @@ check_CVE_2017_5753_linux()
 					pstatus green YES "$ret occurrence(s) found of x86 32 bits array_index_mask_nospec()"
 					v1_mask_nospec="x86 32 bits array_index_mask_nospec"
 				else
-					ret=$("${opt_arch_prefix}objdump" -d "$kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
+					ret=$("${opt_arch_prefix}objdump" $objdump_options "$kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
 					if [ "$ret" -gt 0 ]; then
 						pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
 						v1_mask_nospec="arm 32 bits array_index_mask_nospec"
@@ -3043,7 +3050,7 @@ check_CVE_2017_5753_linux()
 		elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
 			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
 		else
-			"${opt_arch_prefix}objdump" -d "$kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'; ret=$?
+			"${opt_arch_prefix}objdump" $objdump_options "$kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'; ret=$?
 			if [ "$ret" -eq 9 ]; then
 				pstatus green YES "mask_nospec64 macro is present and used"
 				v1_mask_nospec="arm64 mask_nospec64"
@@ -3096,7 +3103,7 @@ check_CVE_2017_5753_linux()
 					# so let's push the threshold to 70.
 					# v0.33+: now only count lfence opcodes after a jump, way less error-prone
 					# non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
-					nb_lfence=$("${opt_arch_prefix}objdump" -d "$kernel" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
+					nb_lfence=$("${opt_arch_prefix}objdump" $objdump_options "$kernel" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
 					if [ "$nb_lfence" -lt 30 ]; then
 						pstatus yellow NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
 					else
