@@ -393,11 +393,20 @@ is_cpu_vulnerable()
 			[ -z "$variant4" ] && variant4=immune
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
-		# variant 4a for xeon phi
+		# variant 3a
 		if [ "$cpu_family" = 6 ]; then
 			if [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] || [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
 				_debug "is_cpu_vulnerable: xeon phi immune to variant 3a"
 				[ -z "$variant3a" ] && variant3a=immune
+			elif [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_X" ]; then
+					# https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00115.html
+					# https://github.com/speed47/spectre-meltdown-checker/issues/310
+					# => silvermont CPUs (aka cherry lake for tablets and brawsell for mobile/desktop) don't seem to be vulnerable
+					# => goldmont ARE vulnerable
+					_debug "is_cpu_vulnerable: silvermont immune to variant 3a"
+					[ -z "$variant3a" ] && variant3a=immune
 			fi
 		fi
 		# L1TF (RDCL_NO already checked above)
