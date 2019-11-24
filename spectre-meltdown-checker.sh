@@ -2181,6 +2181,7 @@ write_msr()
 	if [ -n "$(eval echo \$$_mockvarname)" ]; then
 		_debug "write_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
 		mocked=1
+		[ "$(eval echo \$$_mockvarname)" = 202 ] && msr_locked_down=1
 		return "$(eval echo \$$_mockvarname)"
 	fi
 
@@ -2200,18 +2201,6 @@ write_msr()
 			_debug "write_msr: using perl"
 			ret=1
 			perl -e "open(M,'>','/dev/cpu/$_cpu/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
-			if [ "$ret" = 1 ]; then
-				# Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
-				# when this mode is enabled and EFI secure boot is enabled (see issue #303)
-				# https://src.fedoraproject.org/rpms/kernel/blob/master/f/efi-lockdown.patch
-				# when this happens, any write will fail and dmesg will have a msg printed "msr: Direct access to MSR"
-				# we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
-				if dmesg | grep -qF "msr: Direct access to MSR"; then
-					_debug "write_msr: locked down kernel detected"
-					mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=202")
-					return 202 # lockdown error
-				fi
-			fi
 		# fallback to dd if it supports seek_bytes
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; then
 			_debug "write_msr: using dd"
@@ -2220,6 +2209,19 @@ write_msr()
 			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
 			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=201")
 			return 201 # missing tool error
+		fi
+		if [ "$ret" = 1 ]; then
+			# Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
+			# when this mode is enabled and EFI secure boot is enabled (see issue #303)
+			# https://src.fedoraproject.org/rpms/kernel/blob/master/f/efi-lockdown.patch
+			# when this happens, any write will fail and dmesg will have a msg printed "msr: Direct access to MSR"
+			# we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
+			if dmesg | grep -qF "msr: Direct access to MSR"; then
+				_debug "write_msr: locked down kernel detected"
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=202")
+				msr_locked_down=1
+				return 202 # lockdown error
+			fi
 		fi
 	fi
 	# normalize ret
@@ -2643,6 +2645,7 @@ check_cpu()
 	read_cpuid 0x7 $EDX 28 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
 		pstatus green YES "L1D flush feature bit"
+		cpuid_l1df=1
 	elif [ $ret -eq 1 ]; then
 		pstatus yellow NO
 	elif [ $ret -eq 2 ]; then
@@ -4205,10 +4208,15 @@ check_CVE_2018_3615()
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
 	_info_nol "* CPU microcode mitigates the vulnerability: "
-	if [ "$cpu_flush_cmd" = 1 ] && [ "$cpuid_sgx" = 1 ]; then
+	if ( [ "$cpu_flush_cmd" = 1 ] || ( [ "$msr_locked_down" = 1 ] && [ "$cpuid_l1df" = 1 ] ) ) && [ "$cpuid_sgx" = 1 ]; then
 		# no easy way to detect a fixed SGX but we know that
 		# microcodes that have the FLUSH_CMD MSR also have the
-		# fixed SGX (for CPUs that support it)
+		# fixed SGX (for CPUs that support it), because Intel
+		# delivered fixed microcodes for both issues at the same time
+		#
+		# if the system we're running on is locked down (no way to write MSRs),
+		# make the assumption that if the L1D flush CPUID bit is set, probably
+		# that FLUSH_CMD MSR is here too
 		pstatus green YES
 	elif [ "$cpuid_sgx" = 1 ]; then
 		pstatus red NO
@@ -4219,7 +4227,7 @@ check_CVE_2018_3615()
 	if ! is_cpu_vulnerable "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
-	elif [ "$cpu_flush_cmd" = 1 ]; then
+	elif [ "$cpu_flush_cmd" = 1 ] || ( [ "$msr_locked_down" = 1 ] && [ "$cpuid_l1df" = 1 ] ) ; then
 		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
 	else
 		pvulnstatus $cve VULN "your CPU supports SGX and the microcode is not up to date"
