@@ -682,7 +682,7 @@ is_cpu_taa_free()
 	if ! is_intel; then
 		return 0
 	# is intel
-	elif [ "$capabilities_taa_no" = 0 ] || [ "$cpuid_rtm" = 0 ]; then
+	elif [ "$capabilities_taa_no" = 1 ] || [ "$cpuid_rtm" = 0 ]; then
 		return 0
 	fi
 
