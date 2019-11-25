@@ -2319,15 +2319,15 @@ read_msr()
 			return 200 # permission error
 		# if rdmsr is available, use it
 		elif command -v rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
-			_debug "read_msr: using rdmsr"
+			_debug "read_msr: using rdmsr on $_msr"
 			read_msr_value=$(rdmsr -r $_msr_dec 2>/dev/null | od -t u8 -A n)
 		# or if we have perl, use it, any 5.x version will work
 		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
-			_debug "read_msr: using perl"
+			_debug "read_msr: using perl on $_msr"
 			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
 		# fallback to dd if it supports skip_bytes
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null; then
-			_debug "read_msr: using dd"
+			_debug "read_msr: using dd on $_msr"
 			read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
 		else
 			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
@@ -2710,22 +2710,6 @@ check_cpu()
 	fi
 
 	if is_intel; then
-		_info "  * TSX Asynchronous Abort"
-		_info_nol "    * TSX support is available: "
-		read_cpuid 0x7 $EDX 11 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
-			cpuid_rtm=1
-			pstatus green YES "TSX RTM feature bit"
-		elif [ $ret -eq 2 ]; then
-			cpuid_rtm=-1
-			pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		else
-			cpuid_rtm=0
-			pstatus yellow NO
-		fi
-	fi
-
-	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 		cpuid_arch_capabilities=-1
@@ -2750,6 +2734,7 @@ check_cpu()
 		capabilities_l1dflush_no=-1
 		capabilities_ssb_no=-1
 		capabilities_pschange_msc_no=-1
+		capabilities_tsx_ctrl_msr=-1
 		if [ "$cpuid_arch_capabilities" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$cpuid_arch_capabilities" != 1 ]; then
@@ -2761,6 +2746,7 @@ check_cpu()
 			capabilities_l1dflush_no=0
 			capabilities_ssb_no=0
 			capabilities_pschange_msc_no=0
+			capabilities_tsx_ctrl_msr=0
 			pstatus yellow NO
 		elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
 			spec_ctrl_msr=-1
@@ -2795,7 +2781,9 @@ check_cpu()
 			capabilities_l1dflush_no=0
 			capabilities_ssb_no=0
 			capabilities_pschange_msc_no=0
+			capabilities_tsx_ctrl_msr=0
 			if [ $val -eq 0 ]; then
+				# https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/msr-index.h#n82
 				_debug "capabilities MSR is $capabilities (decimal)"
 				[ $(( capabilities >> 0 & 1 )) -eq 1 ] && capabilities_rdcl_no=1
 				[ $(( capabilities >> 1 & 1 )) -eq 1 ] && capabilities_ibrs_all=1
@@ -2804,6 +2792,7 @@ check_cpu()
 				[ $(( capabilities >> 4 & 1 )) -eq 1 ] && capabilities_ssb_no=1
 				[ $(( capabilities >> 5 & 1 )) -eq 1 ] && capabilities_mds_no=1
 				[ $(( capabilities >> 6 & 1 )) -eq 1 ] && capabilities_pschange_msc_no=1
+				[ $(( capabilities >> 7 & 1 )) -eq 1 ] && capabilities_tsx_ctrl_msr=1
 				[ $(( capabilities >> 8 & 1 )) -eq 1 ] && capabilities_taa_no=1
 				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no mds_no=$capabilities_mds_no taa_no=$capabilities_taa_no pschange_msc_no=$capabilities_pschange_msc_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
@@ -2888,6 +2877,58 @@ check_cpu()
 		else
 			pstatus yellow NO
 		fi
+
+		_info_nol "  * CPU explicitly indicates having MSR for TSX control (TSX_CTRL_MSR): "
+		if [ "$capabilities_tsx_ctrl_msr" = -1 ]; then
+			pstatus yellow UNKNOWN
+		elif [ "$capabilities_tsx_ctrl_msr" = 1 ]; then
+			pstatus green YES
+		else
+			pstatus yellow NO
+		fi
+
+		if [ "$capabilities_tsx_ctrl_msr" = 1 ]; then
+			read_msr 0x122 0; ret=$?
+			if [ "$ret" = 0 ]; then
+				tsx_ctrl_msr=$read_msr_value
+				tsx_ctrl_msr_rtm_disable=$(( tsx_ctrl_msr >> 0 & 1 ))
+				tsx_ctrl_msr_cpuid_clear=$(( tsx_ctrl_msr >> 1 & 1 ))
+			fi
+
+			_info_nol "    * TSX_CTRL MSR indicates TSX RTM is disabled: "
+			if [ "$tsx_ctrl_msr_rtm_disable" = 1 ]; then
+				pstatus blue YES
+			elif [ "$tsx_ctrl_msr_rtm_disable" = 0 ]; then
+				pstatus blue NO
+			else
+				pstatus yellow UNKNOWN "couldn't read MSR"
+			fi
+
+			_info_nol "    * TSX_CTRL MSR indicates TSX CPUID bit is cleared: "
+			if [ "$tsx_ctrl_msr_cpuid_clear" = 1 ]; then
+				pstatus blue YES
+			elif [ "$tsx_ctrl_msr_cpuid_clear" = 0 ]; then
+				pstatus blue NO
+			else
+				pstatus yellow UNKNOWN "couldn't read MSR"
+			fi
+		fi
+	fi
+
+	_info_nol "  * CPU supports Transactional Synchronization Extensions (TSX): "
+	ret=1
+	cpuid_rtm=0
+	if is_intel; then
+		read_cpuid 0x7 $EDX 11 1 1; ret=$?
+	fi
+	if [ $ret -eq 0 ]; then
+		cpuid_rtm=1
+		pstatus green YES
+	elif [ $ret -eq 2 ]; then
+		cpuid_rtm=-1
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	else
+		pstatus yellow NO
 	fi
 
 	_info_nol "  * CPU supports Software Guard Extensions (SGX): "
@@ -4285,7 +4326,8 @@ check_CVE_2018_3639_bsd()
 				pvulnstatus $cve OK "SSBD mitigates the vulnerability"
 		elif [ -n "$cpuid_ssbd" ]; then
 			if [ "$kernel_ssb" = 1 ]; then
-				pvulnstatus $cve VULN "you need to enable ssbd through sysctl to mitigate the vulnerability"
+				pvulnstatus $cve VULN "you need to enable SSBD through sysctl to mitigate the vulnerability"
+				explain "To enable SSBD right now, you can run \`sysctl hw.spec_store_bypass_disable=2'. To make this change persistent across reboots, you can add 'sysctl hw.spec_store_bypass_disable=2' to /etc/sysctl.conf."
 			else
 				pvulnstatus $cve VULN "your kernel needs to be updated"
 			fi
@@ -4804,6 +4846,7 @@ check_mds_bsd()
 						fi
 					else
 						pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
+						explain "To enable mitigation, run \`sysctl hw.mds_disable=1'. To make this change persistent across reboots, you can add 'hw.mds_disable=1' to /etc/sysctl.conf."
 					fi
 				else
 					pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation"
