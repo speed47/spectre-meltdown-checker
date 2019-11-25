@@ -15,7 +15,7 @@ A shell script to tell if your system is vulnerable against the several "specula
 - CVE-2018-12127 [microarchitectural load port data sampling (MLPDS)] aka 'RIDL'
 - CVE-2019-11091 [microarchitectural data sampling uncacheable memory (MDSUM)] aka 'RIDL'
 - CVE-2019-11135 [TSX asynchronous abort] aka 'TAA' aka 'ZombieLoad V2'
-- CVE-2018-12207 [iTLB Multihit] aka 'No eXcuses'
+- CVE-2018-12207 [machine check exception on page size changes (MCEPSC)] aka 'No eXcuses' aka 'iTLB Multihit'
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -153,7 +153,7 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Mitigation: microcode update + kernel update making possible to protect various CPU internal buffers from unprivileged speculative access to data
    - Performance impact of the mitigation: low to significant
 
-**CVE-2018-12207** iTLB Multihit (No eXcuses)
+**CVE-2018-12207** machine check exception on page size changes (No eXcuses, iTLB Multihit)
 
    - Impact: Virtualization software and Virtual Machine Monitors
    - Mitigation: disable hugepages use in hypervisor, or update hypervisor to benefit from mitigation

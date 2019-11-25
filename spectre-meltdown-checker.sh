@@ -286,7 +286,7 @@ cve2name()
 		CVE-2018-12127) echo "RIDL, microarchitectural load port data sampling (MLPDS)";;
 		CVE-2019-11091) echo "RIDL, microarchitectural data sampling uncacheable memory (MDSUM)";;
 		CVE-2019-11135) echo "ZombieLoad V2, TSX Asynchronous Abort (TAA)";;
-		CVE-2018-12207) echo "No eXcuses, iTLB Multihit";;
+		CVE-2018-12207) echo "No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -430,34 +430,6 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: intel family < 6 is immune to l1tf"
 			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
-		# iTLB MultiHit
-		# commit f9aa6b73a407b714c9aac44734eb4045c893c6f7
-		if [ "$cpu_model" = 6 ]; then
-			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_TABLET" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_MID" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL_MID" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_MID" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] || \
-				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
-				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune to itlbmh"
-				[ -z "$variantitlbmh" ] && variantitlbmh=immune
-			else
-				_debug "is_cpu_vulnerable: intel family 6 is vuln to itlbmh"
-				variantitlbmh=vuln
-			fi
-		elif [ "$cpu_family" -lt 6 ]; then
-			_debug "is_cpu_vulnerable: intel family < 6 is immune to itlbmh"
-			[ -z "$variantitlbmh" ] && variantitlbmh=immune
-		fi
 	elif is_amd || is_hygon; then
 		# AMD revised their statement about variant2 => vulnerable
 		# https://www.amd.com/en/corporate/speculative-execution
@@ -472,12 +444,10 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
 		variantl1tf=immune
-		variantitlbmh=immune
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		variant3=immune
 		variant3a=immune
 		variantl1tf=immune
-		variantitlbmh=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -566,8 +536,42 @@ is_cpu_vulnerable()
 			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 		variantl1tf=immune
-		variantitlbmh=immune
 	fi
+
+	# we handle iTLB Multihit here (not linked to is_specex_free)
+	if is_intel; then
+		# commit f9aa6b73a407b714c9aac44734eb4045c893c6f7
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_TABLET" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_BONNELL_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
+				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune to itlbmh"
+				[ -z "$variant_itlbmh" ] && variant_itlbmh=immune
+			else
+				_debug "is_cpu_vulnerable: intel family 6 is vuln to itlbmh"
+				variant_itlbmh=vuln
+			fi
+		elif [ "$cpu_family" -lt 6 ]; then
+			_debug "is_cpu_vulnerable: intel family < 6 is immune to itlbmh"
+			[ -z "$variant_itlbmh" ] && variant_itlbmh=immune
+		fi
+	else
+		_debug "is_cpu_vulnerable: non-intel not vulnerable to itlbmh"
+		[ -z "$variant_itlbmh" ] && variant_itlbmh=immune
+	fi
+
 	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
 	[ "$variant1"       = "immune" ] && variant1=1       || variant1=0
 	[ "$variant2"       = "immune" ] && variant2=1       || variant2=0
