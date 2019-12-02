@@ -2923,11 +2923,11 @@ check_cpu()
 	ret=1
 	cpuid_rtm=0
 	if is_intel; then
-		read_cpuid 0x7 $EDX 11 1 1; ret=$?
+		read_cpuid 0x7 $EBX 11 1 1; ret=$?
 	fi
 	if [ $ret -eq 0 ]; then
 		cpuid_rtm=1
-		pstatus green YES
+		pstatus green YES "RTM feature bit"
 	elif [ $ret -eq 2 ]; then
 		cpuid_rtm=-1
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
