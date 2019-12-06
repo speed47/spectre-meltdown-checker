@@ -2255,16 +2255,24 @@ write_msr()
 			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=201")
 			return 201 # missing tool error
 		fi
-		if [ "$ret" = 1 ]; then
-			# Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
+		if [ "$ret" != 0 ]; then
+			# * Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
 			# when this mode is enabled and EFI secure boot is enabled (see issue #303)
 			# https://src.fedoraproject.org/rpms/kernel/blob/master/f/efi-lockdown.patch
 			# when this happens, any write will fail and dmesg will have a msg printed "msr: Direct access to MSR"
-			# we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
+			# * A version of this patch also made it to vanilla in 5.4+, in that case the message is: 'raw MSR access is restricted'
+			# * we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
 			if dmesg | grep -qF "msr: Direct access to MSR"; then
-				_debug "write_msr: locked down kernel detected"
+				_debug "write_msr: locked down kernel detected (Red Hat / Fedora)"
 				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=202")
 				msr_locked_down=1
+				msr_locked_down_msg="your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+				return 202 # lockdown error
+			elif dmesg | grep -qF "raw MSR access is restricted"; then
+				_debug "write_msr: locked down kernel detected (vanilla)"
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=202")
+				msr_locked_down=1
+				msr_locked_down_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
 				return 202 # lockdown error
 			fi
 		fi
@@ -2405,7 +2413,7 @@ check_cpu()
 			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
 			spec_ctrl_msr=-1
 		elif [ $val -eq 202 ]; then
-			pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+			pstatus yellow UNKNOWN "$msr_locked_down_msg"
 			spec_ctrl_msr=-1
 		else
 			spec_ctrl_msr=0
@@ -2498,7 +2506,7 @@ check_cpu()
 		elif [ $val -eq 201 ]; then
 			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
 		elif [ $val -eq 202 ]; then
-			pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+			pstatus yellow UNKNOWN "$msr_locked_down_msg"
 		else
 			pstatus yellow NO
 		fi
@@ -2680,7 +2688,7 @@ check_cpu()
 		elif [ $val -eq 201 ]; then
 			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
 		elif [ $val -eq 202 ]; then
-			pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+			pstatus yellow UNKNOWN "$msr_locked_down_msg"
 		else
 			pstatus yellow NO
 		fi
@@ -2813,7 +2821,7 @@ check_cpu()
 			elif [ $val -eq 201 ]; then
 				pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
 			elif [ $val -eq 202 ]; then
-				pstatus yellow UNKNOWN "your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+				pstatus yellow UNKNOWN "$msr_locked_down_msg"
 			else
 				pstatus yellow NO
 			fi
