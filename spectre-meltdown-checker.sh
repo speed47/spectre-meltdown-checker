@@ -3051,10 +3051,22 @@ check_has_vmm()
 		if command -v pgrep >/dev/null 2>&1; then
 			# remove xenbus and xenwatch, also present inside domU
 			# remove libvirtd as it can also be used to manage containers and not VMs
-			if pgrep qemu >/dev/null || pgrep kvm >/dev/null || \
-				pgrep xenstored >/dev/null || pgrep xenconsoled >/dev/null; then
-				has_vmm=1
-			fi
+			# for each binary we want to grep, get the pids
+			for _binary in qemu kvm xenstored xenconsoled
+			do
+				for _pid in $(pgrep $_binary)
+				do
+					# resolve the exe symlink, if it doesn't resolve with -m,
+					# which doesn't even need the dest to exist, it means the symlink
+					# is null, which is the case for kernel threads: ignore those to
+					# avoid false positives (such as [kvm-irqfd-clean] under at least RHEL 7.6/7.7)
+					if ! [ "$(readlink -m "/proc/$_pid/exe")" = "/proc/$_pid/exe" ]; then
+						_debug "has_vmm: found PID $_pid"
+						has_vmm=1
+					fi
+				done
+			done
+			unset _binary _pid
 		else
 			# ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
 			# shellcheck disable=SC2009
