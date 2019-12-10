@@ -22,7 +22,7 @@ exit_cleanup()
 	[ -n "$kerneltmp"     ] && [ -f "$kerneltmp"     ] && rm -f "$kerneltmp"
 	[ -n "$kerneltmp2"    ] && [ -f "$kerneltmp2"    ] && rm -f "$kerneltmp2"
 	[ -n "$mcedb_tmp"     ] && [ -f "$mcedb_tmp"     ] && rm -f "$mcedb_tmp"
-	[ -n "$intel_tmp"     ] && [ -f "$intel_tmp"     ] && rm -rf "$intel_tmp"
+	[ -n "$intel_tmp"     ] && [ -d "$intel_tmp"     ] && rm -rf "$intel_tmp"
 	[ "$mounted_debugfs" = 1 ] && umount /sys/kernel/debug 2>/dev/null
 	[ "$mounted_procfs"  = 1 ] && umount "$procfs" 2>/dev/null
 	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
