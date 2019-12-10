@@ -10,7 +10,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: install prerequisites
-      run: sudo apt-get install -y shellcheck jq
+      run: sudo apt-get update && sudo apt-get install -y shellcheck jq sqlite3 iucode-tool
     - name: shellcheck
       run: shellcheck -s sh spectre-meltdown-checker.sh
     - name: check indentation
@@ -53,4 +53,21 @@ jobs:
           exit 1
         else
           echo "OK $nb CVEs reported"
+        fi
+    - name: check fwdb update
+      run: |
+        nbtmp1=$(find /tmp 2>/dev/null | wc -l)
+        ./spectre-meltdown-checker.sh --update-fwdb; ret=$?
+        if [ "$ret" != 0 ]; then
+          echo "Non-zero return value: $ret"
+          exit 1
+        fi
+        nbtmp2=$(find /tmp 2>/dev/null | wc -l)
+        if [ "$nbtmp1" != "$nbtmp2" ]; then
+          echo "Left temporary files!"
+          exit 1
+        fi
+        if ! [ -e ~/.mcedb ]; then
+          echo "No .mcedb file found after updating fwdb"
+          exit 1
         fi
