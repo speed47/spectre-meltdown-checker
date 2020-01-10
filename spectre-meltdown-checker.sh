@@ -3070,7 +3070,13 @@ check_has_vmm()
 		else
 			# ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
 			# shellcheck disable=SC2009
-			if ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
+			PS='ps ax'
+			# busybox's ps command does not have ax option.
+			readlink $(which ps) > /dev/null 2&>1
+			if [ $? -eq 0 ] ; then
+				PS='ps'
+			fi
+			if $PS | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
 				has_vmm=1
 			fi
 		fi
