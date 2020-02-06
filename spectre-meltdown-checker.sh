@@ -369,7 +369,7 @@ is_cpu_vulnerable()
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
 		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown vulnerable
 		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
-		if grep -qE '^model name.+ Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K? ' "$procfs/cpuinfo"; then
+		if echo "$cpu_friendly_name" | grep -qE 'Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K?'; then
 			variant1=vuln
 			[ -z "$variant2" ] && variant2=immune
 			variant3=vuln
@@ -1487,7 +1487,13 @@ parse_cpu_details()
 		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
 		cpu_ucode=$(   grep '^microcode'  "$procfs/cpuinfo" | awk '{print $3}' | head -1)
 	else
-		cpu_friendly_name=$(sysctl -n hw.model)
+		cpu_vendor=$( dmesg | grep -i -m1 'Origin=' | cut -f2 -w | cut -f2 -d= | cut -f2 -d\" )
+		cpu_family=$( dmesg | grep -i -m1 'Family=' | cut -f4 -w | cut -f2 -d= )
+		cpu_family=$(( cpu_family ))
+		cpu_model=$( dmesg | grep -i -m1 'Model=' | cut -f5 -w | cut -f2 -d= )
+		cpu_model=$(( cpu_model ))
+		cpu_stepping=$( dmesg | grep -i -m1 'Stepping=' | cut -f6 -w | cut -f2 -d= )
+		cpu_friendly_name=$(sysctl -n hw.model 2>/dev/null)
 	fi
 
 	if [ -n "$SMC_MOCK_CPU_FRIENDLY_NAME" ]; then
@@ -1562,7 +1568,7 @@ parse_cpu_details()
 	fi
 
 	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$(( cpu_ucode ))
-	ucode_found=$(printf "model 0x%x family 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_model" "$cpu_family" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid")
+	ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_family" "$cpu_model" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid")
 
 	# also define those that we will need in other funcs
 	# taken from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
@@ -2022,6 +2028,8 @@ if [ "$opt_live" = 1 ]; then
 		if [ -n "$custom_arch_kernel" ] && [ -e "$custom_arch_kernel" ]; then
 			opt_kernel="$custom_arch_kernel"
 		fi
+		# FreeBSD:
+		[ -e "/boot/kernel/kernel" ] && opt_kernel="/boot/kernel/kernel"
 	fi
 
 	# system.map
@@ -4812,16 +4820,12 @@ check_mds_bsd()
 			kernel_md_clear=0
 		fi
 	else
-		if command -v "strings" >/dev/null 2>&1; then
-			if strings /boot/kernel/kernel | grep -Fq hw.mds_disable; then
-				pstatus green YES
-				kernel_md_clear=1
-			else
-				kernel_md_clear=0
-				pstatus yellow NO
-			fi
+		if grep -Fq hw.mds_disable $opt_kernel; then
+			pstatus green YES
+			kernel_md_clear=1
 		else
-			pstatus yellow UNKNOWN
+			kernel_md_clear=0
+			pstatus yellow NO
 		fi
 	fi
 
