@@ -3682,16 +3682,25 @@ check_CVE_2017_5715_linux()
 
 		if is_vulnerable_to_empty_rsb || [ "$opt_verbose" -ge 2 ]; then
 			_info_nol "  * Kernel supports RSB filling: "
-			if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
-				pstatus yellow UNKNOWN "missing '${opt_arch_prefix}strings' tool, please install it, usually it's in the binutils package"
-			elif [ -n "$kernel_err" ]; then
-				pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
-			else
-				rsb_filling=$("${opt_arch_prefix}strings" "$kernel" | grep -w 'Filling RSB on context switch')
-				if [ -n "$rsb_filling" ]; then
+			rsb_filling=0
+			if [ "$opt_live" = 1 ] && [ "$opt_no_sysfs" != 1 ]; then
+				# if we're live and we aren't denied looking into /sys, let's do it
+				if echo "$msg" | grep -qw RSB; then
+					rsb_filling=1
 					pstatus green YES
+				fi
+			fi
+			if [ "$rsb_filling" = 0 ]; then
+				if [ -n "$kernel_err" ]; then
+					pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 				else
-					pstatus yellow NO
+					if grep -qw -e 'Filling RSB on context switch' "$kernel"; then
+						rsb_filling=1
+						pstatus green YES
+					else
+						rsb_filling=0
+						pstatus yellow NO
+					fi
 				fi
 			fi
 		fi
@@ -3706,9 +3715,9 @@ check_CVE_2017_5715_linux()
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
 	else
-		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_vulnerable_to_empty_rsb || [ -n "$rsb_filling" ] ); then
+		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_vulnerable_to_empty_rsb || [ "$rsb_filling" = 1 ] ); then
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
-		elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && ( ! is_vulnerable_to_empty_rsb || [ -n "$rsb_filling" ] ); then
+		elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && ( ! is_vulnerable_to_empty_rsb || [ "$rsb_filling" = 1 ] ); then
 			pvulnstatus $cve OK "Full retpoline is mitigating the vulnerability"
 			if [ -n "$cpuid_ibpb" ]; then
 				_warn "You should enable IBPB to complete retpoline as a Variant 2 mitigation"
