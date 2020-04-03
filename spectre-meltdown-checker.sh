@@ -4889,7 +4889,7 @@ check_mds_bsd()
 						if [ "$opt_paranoid" != 1 ] || [ "$kernel_smt_allowed" = 0 ]; then
 							pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
 						else
-							pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but your must disable SMT (Hyper-Threading) for a complete mitigation"
+							pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
 						fi
 					else
 						pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
@@ -4987,7 +4987,7 @@ check_mds_linux()
 								mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
 							else
 								mystatus=VULN
-								mymsg="Your microcode and kernel are both up to date for this mitigation, but your must disable SMT (Hyper-Threading) for a complete mitigation"
+								mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
 							fi
 						else
 							mystatus=VULN
