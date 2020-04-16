@@ -84,7 +84,7 @@ show_usage()
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
 		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked
-					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc
+					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc, srbds
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--cve [cve1,cve2,...]	specify which CVE you'd like to check, by default all supported CVEs are checked
 		--hw-only		only check for CPU information, don't check for any variant
@@ -163,7 +163,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -287,6 +287,7 @@ cve2name()
 		CVE-2019-11091) echo "RIDL, microarchitectural data sampling uncacheable memory (MDSUM)";;
 		CVE-2019-11135) echo "ZombieLoad V2, TSX Asynchronous Abort (TAA)";;
 		CVE-2018-12207) echo "No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)";;
+		CVE-2020-0543) echo "Special Register Buffer Data Sampling (SRBDS)";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -310,6 +311,7 @@ _is_cpu_vulnerable_cached()
 		CVE-2019-11091) return $variant_mdsum;;
 		CVE-2019-11135) return $variant_taa;;
 		CVE-2018-12207) return $variant_itlbmh;;
+		CVE-2020-0543) return $variant_srbds;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2; exit 255;;
 	esac
 }
@@ -338,6 +340,7 @@ is_cpu_vulnerable()
 	variant_mdsum=''
 	variant_taa=''
 	variant_itlbmh=''
+	variant_srbds=''
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -352,6 +355,11 @@ is_cpu_vulnerable()
 		_debug "is_cpu_vulnerable: cpu not affected by TSX Asynhronous Abort"
 	fi
 
+	if is_cpu_srbds_free; then
+		[ -z "$variant_srbds" ] && variant_srbds=immune
+		_debug "is_cpu_vulnerable: cpu not affected by Special Register Buffer Data Sampling"
+	fi
+
 	if is_cpu_specex_free; then
 		variant1=immune
 		variant2=immune
@@ -364,6 +372,7 @@ is_cpu_vulnerable()
 		variant_mlpds=immune
 		variant_mdsum=immune
 		variant_taa=immune
+		variant_srbds=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
@@ -594,8 +603,9 @@ is_cpu_vulnerable()
 	[ "$variant_mdsum"  = "immune" ] && variant_mdsum=1  || variant_mdsum=0
 	[ "$variant_taa"    = "immune" ] && variant_taa=1    || variant_taa=0
 	[ "$variant_itlbmh" = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
+	[ "$variant_srbds" = "immune" ] && variant_srbds=1 || variant_srbds=0
 	variantl1tf_sgx="$variantl1tf"
-	# even if we are vulnerable to L1TF, if there's no SGX, we're safe for the original foreshadow
+	# even if we are vulnerable to L1TF, if there's no SGX, we're not vulnerable to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
 	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
 	is_cpu_vulnerable_cached=1
@@ -700,6 +710,61 @@ is_cpu_taa_free()
 	fi
 
 	return 1
+}
+
+is_cpu_srbds_free()
+{
+	# return zero (0) if the CPU isn't affected by special register buffer data sampling, one (1) if it is.
+	# If it's not in the list we know, return one (1).
+	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+	#
+	# A processor is affected by SRBDS if its Family_Model and stepping is in the
+	# following list:
+	#
+	# =============  ============  ========
+	# common name    Family_Model  Stepping
+	# =============  ============  ========
+	# IvyBridge      06_3AH        All              (INTEL_FAM6_IVYBRIDGE)
+	#
+	# Haswell        06_3CH        All              (INTEL_FAM6_HASWELL)
+	# Haswell_L      06_45H        All              (INTEL_FAM6_HASWELL_L)
+	# Haswell_G      06_46H        All              (INTEL_FAM6_HASWELL_G)
+	#
+	# Broadwell_G    06_47H        All              (INTEL_FAM6_BROADWELL_G)
+	# Broadwell      06_3DH        All              (INTEL_FAM6_BROADWELL)
+	#
+	# Skylake_L      06_4EH        All              (INTEL_FAM6_SKYLAKE_L)
+	# Skylake        06_5EH        All              (INTEL_FAM6_SKYLAKE)
+	#
+	# Kabylake_L     06_8EH        <=0xC (MDS_NO)   (INTEL_FAM6_KABYLAKE_L)
+	#
+	# Kabylake       06_9EH        <=0xD (MDS_NO)   (INTEL_FAM6_KABYLAKE)
+	# =============  ============  ========
+	parse_cpu_details
+        if is_intel; then
+                if [ "$cpu_family" = 6 ]; then
+                        if [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE" ] || \
+                                [ "$cpu_model" = "$INTEL_FAM6_HASWELL" ] || \
+                                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_L" ] || \
+                                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_G" ] || \
+                                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_G" ] || \
+                                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL" ] || \
+                                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] || \
+                                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ]; then
+                                return 1
+			elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -le 12 ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -le 13 ]; then
+				if [ "$capabilities_mds_no" -eq 1 ] && { [ "$cpuid_rtm" -eq 0 ] || [ "$tsx_ctrl_msr_rtm_disable" -eq 1 ] ;} ; then
+					return 0
+				else
+					return 1
+				fi
+			fi
+		fi
+	fi
+
+	return 0
+
 }
 
 is_cpu_ssb_free()
@@ -1041,8 +1106,9 @@ while [ -n "$1" ]; do
 			l1tf)	opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
 			taa)	opt_cve_list="$opt_cve_list CVE-2019-11135"; opt_cve_all=0;;
 			mcepsc)	opt_cve_list="$opt_cve_list CVE-2018-12207"; opt_cve_all=0;;
+			srbds)  opt_cve_list="$opt_cve_list CVE-2020-0543"; opt_cve_all=0;;
 			*)
-				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa or mcepsc" >&2;
+				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc or srbds" >&2;
 				exit 255
 				;;
 		esac
@@ -1129,6 +1195,7 @@ pvulnstatus()
 			CVE-2019-11091) aka="MDSUM";;
 			CVE-2019-11135) aka="TAA";;
 			CVE-2018-12207) aka="ITLBMH";;
+			CVE-2020-0543) aka="SRBDS";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -2982,6 +3049,37 @@ check_cpu()
 	elif [ $ret -eq 2 ]; then
 		pstatus yellow UNKNOWN "is cpuid kernel module available?"
 		cpuid_sgx=-1
+	else
+		pstatus green NO
+	fi
+
+	_info_nol "  * CPU supports Special Register Buffer Data Sampling (SRBDS): "
+	# A processor supports SRBDS if it enumerates CPUID (EAX=7H,ECX=0):EDX[9] as 1
+	# That means the mitigation disabling SRBDS exists
+	ret=1
+	cpuid_srbds=0
+	srbds_on=0
+	if is_intel; then
+		read_cpuid 0x7 $EDX 9 1 1; ret=$?
+	fi
+	if [ $ret -eq 0 ]; then
+		pstatus blue YES
+		cpuid_srbds=1
+		read_msr 0x123 0; ret=$?
+		if [ $ret -eq 0 ]; then
+			if [ $read_msr_value -eq 0 ]; then
+				#SRBDS mitigation control exists and is enabled via microcode
+				srbds_on=1
+			else
+				#SRBDS mitigation control exists but is disabled via microcode
+				srbds_on=0
+			fi
+		else
+			srbds_on=-1
+		fi
+	elif [ $ret -eq 2 ]; then
+		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		cpuid_srbds=0
 	else
 		pstatus green NO
 	fi
@@ -5245,6 +5343,116 @@ check_CVE_2018_12207_linux()
 		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
+	fi
+}
+
+###################
+# SRBDS SECTION
+
+# Special Register Buffer Data Sampling (SRBDS)
+check_CVE_2020_0543()
+{
+	cve='CVE-2020-0543'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_2020_0543_linux
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
+
+check_CVE_2020_0543_linux()
+{
+        status=UNK
+        sys_interface_available=0
+        msg=''
+        if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/srbds"; then
+                # this kernel has the /sys interface, trust it over everything
+                sys_interface_available=1
+        fi
+        if [ "$opt_sysfs_only" != 1 ]; then
+                _info_nol "* SRBDS mitigation control is supported by the kernel: "
+                kernel_srbds=''
+                if [ -n "$kernel_err" ]; then
+                        kernel_srbds_err="$kernel_err"
+                elif grep -q 'Dependent on hypervisor' "$kernel"; then
+                        kernel_srbds="found SRBDS implementation evidence in kernel image. Your kernel is up to date for SRBDS mitigation"
+                fi
+                if [ -n "$kernel_srbds" ]; then
+                        pstatus green YES "$kernel_srbds"
+                elif [ -n "$kernel_srbds_err" ]; then
+                        pstatus yellow UNKNOWN "$kernel_srbds_err"
+                else
+                        pstatus yellow NO
+                fi
+                _info_nol "* SRBDS mitigation control is enabled and active: "
+                if [ "$opt_live" = 1 ]; then
+                        if [ -n "$fullmsg" ]; then
+				if echo "$fullmsg" | grep -qE '^Mitigation'; then
+					pstatus green YES "$fullmsg"
+				else
+					pstatus yellow NO
+				fi
+			else
+				pstatus yellow NO "SRBDS not found in sysfs hierarchy"
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
+	if ! is_cpu_vulnerable "$cve" ; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		if [ "$opt_sysfs_only" != 1 ]; then
+			if [ "$cpuid_srbds" = 1 ]; then
+				# SRBDS mitigation control exists
+				if [ "$srbds_on" = 1 ]; then
+					# SRBDS mitigation control is enabled
+					if [ -z "$msg" ]; then
+						# if msg is empty, sysfs check didn't fill it, rely on our own test
+						if [ "$opt_live" = 1 ]; then
+							# if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
+							pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
+						fi
+					else
+						if [ -n "$kernel_srbds" ]; then
+							pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for SRBDS mitigation control. Mitigation is enabled"
+						else
+							pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
+						fi
+					fi
+				elif [ "$srbds_on" = 0 ]; then
+					# SRBDS mitigation control is disabled
+					if [ -z "$msg" ]; then
+						if [ "$opt_live" = 1 ]; then
+							# if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
+							pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
+						fi
+					else
+						if [ -n "$kernel_srbds" ]; then
+							pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for SRBDS mitigation control. Mitigation is disabled"
+						else
+							pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
+						fi
+					fi
+				else
+					# rdmsr: CPU 0 cannot read MSR 0x00000123
+					pvulnstatus "$cve" UNK "Not able to enumerate MSR for SRBDS mitigation control"
+				fi
+			else
+				# [ $cpuid_srbds != 1 ]
+				pvulnstatus "$cve" VULN "Your CPU microcode may need to be updated to mitigate the vulnerability"
+			fi
+		else
+			# sysfs only: return the status/msg we got
+			pvulnstatus "$cve" "$status" "$fullmsg"
+			return
+		fi
 	fi
 }
 
