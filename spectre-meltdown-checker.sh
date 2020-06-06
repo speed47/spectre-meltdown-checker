@@ -4285,6 +4285,11 @@ check_CVE_2018_3639_linux()
 			elif grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+not vulnerable' "$procfs/self/status" 2>/dev/null; then
 				kernel_ssbd_enabled=-2
 				pstatus blue NO "not vulnerable"
+			elif grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+unknown' "$procfs/self/status" 2>/dev/null; then
+				kernel_ssbd_enabled=0
+				pstatus blue NO
+			else
+				pstatus blue UNKNOWN "unknown value: $(grep -E 'Speculation.?Store.?Bypass:' "$procfs/self/status" 2>/dev/null | cut -d: -f2-)"
 			fi
 
 			if [ "$kernel_ssbd_enabled" = 1 ]; then
