@@ -4415,14 +4415,31 @@ check_CVE_2018_3639_linux()
 				_debug "found Speculation.Store.Bypass: in $procfs/self/status"
 			fi
 		fi
-		if [ -z "$kernel_ssb" ] && [ -n "$kernel" ]; then
+		# arm64 kernels can have cpu_show_spec_store_bypass with ARM64_SSBD, so exclude them
+		if [ -z "$kernel_ssb" ] && [ -n "$kernel" ] && ! grep -q 'arm64_sys_' "$kernel"; then
 			kernel_ssb=$("${opt_arch_prefix}strings" "$kernel" | grep spec_store_bypass | head -n1);
-			[ -n "$kernel_ssb" ] && _debug "found $kernel_ssb in kernel"
+			[ -n "$kernel_ssb" ] && kernel_ssb="found $kernel_ssb in kernel"
 		fi
+		# arm64 kernels can have cpu_show_spec_store_bypass with ARM64_SSBD, so exclude them
+		if [ -z "$kernel_ssb" ] && [ -n "$opt_map" ] && ! grep -q 'arm64_sys_' "$opt_map"; then
+			kernel_ssb=$(grep spec_store_bypass "$opt_map" | awk '{print $3}' | head -n1)
+			[ -n "$kernel_ssb" ] && kernel_ssb="found $kernel_ssb in System.map"
+		fi
+		# arm64 only:
 		if [ -z "$kernel_ssb" ] && [ -n "$opt_map" ]; then
-			kernel_ssb=$(grep spec_store_bypass "$opt_map" | head -n1)
-			[ -n "$kernel_ssb" ] && _debug "found $kernel_ssb in System.map"
+			kernel_ssb=$(grep -w cpu_enable_ssbs "$opt_map" | awk '{print $3}' | head -n1)
+			[ -n "$kernel_ssb" ] && kernel_ssb="found $kernel_ssb in System.map"
 		fi
+		if [ -z "$kernel_ssb" ] && [ -n "$opt_config" ]; then
+			kernel_ssb=$(grep -w 'CONFIG_ARM64_SSBD=y' "$opt_config")
+			[ -n "$kernel_ssb" ] && kernel_ssb="CONFIG_ARM64_SSBD enabled in kconfig"
+		fi
+		if [ -z "$kernel_ssb" ] && [ -n "$kernel" ]; then
+			# this string only appears in kernel if CONFIG_ARM64_SSBD is set
+			kernel_ssb=$(grep -w "Speculative Store Bypassing Safe (SSBS)" "$kernel")
+			[ -n "$kernel_ssb" ] && kernel_ssb="found 'Speculative Store Bypassing Safe (SSBS)' in kernel"
+		fi
+		# /arm64 only
 
 		if [ -n "$kernel_ssb" ]; then
 			pstatus green YES "$kernel_ssb"
