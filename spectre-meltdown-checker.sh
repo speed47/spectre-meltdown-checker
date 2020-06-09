@@ -1,5 +1,6 @@
 #! /bin/sh
 # SPDX-License-Identifier: GPL-3.0-only
+# vim: set ts=8 sw=8 sts=4 noet:
 #
 # Spectre & Meltdown checker
 #
@@ -719,7 +720,10 @@ is_cpu_srbds_free()
 	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
 	#
 	# A processor is affected by SRBDS if its Family_Model and stepping is in the
-	# following list:
+	# following list, with the exception of the listed processors
+	# exporting MDS_NO while Intel TSX is available yet not enabled. The
+	# latter class of processors are only affected when Intel TSX is enabled
+	# by software using TSX_CTRL_MSR otherwise they are not affected.
 	#
 	# =============  ============  ========
 	# common name    Family_Model  Stepping
@@ -741,16 +745,16 @@ is_cpu_srbds_free()
 	# Kabylake       06_9EH        <=0xD (MDS_NO)   (INTEL_FAM6_KABYLAKE)
 	# =============  ============  ========
 	parse_cpu_details
-        if is_intel; then
-                if [ "$cpu_family" = 6 ]; then
-                        if [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE" ] || \
-                                [ "$cpu_model" = "$INTEL_FAM6_HASWELL" ] || \
-                                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_L" ] || \
-                                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_G" ] || \
-                                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_G" ] || \
-                                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL" ] || \
-                                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] || \
-                                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ]; then
+	if is_intel; then
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_HASWELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_HASWELL_L" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_HASWELL_G" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_BROADWELL_G" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_BROADWELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ]; then
 				return 1
 			elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -le 12 ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -le 13 ]; then
@@ -5363,97 +5367,97 @@ check_CVE_2020_0543()
 
 check_CVE_2020_0543_linux()
 {
-                status=UNK
-                sys_interface_available=0
-                msg=''
-                if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/srbds"; then
-                                # this kernel has the /sys interface, trust it over everything
-                                sys_interface_available=1
-                fi
-                if [ "$opt_sysfs_only" != 1 ]; then
-                                _info_nol "* SRBDS mitigation control is supported by the kernel: "
-                                kernel_srbds=''
-                                if [ -n "$kernel_err" ]; then
-                                                kernel_srbds_err="$kernel_err"
-                                elif grep -q 'Dependent on hypervisor' "$kernel"; then
-                                                kernel_srbds="found SRBDS implementation evidence in kernel image. Your kernel is up to date for SRBDS mitigation"
-                                fi
-                                if [ -n "$kernel_srbds" ]; then
-                                                pstatus green YES "$kernel_srbds"
-                                elif [ -n "$kernel_srbds_err" ]; then
-                                                pstatus yellow UNKNOWN "$kernel_srbds_err"
-                                else
-                                                pstatus yellow NO
-                                fi
-                                _info_nol "* SRBDS mitigation control is enabled and active: "
-                                if [ "$opt_live" = 1 ]; then
-                                                if [ -n "$fullmsg" ]; then
-                                if echo "$fullmsg" | grep -qE '^Mitigation'; then
-                                        pstatus green YES "$fullmsg"
-                                else
-                                        pstatus yellow NO
-                                fi
-                        else
-                                pstatus yellow NO "SRBDS not found in sysfs hierarchy"
-                        fi
-                else
-                        pstatus blue N/A "not testable in offline mode"
-                fi
-        elif [ "$sys_interface_available" = 0 ]; then
-                # we have no sysfs but were asked to use it only!
-                msg="/sys vulnerability interface use forced, but it's not available!"
-                status=UNK
-        fi
-        if ! is_cpu_vulnerable "$cve" ; then
-                # override status & msg in case CPU is not vulnerable after all
-                pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
-        else
-                if [ "$opt_sysfs_only" != 1 ]; then
-                        if [ "$cpuid_srbds" = 1 ]; then
-                                # SRBDS mitigation control exists
-                                if [ "$srbds_on" = 1 ]; then
-                                        # SRBDS mitigation control is enabled
-                                        if [ -z "$msg" ]; then
-                                                # if msg is empty, sysfs check didn't fill it, rely on our own test
-                                                if [ "$opt_live" = 1 ]; then
-                                                        # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
-                                                        pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
-                                                fi
-                                        else
-                                                if [ -n "$kernel_srbds" ]; then
-                                                        pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for SRBDS mitigation control. Mitigation is enabled"
-                                                else
-                                                        pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
-                                                fi
-                                        fi
-                                elif [ "$srbds_on" = 0 ]; then
-                                        # SRBDS mitigation control is disabled
-                                        if [ -z "$msg" ]; then
-                                                if [ "$opt_live" = 1 ]; then
-                                                        # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
-                                                        pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
-                                                fi
-                                        else
-                                                if [ -n "$kernel_srbds" ]; then
-                                                        pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for SRBDS mitigation control. Mitigation is disabled"
-                                                else
-                                                        pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
-                                                fi
-                                        fi
-                                else
-                                        # rdmsr: CPU 0 cannot read MSR 0x00000123
-                                        pvulnstatus "$cve" UNK "Not able to enumerate MSR for SRBDS mitigation control"
-                                fi
-                        else
-                                # [ $cpuid_srbds != 1 ]
-                                pvulnstatus "$cve" VULN "Your CPU microcode may need to be updated to mitigate the vulnerability"
-                        fi
-                else
-                        # sysfs only: return the status/msg we got
-                        pvulnstatus "$cve" "$status" "$fullmsg"
-                        return
-                fi
-        fi
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/srbds"; then
+				# this kernel has the /sys interface, trust it over everything
+				sys_interface_available=1
+	fi
+	if [ "$opt_sysfs_only" != 1 ]; then
+		_info_nol "* SRBDS mitigation control is supported by the kernel: "
+		kernel_srbds=''
+		if [ -n "$kernel_err" ]; then
+			kernel_srbds_err="$kernel_err"
+		elif grep -q 'Dependent on hypervisor' "$kernel"; then
+			kernel_srbds="found SRBDS implementation evidence in kernel image. Your kernel is up to date for SRBDS mitigation"
+		fi
+		if [ -n "$kernel_srbds" ]; then
+			pstatus green YES "$kernel_srbds"
+		elif [ -n "$kernel_srbds_err" ]; then
+			pstatus yellow UNKNOWN "$kernel_srbds_err"
+		else
+			pstatus yellow NO
+		fi
+		_info_nol "* SRBDS mitigation control is enabled and active: "
+		if [ "$opt_live" = 1 ]; then
+			if [ -n "$fullmsg" ]; then
+				if echo "$fullmsg" | grep -qE '^Mitigation'; then
+					pstatus green YES "$fullmsg"
+				else
+					pstatus yellow NO
+				fi
+			else
+				pstatus yellow NO "SRBDS not found in sysfs hierarchy"
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
+	if ! is_cpu_vulnerable "$cve" ; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		if [ "$opt_sysfs_only" != 1 ]; then
+			if [ "$cpuid_srbds" = 1 ]; then
+				# SRBDS mitigation control exists
+				if [ "$srbds_on" = 1 ]; then
+					# SRBDS mitigation control is enabled
+					if [ -z "$msg" ]; then
+						# if msg is empty, sysfs check didn't fill it, rely on our own test
+						if [ "$opt_live" = 1 ]; then
+							# if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
+							pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
+						fi
+					else
+						if [ -n "$kernel_srbds" ]; then
+							pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for SRBDS mitigation control. Mitigation is enabled"
+						else
+							pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
+						fi
+					fi
+				elif [ "$srbds_on" = 0 ]; then
+					# SRBDS mitigation control is disabled
+					if [ -z "$msg" ]; then
+						if [ "$opt_live" = 1 ]; then
+							# if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
+							pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
+						fi
+					else
+						if [ -n "$kernel_srbds" ]; then
+							pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for SRBDS mitigation control. Mitigation is disabled"
+						else
+							pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
+						fi
+					fi
+				else
+					# rdmsr: CPU 0 cannot read MSR 0x00000123
+					pvulnstatus "$cve" UNK "Not able to enumerate MSR for SRBDS mitigation control"
+				fi
+			else
+				# [ $cpuid_srbds != 1 ]
+				pvulnstatus "$cve" VULN "Your CPU microcode may need to be updated to mitigate the vulnerability"
+			fi
+		else
+			# sysfs only: return the status/msg we got
+			pvulnstatus "$cve" "$status" "$fullmsg"
+			return
+		fi
+	fi
 }
 
 #######################
