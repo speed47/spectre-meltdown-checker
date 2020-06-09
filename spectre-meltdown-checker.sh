@@ -753,7 +753,7 @@ is_cpu_srbds_free()
                                 [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] || \
                                 [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ]; then
                                 return 1
-			elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ $cpu_stepping -le 12 ] || \
+			elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -le 12 ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ $cpu_stepping -le 13 ]; then
 				if [ "$capabilities_mds_no" -eq 1 ] && { [ "$cpuid_rtm" -eq 0 ] || [ "$tsx_ctrl_msr_rtm_disable" -eq 1 ] ;} ; then
 					return 0
