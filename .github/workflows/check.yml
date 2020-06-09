@@ -24,7 +24,7 @@ jobs:
         fi
     - name: check direct execution
       run: |
-        expected=14
+        expected=15
         nb=$(sudo ./spectre-meltdown-checker.sh --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
