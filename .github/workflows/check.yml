@@ -34,7 +34,7 @@ jobs:
         fi
     - name: check docker-compose run execution
       run: |
-        expected=14
+        expected=15
         docker-compose build
         nb=$(docker-compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
@@ -45,7 +45,7 @@ jobs:
         fi
     - name: check docker run execution
       run: |
-        expected=14
+        expected=15
         docker build -t spectre-meltdown-checker .
         nb=$(docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
