@@ -16,6 +16,7 @@ A shell script to tell if your system is vulnerable against the several "specula
 - CVE-2019-11091 [microarchitectural data sampling uncacheable memory (MDSUM)] aka 'RIDL'
 - CVE-2019-11135 [TSX asynchronous abort] aka 'TAA' aka 'ZombieLoad V2'
 - CVE-2018-12207 [machine check exception on page size changes (MCEPSC)] aka 'No eXcuses' aka 'iTLB Multihit'
+- CVE-2020-0543 [Special Register Buffer Data Sampling (SRBDS)]
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
