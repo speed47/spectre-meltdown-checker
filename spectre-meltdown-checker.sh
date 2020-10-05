@@ -857,7 +857,7 @@ update_fwdb()
 
 	# second, get the Intel firmwares from GitHub
 	intel_tmp="$(mktemp -d /tmp/intelfw-XXXXXX)"
-	intel_url="https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/archive/master.zip"
+	intel_url="https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/archive/main.zip"
 	_info_nol "Fetching Intel firmwares... "
 	## https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files.git
 	if command -v wget >/dev/null 2>&1; then
@@ -898,7 +898,7 @@ update_fwdb()
 		return 1
 	fi
 	( cd "$intel_tmp" && unzip fw.zip >/dev/null; )
-	if ! [ -d "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-master/intel-ucode" ]; then
+	if ! [ -d "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-main/intel-ucode" ]; then
 		echo ERROR "expected the 'intel-ucode' folder in the downloaded zip file"
 		return 1
 	fi
@@ -915,7 +915,7 @@ update_fwdb()
 	fi
 	#  079/001: sig 0x000106c2, pf_mask 0x01, 2009-04-10, rev 0x0217, size 5120
 	#  078/004: sig 0x000106ca, pf_mask 0x10, 2009-08-25, rev 0x0107, size 5120
-	$iucode_tool -l "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-master/intel-ucode" | grep -wF sig | while read -r _line
+	$iucode_tool -l "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-main/intel-ucode" | grep -wF sig | while read -r _line
 	do
 		_line=$(   echo "$_line" | tr -d ',')
 		_cpuid=$(  echo "$_line" | awk '{print $3}')
