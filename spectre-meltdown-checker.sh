@@ -888,6 +888,8 @@ update_fwdb()
 		echo ERROR "downloaded file seems invalid"
 		return 1
 	fi
+	sqlite3 "$mcedb_tmp" "alter table Intel add column origin text"
+	sqlite3 "$mcedb_tmp" "update Intel set origin='mce'"
 
 	echo OK "MCExtractor database revision $mcedb_revision dated $mcedb_date"
 
@@ -925,10 +927,17 @@ update_fwdb()
 		_version=$(echo "$_line" | awk '{print $8}')
 		_version=$(( _version ))
 		_version=$(printf "0x%08X" "$_version")
-		_sqlstm="$(printf "INSERT INTO Intel (cpuid,version,yyyymmdd) VALUES (\"%s\",\"%s\",\"%s\");" "$(printf "%08X" "$_cpuid")" "$(printf "%08X" "$_version")" "$_date")"
+		_sqlstm="$(printf "INSERT INTO Intel (origin,cpuid,version,yyyymmdd) VALUES (\"%s\",\"%s\",\"%s\",\"%s\");" "intel" "$(printf "%08X" "$_cpuid")" "$(printf "%08X" "$_version")" "$_date")"
 		sqlite3 "$mcedb_tmp" "$_sqlstm"
 	done
-	_intel_latest_date=$(sqlite3 "$mcedb_tmp" "SELECT yyyymmdd from Intel ORDER BY yyyymmdd DESC LIMIT 1;")
+	_intel_timestamp=$(stat -c %Y "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-main/license" 2>/dev/null)
+	if [ -n "$_intel_timestamp" ]; then
+		# use this date, it matches the last commit date
+		_intel_latest_date=$(date +%Y%m%d -d @"$_intel_timestamp")
+	else
+		echo "Falling back to the latest microcode date"
+		_intel_latest_date=$(sqlite3 "$mcedb_tmp" "SELECT yyyymmdd from Intel WHERE origin = 'intel' ORDER BY yyyymmdd DESC LIMIT 1;")
+	fi
 	echo DONE "(version $_intel_latest_date)"
 
 	dbdate=$(echo "$mcedb_date" | tr -d '/')
