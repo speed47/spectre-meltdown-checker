@@ -12,7 +12,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='0.44'
+VERSION='0.44+'
 
 trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
@@ -485,12 +485,14 @@ is_cpu_vulnerable()
 			if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
 				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 				# I can't find their CPU part number, but it's probably not that useful anyway
-				# model R7 R8 A8  A9  A12 A15 A17 A57 A72 A73 A75 A76
-				# part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b?
-				# arch  7? 7? 7   7   7   7   7   8   8   8   8   8
+				# model R7 R8 A8  A9  A12 A15 A17 A57 A72 A73 A75 A76 Neoverse-N1 A77
+				# part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b d0c         d0d
+				# arch  7? 7? 7   7   7   7   7   8   8   8   8   8   8           8
 				#
 				# Whitelist identified non-vulnerable processors, use vulnerability information from 
 				# https://developer.arm.com/support/arm-security-updates/speculative-processor-vulnerability
+				# Partnumbers can be found here:
+				# https://github.com/gcc-mirror/gcc/blob/master/gcc/config/arm/arm-cpus.in
 				#
 				# Maintain cumulative check of vulnerabilities -
 				# if at least one of the cpu is vulnerable, then the system is vulnerable
@@ -529,13 +531,13 @@ is_cpu_vulnerable()
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
 					_debug "checking cpu$i: armv8 A75 non vulnerable to variant 3a"
-				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0b; then
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0b -e 0xd0c -e 0xd0d; then
 					variant1=vuln
 					[ -z "$variant2" ] && variant2=immune
 					[ -z "$variant3" ] && variant3=immune
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
-					_debug "checking cpu$i: armv8 A76 non vulnerable to variant 2, 3 & 3a"
+					_debug "checking cpu$i: armv8 A76/A77/NeoverseN1 non vulnerable to variant 2, 3 & 3a"
 				elif [ "$cpuarch" -le 7 ] || { [ "$cpuarch" = 8 ] && [ $(( cpupart )) -lt $(( 0xd07 )) ]; } ; then
 					[ -z "$variant1" ] && variant1=immune
 					[ -z "$variant2" ] && variant2=immune
