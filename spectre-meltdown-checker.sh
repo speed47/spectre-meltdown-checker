@@ -12,7 +12,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='0.43'
+VERSION='0.44'
 
 trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
