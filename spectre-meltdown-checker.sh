@@ -3128,7 +3128,7 @@ check_cpu_vulnerabilities()
 {
 	_info     "* CPU vulnerability to the speculative execution attack variants"
 	for cve in $supported_cve_list; do
-		_info_nol "  * Vulnerable to $cve ($(cve2name "$cve")): "
+		_info_nol "  * Affected by $cve ($(cve2name "$cve")): "
 		if is_cpu_vulnerable "$cve"; then
 			pstatus yellow YES
 		else
