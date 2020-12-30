@@ -467,6 +467,10 @@ is_cpu_vulnerable()
 		variant3=immune
 		variant3a=immune
 		variantl1tf=immune
+	elif [ "$cpu_vendor" = PHYTIUM ]; then
+		variant3=immune
+		variant3a=immune
+		variantl1tf=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -687,6 +691,8 @@ is_cpu_mds_free()
 	elif is_hygon; then
 		return 0
 	elif [ "$cpu_vendor" = CAVIUM ]; then
+		return 0
+	elif [ "$cpu_vendor" = PHYTIUM ]; then
 		return 0
 	elif [ "$cpu_vendor" = ARM ]; then
 		return 0
@@ -1572,6 +1578,8 @@ parse_cpu_details()
 
 		elif grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x43' "$procfs/cpuinfo"; then
 			cpu_vendor='CAVIUM'
+		elif grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x70' "$procfs/cpuinfo"; then
+			cpu_vendor='PHYTIUM'
 		fi
 
 		cpu_family=$(  grep '^cpu family' "$procfs/cpuinfo" | awk '{print $4}' | grep -E '^[0-9]+$' | head -1)
