@@ -1396,7 +1396,10 @@ extract_kernel()
 			try_decompress '(\265/\375'       xxy   unzstd  ''      zstd        "$1" "$mode" "$pass" && return 0
 		done
 	done
-	kernel_err="kernel compression format is unknown or image is invalid"
+	# kernel_err might already have been populated by try_decompress() if we're missing one of the tools
+	if [ -z "$kernel_err" ]; then
+		kernel_err="kernel compression format is unknown or image is invalid"
+	fi
 	_verbose "Couldn't extract the kernel image ($kernel_err), accuracy might be reduced"
 	return 1
 }
