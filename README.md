@@ -1,36 +1,39 @@
 Spectre & Meltdown Checker
 ==========================
 
-A shell script to tell if your system is vulnerable against the several "speculative execution" CVEs that were made public since 2018.
-- CVE-2017-5753 [bounds check bypass] aka 'Spectre Variant 1'
-- CVE-2017-5715 [branch target injection] aka 'Spectre Variant 2'
-- CVE-2017-5754 [rogue data cache load] aka 'Meltdown' aka 'Variant 3'
-- CVE-2018-3640 [rogue system register read] aka 'Variant 3a'
-- CVE-2018-3639 [speculative store bypass] aka 'Variant 4'
-- CVE-2018-3615 [L1 terminal fault] aka 'Foreshadow (SGX)'
-- CVE-2018-3620 [L1 terminal fault] aka 'Foreshadow-NG (OS)'
-- CVE-2018-3646 [L1 terminal fault] aka 'Foreshadow-NG (VMM)'
-- CVE-2018-12126 [microarchitectural store buffer data sampling (MSBDS)] aka 'Fallout'
-- CVE-2018-12130 [microarchitectural fill buffer data sampling (MFBDS)] aka 'ZombieLoad'
-- CVE-2018-12127 [microarchitectural load port data sampling (MLPDS)] aka 'RIDL'
-- CVE-2019-11091 [microarchitectural data sampling uncacheable memory (MDSUM)] aka 'RIDL'
-- CVE-2019-11135 [TSX asynchronous abort] aka 'TAA' aka 'ZombieLoad V2'
-- CVE-2018-12207 [machine check exception on page size changes (MCEPSC)] aka 'No eXcuses' aka 'iTLB Multihit'
-- CVE-2020-0543 [Special Register Buffer Data Sampling (SRBDS)]
+A shell script to tell whether your system is vulnerable to the several "speculative execution" CVEs that were made public since 2018.
+
+CVE                                                                             | Name                                                | Aliases
+------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------
+[CVE-2017-5753](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754)   | Bounds Check Bypass                                 | Spectre Variant 1
+[CVE-2017-5715](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5715)   | Branch Target Injection                             | Spectre Variant 2
+[CVE-2017-5754](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754)   | Rogue Data Cache Load                               | Meltdown, Variant 3
+[CVE-2018-3640](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3640)   | Rogue System Register Read                          | Variant 3a
+[CVE-2018-3639](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3639)   | Speculative Store Bypass                            | Variant 4
+[CVE-2018-3615](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3615)   | L1 Terminal Fault                                   | L1TF, Foreshadow (SGX)
+[CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620)   | L1 Terminal Fault                                   | L1TF, Foreshadow-NG (OS)
+[CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646)   | L1 Terminal Fault                                   | L1TF, Foreshadow-NG (VMM)
+[CVE-2018-12126](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12126) | Microarchitectural Store Buffer Data Sampling       | MSBDS, Fallout
+[CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | Microarchitectural Fill Buffer Data Sampling        | MFBDS, ZombieLoad
+[CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | Microarchitectural Load Port Data Sampling          | MLPDS, RIDL
+[CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL
+[CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX asynchronous abort                              | TAA, ZombieLoad V2
+[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Mheck Exception on Page Size Changes        | MCEPSC, No eXcuses, iTLB Multihit
+[CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543)   | Special Register Buffer Data Sampling               | SRBDS
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
-- BSD (FreeBSD, NetBSD, DragonFlyBSD)
+- BSD (namely FreeBSD, NetBSD, DragonFlyBSD. Others are [not supported](FAQ.md#which-bsd-oses-are-supported))
+
+For Linux systems, the script will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
+
+Other operating systems such as MacOS, Windows, ESXi, etc. [will most likely never be supported](FAQ.md#why-is-my-os-not-supported).
 
 Supported architectures:
-- x86 (32 bits)
-- amd64/x86_64 (64 bits)
-- ARM and ARM64
+- `x86` (32 bits)
+- `amd64`/`x86_64` (64 bits)
+- `ARM` and `ARM64`
 - other architectures will work, but mitigations (if they exist) might not always be detected
-
-For Linux systems, the script will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel.
-
-For BSD systems, the detection will work as long as the BSD you're using supports `cpuctl` and `linprocfs` (this is not the case of OpenBSD for example).
 
 ## Easy way to run the script
 
