@@ -2005,6 +2005,14 @@ if uname -a | grep -qE -- '-Microsoft #[0-9]+-Microsoft '; then
 	exit 1
 fi
 
+# or other UNIX-ish OSes non-Linux non-supported-BSDs
+if [ "$os" = Darwin ] || [ "$os" = VMkernel ]; then
+	_warn "You're running under the $os OS, but this script"
+	_warn "only works under Linux and some BSD systems, sorry."
+	_warn "Please read the README and FAQ for more information."
+	exit 1
+fi
+
 # check for mode selection inconsistency
 if [ "$opt_hw_only" = 1 ]; then
 	if [ "$opt_cve_all" = 0 ]; then
@@ -2070,7 +2078,7 @@ if [ "$opt_live" = 1 ]; then
 		_warn
 	fi
 	_info "Checking for vulnerabilities on current system"
-	_info "Kernel is \033[35m$(uname -s) $(uname -r) $(uname -v) $(uname -m)\033[0m"
+	_info "Kernel is \033[35m$os $(uname -r) $(uname -v) $(uname -m)\033[0m"
 	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
 	# try to find the image of the current running kernel
