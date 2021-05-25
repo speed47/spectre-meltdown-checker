@@ -1,7 +1,7 @@
 Spectre & Meltdown Checker
 ==========================
 
-A shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018.
+A shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018, and give you guidance as to how to mitigate them.
 
 CVE                                                                             | Name                                                | Aliases
 ------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------
@@ -37,7 +37,12 @@ Supported architectures:
 
 ## Frequently Asked Questions (FAQ)
 
-What is the purpose of this tool? Why was it written? How can it be useful to me? How does it work? What can I expect from it?
+- What is the purpose of this tool?
+- Why was it written?
+- How can it be useful to me?
+- How does it work?
+- What can I expect from it?
+
 All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
 
 ## Easy way to run the script
