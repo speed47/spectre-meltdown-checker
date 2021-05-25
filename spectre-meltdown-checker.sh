@@ -3193,7 +3193,7 @@ check_has_vmm()
 			# for each binary we want to grep, get the pids
 			for _binary in qemu kvm xenstored xenconsoled
 			do
-				for _pid in $(pgrep $_binary)
+				for _pid in $(pgrep -x $_binary)
 				do
 					# resolve the exe symlink, if it doesn't resolve with -m,
 					# which doesn't even need the dest to exist, it means the symlink
