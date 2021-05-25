@@ -1,7 +1,7 @@
 Spectre & Meltdown Checker
 ==========================
 
-A shell script to tell whether your system is vulnerable to the several "speculative execution" CVEs that were made public since 2018.
+A shell script to assess your system's resilience against the several [speculative execution](https://en.wikipedia.org/wiki/Speculative_execution) CVEs that were published since early 2018.
 
 CVE                                                                             | Name                                                | Aliases
 ------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------
@@ -23,9 +23,9 @@ CVE                                                                             
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
-- BSD (namely FreeBSD, NetBSD, DragonFlyBSD. Others are [not supported](FAQ.md#which-bsd-oses-are-supported))
+- FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](FAQ.md#which-bsd-oses-are-supported))
 
-For Linux systems, the script will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
+For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
 
 Other operating systems such as MacOS, Windows, ESXi, etc. [will most likely never be supported](FAQ.md#why-is-my-os-not-supported).
 
@@ -34,6 +34,11 @@ Supported architectures:
 - `amd64`/`x86_64` (64 bits)
 - `ARM` and `ARM64`
 - other architectures will work, but mitigations (if they exist) might not always be detected
+
+## Frequently Asked Questions (FAQ)
+
+What is the purpose of this tool? Why was it written? How can it be useful to me? How does it work? What can I expect from it?
+All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
 
 ## Easy way to run the script
 
@@ -168,16 +173,3 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Impact: Kernel
    - Mitigation: microcode update + kernel update helping to protect various CPU internal buffers from unprivileged speculative access to data
    - Performance impact of the mitigation: low
-
-## Understanding what this script does and doesn't
-
-This tool does its best to determine whether your system is affected (or has proper mitigations in place) by the collectively named "speculative execution" vulnerabilities. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying whether your system has the known mitigations in place.
-However, some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).
-
-Your system exposure also depends on your CPU. As of now, AMD and ARM processors are marked as immune to some or all of these vulnerabilities (except some specific ARM models). All Intel processors manufactured since circa 1995 are thought to be vulnerable, except some specific/old models, such as some early Atoms. Whatever processor one uses, one might seek more information from the manufacturer of that processor and/or of the device in which it runs.
-
-The nature of the discovered vulnerabilities being quite new, the landscape of vulnerable processors can be expected to change over time, which is why this script makes the assumption that all CPUs are vulnerable, except if the manufacturer explicitly stated otherwise in a verifiable public announcement.
-
-Please also note that for Spectre vulnerabilities, all software can possibly be exploited, this tool only verifies that the kernel (which is the core of the system) you're using has the proper protections in place. Verifying all the other software is out of the scope of this tool. As a general measure, ensure you always have the most up to date stable versions of all the software you use, especially for those who are exposed to the world, such as network daemons and browsers.
-
-This tool has been released in the hope that it'll be useful, but don't use it to jump to conclusions about your security.

@@ -1,5 +1,6 @@
 # Questions
 
+- [What to expect from this tool?](#what-to-expect-from-this-tool)
 - [Why was this script written in the first place?](#why-was-this-script-written-in-the-first-place)
 - [Why are those vulnerabilities so different than regular CVEs?](#why-are-those-vulnerabilities-so-different-than-regular-cves)
 - [What do "affected", "vulnerable" and "mitigated" mean exactly?](#what-do-affected-vulnerable-and-mitigated-mean-exactly)
@@ -8,8 +9,19 @@
 - [How does this script work?](#how-does-this-script-work)
 - [Which BSD OSes are supported?](#which-bsd-oses-are-supported)
 - [Why is my OS not supported?](#why-is-my-os-not-supported)
+- [The tool says there is an updated microcode for my CPU, but I don't have it!](#the-tool-says-there-is-an-updated-microcode-for-my-cpu-but-i-dont-have-it)
+- [The tool says that I need a more up-to-date microcode, but I have the more recent version!](#the-tool-says-that-i-need-a-more-up-to-date-microcode-but-i-have-the-more-recent-version)
 
 # Answers
+
+## What to expect from this tool?
+
+This tool does its best to determine where your system stands on each of the collectively named [speculative execution](https://en.wikipedia.org/wiki/Speculative_execution) vulnerabilities that were made public since early 2018. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying if your system is affected, and if it is, checks whether it has the known mitigations in place to avoid being vulnerable.
+Some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).
+
+Please also note that for Spectre vulnerabilities, all software can possibly be exploited, this tool only verifies that the kernel (which is the core of the system) you're using has the proper protections in place. Verifying all the other software is out of the scope of this tool. As a general measure, ensure you always have the most up to date stable versions of all the software you use, especially for those who are exposed to the world, such as network daemons and browsers.
+
+This tool has been released in the hope that it'll be useful, but don't use it to jump to definitive conclusions about your security: hardware vulnerabilities are [complex beasts](#why-are-those-vulnerabilities-so-different-than-regular-cves), and collective understanding of each vulnerability is evolving with time.
 
 ## Why was this script written in the first place?
 
@@ -43,6 +55,8 @@ A more detailed video explanation is available here: https://youtu.be/2gB9U1EcCs
 - **Mitigated** implies that a previously **vulnerable** system has followed all the steps (updated all the required layers) to ensure a given vulnerability cannot be exploited. About what "layers" mean, see [the previous question](#why-are-those-vulnerabilities-so-different-than-regular-cves).
 
 ## What are the main design decisions regarding this script?
+
+There are a few rules that govern how this tool is written.
 
 1) It should be okay to run this script in a production environment. This implies, but is not limited to:
 
@@ -90,4 +104,23 @@ For the BSD range of operating systems, the script will work as long as the BSD 
 
 ## Why is my OS not supported?
 
-This script only supports Linux, and [some flavors of BSD](#which-bsd-oses-are-supported). Other OSes will most likely never be supported, due to [how this script works](#how-does-this-script-work). It would require implementing these OSes specific way of querying the CPU. It would also require to get documentation (if available) about how this OS mitigates each vulnerability, down to this OS kernel code, and if documentation is not available, reverse-engineer the difference between a known old version of a kernel, and a kernel that mitigates a new vulnerability.
+This tool only supports Linux, and [some flavors of BSD](#which-bsd-oses-are-supported). Other OSes will most likely never be supported, due to [how this script works](#how-does-this-script-work). It would require implementing these OSes specific way of querying the CPU. It would also require to get documentation (if available) about how this OS mitigates each vulnerability, down to this OS kernel code, and if documentation is not available, reverse-engineer the difference between a known old version of a kernel, and a kernel that mitigates a new vulnerability.
+
+## The tool says there is an updated microcode for my CPU, but I don't have it!
+
+Even if your operating system is fully up to date, the tool might still tell you that there is a more recent microcode version for your CPU. Currently, it uses (and merges) information from two sources:
+
+- The official [Intel microcode repository](https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files)
+- The awesome platomav's [MCExtractor database](https://github.com/platomav/MCExtractor) for non-Intel CPUs
+
+Generally, for Intel CPUs it means that Intel does have a more recent version for your CPU, and for other CPUs it means that a more recent version has already been seen in the wild. However, your OS vendor might have chosen not to ship this new version (yet), maybe because it's currently being tested, or for other reasons. This tool can't tell you when or if this will be the case. You should ask your vendor about it. Technically, you can still go and upgrade your microcode yourself, and use this tool to confirm whether you did it successfully. Updating the microcode for you is out of the scope of this tool, as this would violate [rule 1b](#what-are-the-main-design-decisions-regarding-this-script).
+
+## The tool says that I need a more up-to-date microcode, but I have the more recent version!
+
+This can happen for a few reasons:
+
+- Your CPU is no longer supported by the vendor. In that case, new versions of the microcode will never be published, and vulnerabilities requiring microcode features will never be fixed. On most of these vulnerabilities, you'll have no way to mitigate the issue on a vulnerable system, appart from buying a more recent CPU. Sometimes, you might be able to mitigate the issue by disabling a CPU feature instead (often at the cost of speed). When this is the case, the script will list this as one of the possible mitigations for the vulnerability.
+
+- The vulnerability is recent, and your CPU has not yet received a microcode update for the vendor. Often, these updates come in batches, and it can take several batches to cover all the supported CPUs.
+
+In both cases, you can contact your vendor to know whether there'll be an update or not, and if yes, when. For Intel, at the time this FAQ entry was written, such guidance was [available here](https://software.intel.com/content/www/us/en/develop/topics/software-security-guidance/processors-affected-consolidated-product-cpu-model.html).
