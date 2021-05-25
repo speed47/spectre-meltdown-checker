@@ -11,12 +11,13 @@
 - [Why is my OS not supported?](#why-is-my-os-not-supported)
 - [The tool says there is an updated microcode for my CPU, but I don't have it!](#the-tool-says-there-is-an-updated-microcode-for-my-cpu-but-i-dont-have-it)
 - [The tool says that I need a more up-to-date microcode, but I have the more recent version!](#the-tool-says-that-i-need-a-more-up-to-date-microcode-but-i-have-the-more-recent-version)
+- [Which rules are governing the support of a CVE in this tool?](#which-rules-are-governing-the-support-of-a-cve-in-this-tool)
 
 # Answers
 
 ## What to expect from this tool?
 
-This tool does its best to determine where your system stands on each of the collectively named [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) vulnerabilities that were made public since early 2018. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying if your system is affected, and if it is, checks whether it has the known mitigations in place to avoid being vulnerable.
+This tool does its best to determine where your system stands on each of the collectively named [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) vulnerabilities (also sometimes called "speculative execution" vulnerabilities) that were made public since early 2018. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying if your system is affected, and if it is, checks whether it has the known mitigations in place to avoid being vulnerable.
 Some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).
 
 Please also note that for Spectre vulnerabilities, all software can possibly be exploited, this tool only verifies that the kernel (which is the core of the system) you're using has the proper protections in place. Verifying all the other software is out of the scope of this tool. As a general measure, ensure you always have the most up to date stable versions of all the software you use, especially for those who are exposed to the world, such as network daemons and browsers.
@@ -104,7 +105,7 @@ For the BSD range of operating systems, the script will work as long as the BSD 
 
 ## Why is my OS not supported?
 
-This tool only supports Linux, and [some flavors of BSD](#which-bsd-oses-are-supported). Other OSes will most likely never be supported, due to [how this script works](#how-does-this-script-work). It would require implementing these OSes specific way of querying the CPU. It would also require to get documentation (if available) about how this OS mitigates each vulnerability, down to this OS kernel code, and if documentation is not available, reverse-engineer the difference between a known old version of a kernel, and a kernel that mitigates a new vulnerability.
+This tool only supports Linux, and [some flavors of BSD](#which-bsd-oses-are-supported). Other OSes will most likely never be supported, due to [how this script works](#how-does-this-script-work). It would require implementing these OSes specific way of querying the CPU. It would also require to get documentation (if available) about how this OS mitigates each vulnerability, down to this OS kernel code, and if documentation is not available, reverse-engineer the difference between a known old version of a kernel, and a kernel that mitigates a new vulnerability. This means that all the effort has to be duplicated times the number of supported OSes, as everything is specific, by construction. It also implies having a deep understanding of every OS, which takes years to develop. However, if/when other tools appear for other OSes, that share the same goal of this one, they might be listed here as a convenience.
 
 ## The tool says there is an updated microcode for my CPU, but I don't have it!
 
@@ -124,3 +125,19 @@ This can happen for a few reasons:
 - The vulnerability is recent, and your CPU has not yet received a microcode update for the vendor. Often, these updates come in batches, and it can take several batches to cover all the supported CPUs.
 
 In both cases, you can contact your vendor to know whether there'll be an update or not, and if yes, when. For Intel, at the time this FAQ entry was written, such guidance was [available here](https://software.intel.com/content/www/us/en/develop/topics/software-security-guidance/processors-affected-consolidated-product-cpu-model.html).
+
+## Which rules are governing the support of a CVE in this tool?
+
+On the early days, it was easy: just Spectre and Meltdown (hence the tool name), because that's all we had. Now that this range of vulnerability is seeing a bunch of newcomers every year, this question is legitimate.
+
+To stick with this tool's goal, a good indication as to why a CVE should be supported, is when mitigating it requires either kernel modifications, microcode modifications, or both.
+
+Counter-examples include (non-exhaustive list):
+
+- [CVE-2019-14615](https://github.com/speed47/spectre-meltdown-checker/issues/340), mitigating this issue is done by updating the Intel driver. This is out of the scope of this tool.
+- [CVE-2019-15902](https://github.com/speed47/spectre-meltdown-checker/issues/304), this CVE is due to a bad backport in the stable kernel. If the faulty backport was part of the mitigation of another supported CVE, and this bad backport was detectable (without hardcoding kernel versions, see [rule 2](#why-are-those-vulnerabilities-so-different-than-regular-cves)), it might have been added as a bullet point in the concerned CVE's section in the tool. However, this wasn't the case.
+- The "[Take A Way](https://github.com/speed47/spectre-meltdown-checker/issues/344)" vulnerability, AMD said that they believe this is not a new attack, hence there were no microcode and no kernel modification made. As there is nothing to look for, this is out of the scope of this tool.
+- [CVE-2020-0550](https://github.com/speed47/spectre-meltdown-checker/issues/347), the vendor thinks this is hardly exploitable in the wild, and as mitigations would be too performance impacting, as a whole the industry decided to not address it. As there is nothing to check for, this is out of the scope of this tool.
+- [CVE-2020-0551](https://github.com/speed47/spectre-meltdown-checker/issues/348), the industry decided to not address it, as it is believed mitigations for other CVEs render this attack practically hard to make, Intel just released an updated SDK for SGX to help mitigate the issue, but this is out of the scope of this tool.
+
+Look for the [information](https://github.com/speed47/spectre-meltdown-checker/issues?q=is%3Aissue+is%3Aopen+label%3Ainformation) tag in the issues list for more examples.
