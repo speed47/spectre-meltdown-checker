@@ -16,7 +16,7 @@
 
 ## What to expect from this tool?
 
-This tool does its best to determine where your system stands on each of the collectively named [speculative execution](https://en.wikipedia.org/wiki/Speculative_execution) vulnerabilities that were made public since early 2018. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying if your system is affected, and if it is, checks whether it has the known mitigations in place to avoid being vulnerable.
+This tool does its best to determine where your system stands on each of the collectively named [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) vulnerabilities that were made public since early 2018. It doesn't attempt to run any kind of exploit, and can't guarantee that your system is secure, but rather helps you verifying if your system is affected, and if it is, checks whether it has the known mitigations in place to avoid being vulnerable.
 Some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).
 
 Please also note that for Spectre vulnerabilities, all software can possibly be exploited, this tool only verifies that the kernel (which is the core of the system) you're using has the proper protections in place. Verifying all the other software is out of the scope of this tool. As a general measure, ensure you always have the most up to date stable versions of all the software you use, especially for those who are exposed to the world, such as network daemons and browsers.
