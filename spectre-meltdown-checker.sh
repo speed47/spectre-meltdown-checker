@@ -168,7 +168,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543 CVE-2022-0001 CVE-2022-0002'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -293,6 +293,8 @@ cve2name()
 		CVE-2019-11135) echo "ZombieLoad V2, TSX Asynchronous Abort (TAA)";;
 		CVE-2018-12207) echo "No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)";;
 		CVE-2020-0543) echo "Special Register Buffer Data Sampling (SRBDS)";;
+		CVE-2022-0001)  echo "Branch History Injection";;
+		CVE-2022-0002)  echo "Intra-Mode BTI";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -317,6 +319,8 @@ _is_cpu_affected_cached()
 		CVE-2019-11135) return $variant_taa;;
 		CVE-2018-12207) return $variant_itlbmh;;
 		CVE-2020-0543) return $variant_srbds;;
+		CVE-2022-0001) return $variant_bhi;;
+		CVE-2022-0002) return $variant_intramode_bti;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
@@ -346,6 +350,8 @@ is_cpu_affected()
 	variant_taa=''
 	variant_itlbmh=''
 	variant_srbds=''
+	variant_bhi=''
+	variant_intramode_bti=''
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -378,14 +384,29 @@ is_cpu_affected()
 		variant_mdsum=immune
 		variant_taa=immune
 		variant_srbds=immune
+		variant_bhi=immune
+		variant_intramode_bti=immune
 	elif is_intel; then
 		# Intel
+		# Check GoldmontPlus and Tremont
+		parse_cpu_details
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_MID" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ; then
+				[ -z "$variant_bhi" ] && variant_bhi=immune
+				variant_intramode_bti=vuln
+			fi
+		fi
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
 		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown affected
 		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
 		if echo "$cpu_friendly_name" | grep -qE 'Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K?'; then
 			variant1=vuln
 			[ -z "$variant2" ] && variant2=immune
+			[ -z "$variant_bhi" ] && variant_bhi=immune
+			[ -z "$variant_intramode_bti" ] && variant_intramode_bti=immune
 			variant3=vuln
 		fi
 		if [ "$capabilities_rdcl_no" = 1 ]; then
@@ -601,7 +622,7 @@ is_cpu_affected()
 		[ -z "$variant_itlbmh" ] && variant_itlbmh=immune
 	fi
 
-	_debug "is_cpu_affected: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
+	_debug "is_cpu_affected: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variant_bhi> <$variant_intramode_bti>"
 	[ "$variant1"       = "immune" ] && variant1=1       || variant1=0
 	[ "$variant2"       = "immune" ] && variant2=1       || variant2=0
 	[ "$variant3"       = "immune" ] && variant3=1       || variant3=0
@@ -615,10 +636,12 @@ is_cpu_affected()
 	[ "$variant_taa"    = "immune" ] && variant_taa=1    || variant_taa=0
 	[ "$variant_itlbmh" = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
 	[ "$variant_srbds" = "immune" ] && variant_srbds=1 || variant_srbds=0
+	[ "$variant_bhi"    = "immune" ] && variant_bhi=1    || variant_bhi=0
+	[ "$variant_intramode_bti" = "immune" ] && variant_intramode_bti=1 || variant_intramode_bti=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
-	_debug "is_cpu_affected: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
+	_debug "is_cpu_affected: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx> <$variant_bhi> <$variant_intramode_bti>"
 	is_cpu_affected_cached=1
 	_is_cpu_affected_cached "$1"
 	return $?
@@ -1146,8 +1169,10 @@ while [ -n "${1:-}" ]; do
 			taa)	opt_cve_list="$opt_cve_list CVE-2019-11135"; opt_cve_all=0;;
 			mcepsc)	opt_cve_list="$opt_cve_list CVE-2018-12207"; opt_cve_all=0;;
 			srbds)  opt_cve_list="$opt_cve_list CVE-2020-0543"; opt_cve_all=0;;
+			bhi)	opt_cve_list="$opt_cve_list CVE-2022-0001"; opt_cve_all=0;;
+			intramodebti)	opt_cve_list="$opt_cve_list CVE-2022-0002"; opt_cve_all=0;;
 			*)
-				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc or srbds" >&2;
+				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc, srbds, bhi or intramodebti" >&2;
 				exit 255
 				;;
 		esac
@@ -1238,6 +1263,8 @@ pvulnstatus()
 			CVE-2019-11135) aka="TAA";;
 			CVE-2018-12207) aka="ITLBMH";;
 			CVE-2020-0543) aka="SRBDS";;
+			CVE-2022-0001) aka="SPECTRE VARIANT 2 - BHI";;
+			CVE-2022-0002) aka="SPECTRE VARIANT 2 - INTRAMODE-BTI";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -3648,6 +3675,119 @@ check_CVE_2017_5753_bsd()
 
 ###################
 # SPECTRE 2 SECTION
+
+# branch history injection
+check_CVE_2022_0001()
+{
+	cve='CVE-2022-0001'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_bhi_bti_linux
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
+
+# intra-mode branch target injection
+check_CVE_2022_0002()
+{
+	cve='CVE-2022-0002'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_bhi_bti_linux
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
+
+check_bhi_bti_linux()
+{
+	status=UNK
+	msg=""
+	if ! is_cpu_affected "$cve"; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	else
+		#First, check if unprivileged eBPF has been disabled
+		_info "* Mitigation 1"
+		if [ -e /proc/sys/kernel/unprivileged_bpf_disabled ]; then
+			_info_nol "   * Unprivileged eBPF is disabled: "
+			bpf_status=$(cat "/proc/sys/kernel/unprivileged_bpf_disabled")
+			if [ "$bpf_status" = 0 ]; then
+				if [ "$opt_verbose" -ge 2 ]; then
+					pstatus red NO "unprivileged eBPF enabled"
+				else
+					pstatus red NO
+				fi
+				status=VULN
+			else
+				if [ "$opt_verbose" -ge 2 ]; then
+					pstatus green YES "unprivileged eBPF disabled"
+				else
+					pstatus green YES
+				fi
+				status=OK
+				pvulnstatus $cve $status "unprivileged eBPF disabled"
+			fi
+		else
+			# if  /proc/sys/kernel/unprivileged_bpf_disabled isn't found, set status to unknown and rely on further mitigations
+			status=UNK
+			if [ "$opt_verbose" -ge 2 ]; then
+				pstatus yellow UNKNOWN "couldn't check /proc/sys/kernel/unprivileged_bpf_disabled"
+			else
+				pstatus yellow UNKNOWN
+			fi
+		fi
+		if [ "$status" != "OK" ]; then
+			parse_cpu_details
+			#For GoldmontPlus and Tremont, rely on the status of unprivileged eBPF
+			if [ "$cpu_model" != "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] && \
+				[ "$cpu_model" != "$INTEL_FAM6_ATOM_TREMONT_D" ] ; then
+				_info "* Mitigation 2"
+				#Check retpoline (if used, system is mitigated)
+				if [ -e /sys/devices/system/cpu/vulnerabilities/spectre_v2 ]; then
+					_info_nol "    * Retpoline is enabled: "
+					if grep -qi retpoline /sys/devices/system/cpu/vulnerabilities/spectre_v2; then
+						_debug "retpoline: found /sys/devices/system/cpu/vulnerabilities/spectre_v2 and enabled"
+						if [ "$opt_verbose" -ge 2 ]; then
+							pstatus green YES "Retpoline found in /sys and enabled"
+						else
+							pstatus green YES
+						fi
+						status=OK
+					else
+						_debug "retpoline: found /sys/devices/system/cpu/vulnerabilities/spectre_v2 and disabled"
+						if [ "$opt_verbose" -ge 2 ]; then
+							pstatus red NO "Retpoline found in /sys and disabled"
+						else
+							pstatus red NO
+						fi
+						# if repotline is disabled, we return the status of unprivileged eBPF disabled (will be either unkown or vulnerable)
+					fi
+				else
+					status=UNK
+				fi
+				# only Red Hat has a tunable to disable it on runtime
+				if [ "$opt_live" = 1 ]; then
+					if [ -e "$specex_knob_dir/retp_enabled" ]; then
+						retp_enabled=$(cat "$specex_knob_dir/retp_enabled" 2>/dev/null)
+						_debug "retpoline: found $specex_knob_dir/retp_enabled=$retp_enabled"
+						_info_nol "    * Retpoline is enabled: "
+						if [ "$retp_enabled" = 1 ]; then
+							pstatus green YES
+						else
+							pstatus yellow NO
+						fi
+					fi
+				fi
+			fi
+			pvulnstatus $cve $status
+			if [ "$status" = "UNK" ]; then
+				explain "An updated kernel might be required to report the status of unprivileged eBPF"
+			fi
+		fi
+	fi
+}
 
 # branch target injection aka 'Spectre Variant 2'
 check_CVE_2017_5715()
