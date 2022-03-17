@@ -3769,8 +3769,11 @@ check_CVE_2017_5715_linux()
 			#
 			# if there is "retpoline" in the file and NOT "minimal", then it's full retpoline
 			# (works for vanilla and Red Hat variants)
+			#
+			# since 5.15.28, this is now "Retpolines" as the implementation was switched to a generic one,
+			# so we look for both "retpoline" and "retpolines"
 			if [ "$opt_live" = 1 ] && [ -n "$fullmsg" ]; then
-				if echo "$fullmsg" | grep -qwi retpoline; then
+				if echo "$fullmsg" | grep -qwi -e retpoline -e retpolines; then
 					if echo "$fullmsg" | grep -qwi minimal; then
 						retpoline_compiler=0
 						retpoline_compiler_reason="kernel reports minimal retpoline compilation"
