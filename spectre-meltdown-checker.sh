@@ -1413,6 +1413,10 @@ mount_debugfs()
 
 load_msr()
 {
+	# only attempt to do it once even if called multiple times
+	[ "$load_msr_once" = 1 ] && return
+	load_msr_once=1
+
 	if [ "$os" = Linux ]; then
 		if ! grep -qw msr "$procfs/modules" 2>/dev/null; then
 			modprobe msr 2>/dev/null && insmod_msr=1
@@ -1432,6 +1436,10 @@ load_msr()
 
 load_cpuid()
 {
+	# only attempt to do it once even if called multiple times
+	[ "$load_cpuid_once" = 1 ] && return
+	load_cpuid_once=1
+
 	if [ "$os" = Linux ]; then
 		if ! grep -qw cpuid "$procfs/modules" 2>/dev/null; then
 			modprobe cpuid 2>/dev/null && insmod_cpuid=1
