@@ -1451,6 +1451,9 @@ load_cpuid()
 
 # shellcheck disable=SC2034
 EAX=1; EBX=2; ECX=3; EDX=4;
+READ_CPUID_RET_OK=0
+READ_CPUID_RET_KO=1
+READ_CPUID_RET_ERR=2
 read_cpuid()
 {
 	# leaf is the value of the eax register when calling the cpuid instruction:
@@ -1467,18 +1470,19 @@ read_cpuid()
 	_wanted="$6"
 	# in any case, the read value is globally available in $read_cpuid_value
 	read_cpuid_value=''
+	read_cpuid_msg=''
 
 	if [ $# -lt 5 ]; then
-		echo "read_cpuid: missing arguments, got only $#, expected at least 5: $*"
-		return 2
+		read_cpuid_msg="read_cpuid: missing arguments, got only $#, expected at least 5: $*"
+		return $READ_CPUID_RET_ERR
 	fi
 	if [ "$_register" -gt 4 ]; then
-		echo "read_cpuid: register must be 0-4, got $_register"
-		return 2
+		read_cpuid_msg="read_cpuid: register must be 0-4, got $_register"
+		return $READ_CPUID_RET_ERR
 	fi
 	if [ "$_shift" -gt 32 ]; then
-		echo "read_cpuid: shift must be 0-31, got $_shift"
-		return 2
+		read_cpuid_msg="read_cpuid: shift must be 0-31, got $_shift"
+		return $READ_CPUID_RET_ERR
 	fi
 
 	if [ ! -e /dev/cpu/0/cpuid ] && [ ! -e /dev/cpuctl0 ]; then
@@ -1489,10 +1493,14 @@ read_cpuid()
 	if [ -e /dev/cpu/0/cpuid ]; then
 		# Linux
 		if [ ! -r /dev/cpu/0/cpuid ]; then
-			return 2
+			read_cpuid_msg="Couldn't load cpuid module"
+			return $READ_CPUID_RET_ERR
 		fi
-		# on some kernel versions, /dev/cpu/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error
-		dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1 || load_cpuid
+		# on some kernel versions, /dev/cpu/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error,
+		# we use that fact to load the module if dd returns an error
+		if ! dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1; then
+		    load_cpuid
+		fi
 		# we need _leaf to be converted to decimal for dd
 		_leaf=$(( _leaf ))
 		_subleaf=$(( _subleaf ))
@@ -1505,12 +1513,14 @@ read_cpuid()
 	elif [ -e /dev/cpuctl0 ]; then
 		# BSD
 		if [ ! -r /dev/cpuctl0 ]; then
-			return 2
+			read_cpuid_msg="Couldn't read cpuid info from cpuctl"
+			return $READ_CPUID_RET_ERR
 		fi
 		_cpuid=$(cpucontrol -i "$_leaf","$_subleaf" /dev/cpuctl0 2>/dev/null | cut -d: -f2-)
 		# cpuid level 0x4, level_type 0x2: 0x1c004143 0x01c0003f 0x000001ff 0x00000000
 	else
-		return 2
+		read_cpuid_msg="Found no way to read cpuid info"
+		return $READ_CPUID_RET_ERR
 	fi
 
 	_debug "cpuid: leaf$_leaf subleaf$_subleaf on cpu0, eax-ebx-ecx-edx: $_cpuid"
@@ -1522,7 +1532,11 @@ read_cpuid()
 	else
 		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPUID_${_leaf}_${_subleaf}='$_cpuid'")
 	fi
-	[ -z "$_cpuid" ] && return 2
+	if [ -z "$_cpuid" ]; then
+		read_cpuid_msg="Failed to get cpuid data"
+		return $READ_CPUID_RET_ERR
+	fi
+
 	# get the value of the register we want
 	_reg=$(echo "$_cpuid" | awk '{print $'"$_register"'}')
 	# Linux returns it as decimal, BSD as hex, normalize to decimal
@@ -1538,13 +1552,13 @@ read_cpuid()
 	if [ -n "$_wanted" ]; then
 		_debug "cpuid: wanted $_wanted and got $read_cpuid_value"
 		if [ "$read_cpuid_value" = "$_wanted" ]; then
-			return 0
+			return $READ_CPUID_RET_OK
 		else
-			return 1
+			return $READ_CPUID_RET_KO
 		fi
 	fi
 
-	return 0
+	return $READ_CPUID_RET_OK
 }
 
 dmesg_grep()
@@ -2571,25 +2585,25 @@ check_cpu()
 	# amd: 8000_0008 EBX[14]=1
 	if is_intel; then
 		read_cpuid 0x7 0x0 $EDX 26 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES "SPEC_CTRL feature bit"
 			cpuid_spec_ctrl=1
 			cpuid_ibrs='SPEC_CTRL'
 		fi
 	elif is_amd || is_hygon; then
 		read_cpuid 0x80000008 0x0 $EBX 14 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES "IBRS_SUPPORT feature bit"
 			cpuid_ibrs='IBRS_SUPPORT'
 		fi
 	else
-		ret=-1
-		pstatus yellow UNKNOWN "unknown CPU"
+		ret=invalid
+		pstatus yellow NO "unknown CPU"
 	fi
-	if [ $ret -eq 1 ]; then
+	if [ $ret = $READ_CPUID_RET_KO ]; then
 		pstatus yellow NO
-	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	elif [ $ret = $READ_CPUID_RET_ERR ]; then
+		pstatus yellow UNKNOWN "$read_cpuid_msg"
 		cpuid_spec_ctrl=-1
 	fi
 
@@ -2597,19 +2611,23 @@ check_cpu()
 		_info_nol "    * CPU indicates preferring IBRS always-on: "
 		# amd or hygon
 		read_cpuid 0x80000008 0x0 $EBX 16 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			pstatus yellow NO
+		else
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 
 		_info_nol "    * CPU indicates preferring IBRS over retpoline: "
 		# amd or hygon
 		read_cpuid 0x80000008 0x0 $EBX 18 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			pstatus yellow NO
+		else
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 	fi
 
@@ -2670,13 +2688,13 @@ check_cpu()
 		fi
 	elif is_amd || is_hygon; then
 		read_cpuid 0x80000008 0x0 $EBX 12 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			cpuid_ibpb='IBPB_SUPPORT'
 			pstatus green YES "IBPB_SUPPORT feature bit"
-		elif [ $ret -eq 1 ]; then
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			pstatus yellow NO
 		else
-			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 	fi
 
@@ -2696,40 +2714,42 @@ check_cpu()
 	# amd: 8000_0008 EBX[15]=1
 	if is_intel; then
 		read_cpuid 0x7 0x0 $EDX 27 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES "Intel STIBP feature bit"
 			#cpuid_stibp='Intel STIBP'
 		fi
 	elif is_amd; then
 		read_cpuid 0x80000008 0x0 $EBX 15 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES "AMD STIBP feature bit"
 			#cpuid_stibp='AMD STIBP'
 		fi
 	elif is_hygon; then
 		read_cpuid 0x80000008 0x0 $EBX 15 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES "HYGON STIBP feature bit"
 			#cpuid_stibp='HYGON STIBP'
 		fi
 	else
-		ret=-1
+		ret=invalid
 		pstatus yellow UNKNOWN "unknown CPU"
 	fi
-	if [ $ret -eq 1 ]; then
+	if [ $ret = $READ_CPUID_RET_KO ]; then
 		pstatus yellow NO
-	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	elif [ $ret = $READ_CPUID_RET_ERR ]; then
+		pstatus yellow UNKNOWN "$read_cpuid_msg"
 	fi
 
 
 	if is_amd || is_hygon; then
 		_info_nol "    * CPU indicates preferring STIBP always-on: "
 		read_cpuid 0x80000008 0x0 $EBX 17 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			pstatus yellow NO
+		else
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 	fi
 
@@ -2738,7 +2758,7 @@ check_cpu()
 		_info     "  * Speculative Store Bypass Disable (SSBD)"
 		_info_nol "    * CPU indicates SSBD capability: "
 		read_cpuid 0x7 0x0 $EDX 31 1 1; ret24=$?; ret25=$ret24
-		if [ $ret24 -eq 0 ]; then
+		if [ $ret24 = $READ_CPUID_RET_OK ]; then
 			cpuid_ssbd='Intel SSBD'
 		fi
 	elif is_amd; then
@@ -2746,10 +2766,10 @@ check_cpu()
 		_info_nol "    * CPU indicates SSBD capability: "
 		read_cpuid 0x80000008 0x0 $EBX 24 1 1; ret24=$?
 		read_cpuid 0x80000008 0x0 $EBX 25 1 1; ret25=$?
-		if [ $ret24 -eq 0 ]; then
+		if [ $ret24 = $READ_CPUID_RET_OK ]; then
 			cpuid_ssbd='AMD SSBD in SPEC_CTRL'
 			#cpuid_ssbd_spec_ctrl=1
-		elif [ $ret25 -eq 0 ]; then
+		elif [ $ret25 = $READ_CPUID_RET_OK ]; then
 			cpuid_ssbd='AMD SSBD in VIRT_SPEC_CTRL'
 			#cpuid_ssbd_virt_spec_ctrl=1
 		elif [ "$cpu_family" -ge 21 ] && [ "$cpu_family" -le 23 ]; then
@@ -2761,10 +2781,10 @@ check_cpu()
 		read_cpuid 0x80000008 0x0 $EBX 24 1 1; ret24=$?
 		read_cpuid 0x80000008 0x0 $EBX 25 1 1; ret25=$?
 
-		if [ $ret24 -eq 0 ]; then
+		if [ $ret24 = $READ_CPUID_RET_OK ]; then
 			cpuid_ssbd='HYGON SSBD in SPEC_CTRL'
 			#hygon cpuid_ssbd_spec_ctrl=1
-		elif [ $ret25 -eq 0 ]; then
+		elif [ $ret25 = $READ_CPUID_RET_OK ]; then
 			cpuid_ssbd='HYGON SSBD in VIRT_SPEC_CTRL'
 			#hygon cpuid_ssbd_virt_spec_ctrl=1
 		elif [ "$cpu_family" -ge 24 ]; then
@@ -2774,8 +2794,8 @@ check_cpu()
 
 	if [ -n "$cpuid_ssbd" ]; then
 		pstatus green YES "$cpuid_ssbd"
-	elif [ "$ret24" = 2 ] && [ "$ret25" = 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	elif [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ]; then
+		pstatus yellow UNKNOWN "$read_cpuid_msg"
 	else
 		pstatus yellow NO
 	fi
@@ -2783,13 +2803,13 @@ check_cpu()
 	if is_amd; then
 		# similar to SSB_NO for intel
 		read_cpuid 0x80000008 0x0 $EBX 26 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			amd_ssb_no=1
 		fi
 	elif is_hygon; then
 		# indicate when speculative store bypass disable is no longer needed to prevent speculative loads bypassing older stores
 		read_cpuid 0x80000008 0x0 $EBX 26 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			hygon_ssb_no=1
 			_debug "hygon_ssb_no=1"
 		fi
@@ -2840,28 +2860,28 @@ check_cpu()
 	# CPUID of L1D
 	_info_nol "    * CPU indicates L1D flush capability: "
 	read_cpuid 0x7 0x0 $EDX 28 1 1; ret=$?
-	if [ $ret -eq 0 ]; then
+	if [ $ret = $READ_CPUID_RET_OK ]; then
 		pstatus green YES "L1D flush feature bit"
 		cpuid_l1df=1
-	elif [ $ret -eq 1 ]; then
+	elif [ $ret = $READ_CPUID_RET_KO ]; then
 		pstatus yellow NO
-	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
+	else
+		pstatus yellow UNKNOWN "$read_cpuid_msg"
 	fi
 
 	if is_intel; then
 		_info     "  * Microarchitectural Data Sampling"
 		_info_nol "    * VERW instruction is available: "
 		read_cpuid 0x7 0x0 $EDX 10 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			cpuid_md_clear=1
 			pstatus green YES "MD_CLEAR feature bit"
-		elif [ $ret -eq 2 ]; then
-			cpuid_md_clear=-1
-			pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			cpuid_md_clear=0
 			pstatus yellow NO
+		else
+			cpuid_md_clear=-1
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 	fi
 
@@ -2869,41 +2889,41 @@ check_cpu()
 		_info     "  * Indirect Branch Predictor Controls"
 		_info_nol "    * Indirect Predictor Disable feature is available: "
 		read_cpuid 0x7 0x2 $EDX 1 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			cpuid_ipred=1
 			pstatus green YES "IPRED_CTRL feature bit"
-		elif [ $ret -eq 2 ]; then
-			cpuid_ipred=-1
-			pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			cpuid_ipred=0
 			pstatus yellow NO
+		else
+			cpuid_ipred=-1
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 
 		_info_nol "    * Bottomless RSB Disable feature is available: "
 		read_cpuid 0x7 0x2 $EDX 2 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			cpuid_rrsba=1
 			pstatus green YES "RRSBA_CTRL feature bit"
-		elif [ $ret -eq 2 ]; then
-			cpuid_rrsba=-1
-			pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			cpuid_rrsba=0
 			pstatus yellow NO
+		else
+			cpuid_rrsba=-1
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 
 		_info_nol "    * BHB-Focused Indirect Predictor Disable feature is available: "
 		read_cpuid 0x7 0x2 $EDX 2 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			cpuid_bhi=1
 			pstatus green YES "BHI_CTRL feature bit"
-		elif [ $ret -eq 2 ]; then
-			cpuid_bhi=-1
-			pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			cpuid_bhi=0
 			pstatus yellow NO
+		else
+			cpuid_bhi=-1
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 
 		# make shellcheck happy while we're not yet using these new cpuid values in our checks
@@ -2916,14 +2936,14 @@ check_cpu()
 		cpuid_arch_capabilities=-1
 		# A processor supports the ARCH_CAPABILITIES MSR if it enumerates CPUID (EAX=7H,ECX=0):EDX[29] as 1
 		read_cpuid 0x7 0x0 $EDX 29 1 1; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ $ret = $READ_CPUID_RET_OK ]; then
 			pstatus green YES
 			cpuid_arch_capabilities=1
-		elif [ $ret -eq 2 ]; then
-			pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		else
+		elif [ $ret = $READ_CPUID_RET_KO ]; then
 			pstatus yellow NO
 			cpuid_arch_capabilities=0
+		else
+			pstatus yellow UNKNOWN "$read_cpuid_msg"
 		fi
 
 		_info_nol "    * ARCH_CAPABILITIES MSR advertises IBRS_ALL capability: "
@@ -3117,47 +3137,47 @@ check_cpu()
 	fi
 
 	_info_nol "  * CPU supports Transactional Synchronization Extensions (TSX): "
-	ret=1
+	ret=$READ_CPUID_RET_KO
 	cpuid_rtm=0
 	if is_intel; then
 		read_cpuid 0x7 0x0 $EBX 11 1 1; ret=$?
 	fi
-	if [ $ret -eq 0 ]; then
+	if [ $ret = $READ_CPUID_RET_OK ]; then
 		cpuid_rtm=1
 		pstatus green YES "RTM feature bit"
-	elif [ $ret -eq 2 ]; then
-		cpuid_rtm=-1
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
-	else
+	elif [ $ret = $READ_CPUID_RET_KO ]; then
 		pstatus yellow NO
+	else
+		cpuid_rtm=-1
+		pstatus yellow UNKNOWN "$read_cpuid_msg"
 	fi
 
 	_info_nol "  * CPU supports Software Guard Extensions (SGX): "
-	ret=1
+	ret=$READ_CPUID_RET_KO
 	cpuid_sgx=0
 	if is_intel; then
 		read_cpuid 0x7 0x0 $EBX 2 1 1; ret=$?
 	fi
-	if [ $ret -eq 0 ]; then
+	if [ $ret = $READ_CPUID_RET_OK ]; then
 		pstatus blue YES
 		cpuid_sgx=1
-	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		cpuid_sgx=-1
-	else
+	elif [ $ret = $READ_CPUID_RET_KO ]; then
 		pstatus green NO
+	else
+		cpuid_sgx=-1
+		pstatus yellow UNKNOWN "$read_cpuid_msg"
 	fi
 
 	_info_nol "  * CPU supports Special Register Buffer Data Sampling (SRBDS): "
 	# A processor supports SRBDS if it enumerates CPUID (EAX=7H,ECX=0):EDX[9] as 1
 	# That means the mitigation disabling SRBDS exists
-	ret=1
+	ret=$READ_CPUID_RET_KO
 	cpuid_srbds=0
 	srbds_on=0
 	if is_intel; then
 		read_cpuid 0x7 0x0 $EDX 9 1 1; ret=$?
 	fi
-	if [ $ret -eq 0 ]; then
+	if [ $ret = $READ_CPUID_RET_OK ]; then
 		pstatus blue YES
 		cpuid_srbds=1
 		read_msr 0x123 0; ret=$?
@@ -3172,11 +3192,11 @@ check_cpu()
 		else
 			srbds_on=-1
 		fi
-	elif [ $ret -eq 2 ]; then
-		pstatus yellow UNKNOWN "is cpuid kernel module available?"
-		cpuid_srbds=0
-	else
+	elif [ $ret = $READ_CPUID_RET_KO ]; then
 		pstatus green NO
+	else
+		pstatus yellow UNKNOWN "$read_cpuid_msg"
+		cpuid_srbds=0
 	fi
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
@@ -4156,14 +4176,18 @@ pti_performance_check()
 		cpu_pcid=1
 	else
 		read_cpuid 0x1 0x0 $ECX 17 1 1; ret=$?
-		[ $ret -eq 0 ] && cpu_pcid=1
+		if [ $ret = $READ_CPUID_RET_OK ]; then
+			cpu_pcid=1
+		fi
 	fi
 
 	if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw invpcid; then
 		cpu_invpcid=1
 	else
 		read_cpuid 0x7 0x0 $EBX 10 1 1; ret=$?
-		[ $ret -eq 0 ] && cpu_invpcid=1
+		if [ $ret = $READ_CPUID_RET_OK ]; then
+			cpu_invpcid=1
+		fi
 	fi
 
 	if [ "$cpu_invpcid" = 1 ]; then
