@@ -1455,17 +1455,32 @@ read_cpuid()
 {
 	# leaf is the value of the eax register when calling the cpuid instruction:
 	_leaf="$1"
+	# subleaf is the value of the ecx register when calling the cpuid instruction:
+	_subleaf="$2"
 	# eax=1 ebx=2 ecx=3 edx=4:
-	_register="$2"
-	# number of bits to shift the register right to:
-	_shift="$3"
+	_register="$3"
+	# number of bits to shift the register right to, 0-31:
+	_shift="$4"
 	# mask to apply as an AND operand to the shifted register value
-	_mask="$4"
+	_mask="$5"
 	# wanted value (optional), if present we return 0(true) if the obtained value is equal, 1 otherwise:
-	_wanted="$5"
+	_wanted="$6"
 	# in any case, the read value is globally available in $read_cpuid_value
-
 	read_cpuid_value=''
+
+	if [ $# -lt 5 ]; then
+		echo "read_cpuid: missing arguments, got only $#, expected at least 5: $*"
+		return 2
+	fi
+	if [ "$_register" -gt 4 ]; then
+		echo "read_cpuid: register must be 0-4, got $_register"
+		return 2
+	fi
+	if [ "$_shift" -gt 32 ]; then
+		echo "read_cpuid: shift must be 0-31, got $_shift"
+		return 2
+	fi
+
 	if [ ! -e /dev/cpu/0/cpuid ] && [ ! -e /dev/cpuctl0 ]; then
 		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 		load_cpuid
@@ -1480,9 +1495,11 @@ read_cpuid()
 		dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1 || load_cpuid
 		# we need _leaf to be converted to decimal for dd
 		_leaf=$(( _leaf ))
+		_subleaf=$(( _subleaf ))
+		_position=$(( _leaf + (_subleaf << 32) ))
 		# to avoid using iflag=skip_bytes, which doesn't exist on old versions of dd, seek to the closer multiple-of-16
-		_ddskip=$(( _leaf / 16 ))
-		_odskip=$(( _leaf - _ddskip * 16 ))
+		_ddskip=$(( _position / 16 ))
+		_odskip=$(( _position - _ddskip * 16 ))
 		# now read the value
 		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip=$_ddskip count=$((_odskip + 1)) 2>/dev/null | od -j $((_odskip * 16)) -A n -t u4)
 	elif [ -e /dev/cpuctl0 ]; then
@@ -1490,20 +1507,20 @@ read_cpuid()
 		if [ ! -r /dev/cpuctl0 ]; then
 			return 2
 		fi
-		_cpuid=$(cpucontrol -i "$_leaf" /dev/cpuctl0 2>/dev/null | awk '{print $4,$5,$6,$7}')
-		# cpuid level 0x1: 0x000306d4 0x00100800 0x4dfaebbf 0xbfebfbff
+		_cpuid=$(cpucontrol -i "$_leaf","$_subleaf" /dev/cpuctl0 2>/dev/null | cut -d: -f2-)
+		# cpuid level 0x4, level_type 0x2: 0x1c004143 0x01c0003f 0x000001ff 0x00000000
 	else
 		return 2
 	fi
 
-	_debug "cpuid: leaf$_leaf on cpu0, eax-ebx-ecx-edx: $_cpuid"
-	_mockvarname="SMC_MOCK_CPUID_${_leaf}"
+	_debug "cpuid: leaf$_leaf subleaf$_subleaf on cpu0, eax-ebx-ecx-edx: $_cpuid"
+	_mockvarname="SMC_MOCK_CPUID_${_leaf}_${_subleaf}"
 	if [ -n "$(eval echo \$$_mockvarname)" ]; then
 		_cpuid="$(eval echo \$$_mockvarname)"
-		_debug "read_cpuid: MOCKING enabled for leaf $_leaf, will return $_cpuid"
+		_debug "read_cpuid: MOCKING enabled for leaf $_leaf subleaf $_subleaf, will return $_cpuid"
 		mocked=1
 	else
-		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPUID_${_leaf}='$_cpuid'")
+		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPUID_${_leaf}_${_subleaf}='$_cpuid'")
 	fi
 	[ -z "$_cpuid" ] && return 2
 	# get the value of the register we want
@@ -1633,7 +1650,7 @@ parse_cpu_details()
 	fi
 
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
-	if read_cpuid 0x1 $EAX 0 0xFFFFFFFF; then
+	if read_cpuid 0x1 0x0 $EAX 0 0xFFFFFFFF; then
 		cpu_cpuid="$read_cpuid_value"
 	else
 		cpu_cpuid=0
@@ -2413,6 +2430,7 @@ write_msr()
 # read_msr
 # param1 (mandatory): MSR, can be in hex or decimal.
 # param2 (optional): CPU index, starting from 0. Default 0.
+# returned data is available in $read_msr_value
 read_msr()
 {
 	_msr_dec=$(( $1 ))
@@ -2552,14 +2570,14 @@ check_cpu()
 	# amd: https://developer.amd.com/wp-content/resources/Architecture_Guidelines_Update_Indirect_Branch_Control.pdf
 	# amd: 8000_0008 EBX[14]=1
 	if is_intel; then
-		read_cpuid 0x7 $EDX 26 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EDX 26 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES "SPEC_CTRL feature bit"
 			cpuid_spec_ctrl=1
 			cpuid_ibrs='SPEC_CTRL'
 		fi
 	elif is_amd || is_hygon; then
-		read_cpuid 0x80000008 $EBX 14 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 14 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES "IBRS_SUPPORT feature bit"
 			cpuid_ibrs='IBRS_SUPPORT'
@@ -2578,7 +2596,7 @@ check_cpu()
 	if is_amd || is_hygon; then
 		_info_nol "    * CPU indicates preferring IBRS always-on: "
 		# amd or hygon
-		read_cpuid 0x80000008 $EBX 16 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 16 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES
 		else
@@ -2587,7 +2605,7 @@ check_cpu()
 
 		_info_nol "    * CPU indicates preferring IBRS over retpoline: "
 		# amd or hygon
-		read_cpuid 0x80000008 $EBX 18 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 18 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES
 		else
@@ -2651,7 +2669,7 @@ check_cpu()
 			pstatus yellow NO
 		fi
 	elif is_amd || is_hygon; then
-		read_cpuid 0x80000008 $EBX 12 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 12 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			cpuid_ibpb='IBPB_SUPPORT'
 			pstatus green YES "IBPB_SUPPORT feature bit"
@@ -2677,19 +2695,19 @@ check_cpu()
 	# intel: A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
 	# amd: 8000_0008 EBX[15]=1
 	if is_intel; then
-		read_cpuid 0x7 $EDX 27 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EDX 27 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES "Intel STIBP feature bit"
 			#cpuid_stibp='Intel STIBP'
 		fi
 	elif is_amd; then
-		read_cpuid 0x80000008 $EBX 15 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 15 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES "AMD STIBP feature bit"
 			#cpuid_stibp='AMD STIBP'
 		fi
 	elif is_hygon; then
-		read_cpuid 0x80000008 $EBX 15 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 15 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES "HYGON STIBP feature bit"
 			#cpuid_stibp='HYGON STIBP'
@@ -2707,7 +2725,7 @@ check_cpu()
 
 	if is_amd || is_hygon; then
 		_info_nol "    * CPU indicates preferring STIBP always-on: "
-		read_cpuid 0x80000008 $EBX 17 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 17 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES
 		else
@@ -2719,15 +2737,15 @@ check_cpu()
 	if is_intel; then
 		_info     "  * Speculative Store Bypass Disable (SSBD)"
 		_info_nol "    * CPU indicates SSBD capability: "
-		read_cpuid 0x7 $EDX 31 1 1; ret24=$?; ret25=$ret24
+		read_cpuid 0x7 0x0 $EDX 31 1 1; ret24=$?; ret25=$ret24
 		if [ $ret24 -eq 0 ]; then
 			cpuid_ssbd='Intel SSBD'
 		fi
 	elif is_amd; then
 		_info     "  * Speculative Store Bypass Disable (SSBD)"
 		_info_nol "    * CPU indicates SSBD capability: "
-		read_cpuid 0x80000008 $EBX 24 1 1; ret24=$?
-		read_cpuid 0x80000008 $EBX 25 1 1; ret25=$?
+		read_cpuid 0x80000008 0x0 $EBX 24 1 1; ret24=$?
+		read_cpuid 0x80000008 0x0 $EBX 25 1 1; ret25=$?
 		if [ $ret24 -eq 0 ]; then
 			cpuid_ssbd='AMD SSBD in SPEC_CTRL'
 			#cpuid_ssbd_spec_ctrl=1
@@ -2740,8 +2758,8 @@ check_cpu()
 	elif is_hygon; then
 		_info     "  * Speculative Store Bypass Disable (SSBD)"
 		_info_nol "    * CPU indicates SSBD capability: "
-		read_cpuid 0x80000008 $EBX 24 1 1; ret24=$?
-		read_cpuid 0x80000008 $EBX 25 1 1; ret25=$?
+		read_cpuid 0x80000008 0x0 $EBX 24 1 1; ret24=$?
+		read_cpuid 0x80000008 0x0 $EBX 25 1 1; ret25=$?
 
 		if [ $ret24 -eq 0 ]; then
 			cpuid_ssbd='HYGON SSBD in SPEC_CTRL'
@@ -2764,13 +2782,13 @@ check_cpu()
 
 	if is_amd; then
 		# similar to SSB_NO for intel
-		read_cpuid 0x80000008 $EBX 26 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 26 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			amd_ssb_no=1
 		fi
 	elif is_hygon; then
 		# indicate when speculative store bypass disable is no longer needed to prevent speculative loads bypassing older stores
-		read_cpuid 0x80000008 $EBX 26 1 1; ret=$?
+		read_cpuid 0x80000008 0x0 $EBX 26 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			hygon_ssb_no=1
 			_debug "hygon_ssb_no=1"
@@ -2821,7 +2839,7 @@ check_cpu()
 	fi
 	# CPUID of L1D
 	_info_nol "    * CPU indicates L1D flush capability: "
-	read_cpuid 0x7 $EDX 28 1 1; ret=$?
+	read_cpuid 0x7 0x0 $EDX 28 1 1; ret=$?
 	if [ $ret -eq 0 ]; then
 		pstatus green YES "L1D flush feature bit"
 		cpuid_l1df=1
@@ -2832,9 +2850,9 @@ check_cpu()
 	fi
 
 	if is_intel; then
-		_info "  * Microarchitectural Data Sampling"
+		_info     "  * Microarchitectural Data Sampling"
 		_info_nol "    * VERW instruction is available: "
-		read_cpuid 0x7 $EDX 10 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EDX 10 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			cpuid_md_clear=1
 			pstatus green YES "MD_CLEAR feature bit"
@@ -2852,7 +2870,7 @@ check_cpu()
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 		cpuid_arch_capabilities=-1
 		# A processor supports the ARCH_CAPABILITIES MSR if it enumerates CPUID (EAX=7H,ECX=0):EDX[29] as 1
-		read_cpuid 0x7 $EDX 29 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EDX 29 1 1; ret=$?
 		if [ $ret -eq 0 ]; then
 			pstatus green YES
 			cpuid_arch_capabilities=1
@@ -3057,7 +3075,7 @@ check_cpu()
 	ret=1
 	cpuid_rtm=0
 	if is_intel; then
-		read_cpuid 0x7 $EBX 11 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EBX 11 1 1; ret=$?
 	fi
 	if [ $ret -eq 0 ]; then
 		cpuid_rtm=1
@@ -3073,7 +3091,7 @@ check_cpu()
 	ret=1
 	cpuid_sgx=0
 	if is_intel; then
-		read_cpuid 0x7 $EBX 2 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EBX 2 1 1; ret=$?
 	fi
 	if [ $ret -eq 0 ]; then
 		pstatus blue YES
@@ -3092,7 +3110,7 @@ check_cpu()
 	cpuid_srbds=0
 	srbds_on=0
 	if is_intel; then
-		read_cpuid 0x7 $EDX 9 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EDX 9 1 1; ret=$?
 	fi
 	if [ $ret -eq 0 ]; then
 		pstatus blue YES
@@ -4092,14 +4110,14 @@ pti_performance_check()
 	if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw pcid; then
 		cpu_pcid=1
 	else
-		read_cpuid 0x1 $ECX 17 1 1; ret=$?
+		read_cpuid 0x1 0x0 $ECX 17 1 1; ret=$?
 		[ $ret -eq 0 ] && cpu_pcid=1
 	fi
 
 	if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw invpcid; then
 		cpu_invpcid=1
 	else
-		read_cpuid 0x7 $EBX 10 1 1; ret=$?
+		read_cpuid 0x7 0x0 $EBX 10 1 1; ret=$?
 		[ $ret -eq 0 ] && cpu_invpcid=1
 	fi
 
