@@ -2866,6 +2866,51 @@ check_cpu()
 	fi
 
 	if is_intel; then
+		_info     "  * Indirect Branch Predictor Controls"
+		_info_nol "    * Indirect Predictor Disable feature is available: "
+		read_cpuid 0x7 0x2 $EDX 1 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			cpuid_ipred=1
+			pstatus green YES "IPRED_CTRL feature bit"
+		elif [ $ret -eq 2 ]; then
+			cpuid_ipred=-1
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		else
+			cpuid_ipred=0
+			pstatus yellow NO
+		fi
+
+		_info_nol "    * Bottomless RSB Disable feature is available: "
+		read_cpuid 0x7 0x2 $EDX 2 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			cpuid_rrsba=1
+			pstatus green YES "RRSBA_CTRL feature bit"
+		elif [ $ret -eq 2 ]; then
+			cpuid_rrsba=-1
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		else
+			cpuid_rrsba=0
+			pstatus yellow NO
+		fi
+
+		_info_nol "    * BHB-Focused Indirect Predictor Disable feature is available: "
+		read_cpuid 0x7 0x2 $EDX 2 1 1; ret=$?
+		if [ $ret -eq 0 ]; then
+			cpuid_bhi=1
+			pstatus green YES "BHI_CTRL feature bit"
+		elif [ $ret -eq 2 ]; then
+			cpuid_bhi=-1
+			pstatus yellow UNKNOWN "is cpuid kernel module available?"
+		else
+			cpuid_bhi=0
+			pstatus yellow NO
+		fi
+
+		# make shellcheck happy while we're not yet using these new cpuid values in our checks
+		export cpuid_ipred cpuid_rrsba cpuid_bhi
+	fi
+
+	if is_intel; then
 		_info     "  * Enhanced IBRS (IBRS_ALL)"
 		_info_nol "    * CPU indicates ARCH_CAPABILITIES MSR availability: "
 		cpuid_arch_capabilities=-1
