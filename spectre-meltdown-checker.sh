@@ -5464,8 +5464,8 @@ check_CVE_2018_12207()
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 	if [ "$os" = Linux ]; then
 		check_CVE_2018_12207_linux
-	#elif echo "$os" | grep -q BSD; then
-	#	check_CVE_2018_12207_bsd
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_2018_12207_bsd
 	else
 		_warn "Unsupported OS ($os)"
 	fi
@@ -5538,6 +5538,36 @@ check_CVE_2018_12207_linux()
 		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
+	fi
+}
+
+check_CVE_2018_12207_bsd()
+{
+	_info_nol "* Kernel supports disabling superpages for executable mappings under EPT: "
+	kernel_2m_x_ept=$(sysctl -n vm.pmap.allow_2m_x_ept 2>/dev/null)
+	if [ -z "$kernel_2m_x_ept" ]; then
+		pstatus yellow NO
+	else
+		pstatus green YES
+	fi
+
+	_info_nol "* Superpages are disabled for executable mappings under EPT: "
+	if [ "$kernel_2m_x_ept" = 0 ]; then
+		pstatus green YES
+	else
+		pstatus yellow NO
+	fi
+
+	if ! is_cpu_vulnerable "$cve"; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	elif [ -z "$kernel_2m_x_ept" ]; then
+		pvulnstatus $cve VULN "Your kernel doesn't support mitigating this CVE, you should update it"
+	elif [ "$kernel_2m_x_ept" != 0 ]; then
+		pvulnstatus $cve VULN "Your kernel supports mitigating this CVE, but the mitigation is disabled"
+		explain "To enable the mitigation, use \`sysctl vm.pmap.allow_2m_x_ept=0\`"
+	else
+		pvulnstatus $cve OK "Your kernel has support for mitigation and the mitigation is enabled"
 	fi
 }
 
