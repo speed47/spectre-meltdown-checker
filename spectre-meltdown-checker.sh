@@ -5372,8 +5372,8 @@ check_CVE_2019_11135()
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 	if [ "$os" = Linux ]; then
 		check_CVE_2019_11135_linux
-	#elif echo "$os" | grep -q BSD; then
-	#	check_CVE_2019_11135_bsd
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_2019_11135_bsd
 	else
 		_warn "Unsupported OS ($os)"
 	fi
@@ -5452,6 +5452,16 @@ check_CVE_2019_11135_linux()
 		else
 			pvulnstatus $cve "$status" "$msg"
 		fi
+	fi
+}
+
+check_CVE_2019_11135_bsd()
+{
+	if ! is_cpu_affected "$cve" ; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+	else
+		pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
 	fi
 }
 
@@ -5581,6 +5591,8 @@ check_CVE_2020_0543()
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 	if [ "$os" = Linux ]; then
 		check_CVE_2020_0543_linux
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_2020_0543_bsd
 	else
 		_warn "Unsupported OS ($os)"
 	fi
@@ -5678,6 +5690,16 @@ check_CVE_2020_0543_linux()
 			pvulnstatus "$cve" "$status" "$fullmsg"
 			return
 		fi
+	fi
+}
+
+check_CVE_2020_0543_bsd()
+{
+	if ! is_cpu_affected "$cve"; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+	else
+		pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
 	fi
 }
 
