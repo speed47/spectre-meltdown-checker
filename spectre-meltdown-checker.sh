@@ -1,6 +1,6 @@
 #! /bin/sh
 # SPDX-License-Identifier: GPL-3.0-only
-# vim: set ts=8 sw=8 sts=4 noet:
+# vim: set ts=4 sw=4 sts=4 noet:
 #
 # Spectre & Meltdown checker
 #
@@ -91,6 +91,7 @@ show_usage()
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
+		--cpu [#,all]		interact with CPUID and MSR of CPU core number #, or all (default: CPU core 0)
 		--update-fwdb		update our local copy of the CPU microcodes versions database (using the awesome
 					MCExtractor project and the Intel firmwares GitHub repository)
 		--update-builtin-fwdb	same as --update-fwdb but update builtin DB inside the script itself
@@ -156,6 +157,7 @@ opt_arch_prefix=''
 opt_hw_only=0
 opt_no_hw=0
 opt_vmm=-1
+opt_cpu=0
 opt_explain=0
 opt_paranoid=0
 opt_mock=0
@@ -1045,6 +1047,17 @@ while [ -n "$1" ]; do
 	elif [ "$1" = "--no-hw" ]; then
 		opt_no_hw=1
 		shift
+	elif [ "$1" = "--cpu" ]; then
+		opt_cpu=$2
+		if [ "$opt_cpu" != all ]; then
+			if echo "$opt_cpu" | grep -Eq '^[0-9]+'; then
+				opt_cpu=$(( opt_cpu ))
+			else
+				echo "$0: error: --cpu should be an integer or 'all', got '$opt_cpu'" >&2
+				exit 255
+			fi
+		fi
+		shift 2
 	elif [ "$1" = "--no-explain" ]; then
 		# deprecated, kept for compatibility
 		opt_explain=0
@@ -1464,24 +1477,53 @@ READ_CPUID_RET_KO=1
 READ_CPUID_RET_ERR=2
 read_cpuid()
 {
+	if [ "$opt_cpu" != all ]; then
+		# we only have one core to read, do it and return the result
+		read_cpuid_one_core $opt_cpu "$@"
+		return $?
+	fi
+
+	# otherwise we must read all cores
+	for _core in $(seq 0 "$max_core_id"); do
+		read_cpuid_one_core "$_core" "$@"; ret=$?
+		if [ "$_core" = 0 ]; then
+			# save the result of the first core, for comparison with the others
+			_first_core_ret=$ret
+			_first_core_value=$read_cpuid_value
+		else
+			# compare first core with the other ones
+			if [ $_first_core_ret != $ret ] || [ "$_first_core_value" != "$read_cpuid_value" ]; then
+				read_cpuid_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
+				return $READ_CPUID_RET_ERR
+			fi
+		fi
+	done
+	# if we're here, all cores agree, return the result
+	return $ret
+}
+
+read_cpuid_one_core()
+{
+	# on which core to send the CPUID instruction
+	_core="$1"
 	# leaf is the value of the eax register when calling the cpuid instruction:
-	_leaf="$1"
+	_leaf="$2"
 	# subleaf is the value of the ecx register when calling the cpuid instruction:
-	_subleaf="$2"
+	_subleaf="$3"
 	# eax=1 ebx=2 ecx=3 edx=4:
-	_register="$3"
+	_register="$4"
 	# number of bits to shift the register right to, 0-31:
-	_shift="$4"
+	_shift="$5"
 	# mask to apply as an AND operand to the shifted register value
-	_mask="$5"
+	_mask="$6"
 	# wanted value (optional), if present we return 0(true) if the obtained value is equal, 1 otherwise:
-	_wanted="$6"
+	_wanted="$7"
 	# in any case, the read value is globally available in $read_cpuid_value
 	read_cpuid_value=''
-	read_cpuid_msg=''
+	read_cpuid_msg='unknown error'
 
-	if [ $# -lt 5 ]; then
-		read_cpuid_msg="read_cpuid: missing arguments, got only $#, expected at least 5: $*"
+	if [ $# -lt 6 ]; then
+		read_cpuid_msg="read_cpuid: missing arguments, got only $#, expected at least 6: $*"
 		return $READ_CPUID_RET_ERR
 	fi
 	if [ "$_register" -gt 4 ]; then
@@ -1517,21 +1559,21 @@ read_cpuid()
 		_ddskip=$(( _position / 16 ))
 		_odskip=$(( _position - _ddskip * 16 ))
 		# now read the value
-		_cpuid=$(dd if=/dev/cpu/0/cpuid bs=16 skip=$_ddskip count=$((_odskip + 1)) 2>/dev/null | od -j $((_odskip * 16)) -A n -t u4)
+		_cpuid=$(dd if="/dev/cpu/$_core/cpuid" bs=16 skip=$_ddskip count=$((_odskip + 1)) 2>/dev/null | od -j $((_odskip * 16)) -A n -t u4)
 	elif [ -e /dev/cpuctl0 ]; then
 		# BSD
 		if [ ! -r /dev/cpuctl0 ]; then
 			read_cpuid_msg="Couldn't read cpuid info from cpuctl"
 			return $READ_CPUID_RET_ERR
 		fi
-		_cpuid=$(cpucontrol -i "$_leaf","$_subleaf" /dev/cpuctl0 2>/dev/null | cut -d: -f2-)
+		_cpuid=$(cpucontrol -i "$_leaf","$_subleaf" "/dev/cpuctl$_core" 2>/dev/null | cut -d: -f2-)
 		# cpuid level 0x4, level_type 0x2: 0x1c004143 0x01c0003f 0x000001ff 0x00000000
 	else
 		read_cpuid_msg="Found no way to read cpuid info"
 		return $READ_CPUID_RET_ERR
 	fi
 
-	_debug "cpuid: leaf$_leaf subleaf$_subleaf on cpu0, eax-ebx-ecx-edx: $_cpuid"
+	_debug "cpuid: leaf$_leaf subleaf$_subleaf on cpu$_core, eax-ebx-ecx-edx: $_cpuid"
 	_mockvarname="SMC_MOCK_CPUID_${_leaf}_${_subleaf}"
 	if [ -n "$(eval echo \$$_mockvarname)" ]; then
 		_cpuid="$(eval echo \$$_mockvarname)"
@@ -1594,6 +1636,18 @@ is_coreos()
 parse_cpu_details()
 {
 	[ "$parse_cpu_details_done" = 1 ] && return 0
+
+	if command -v nproc >/dev/null; then
+	       number_of_cores=$(nproc)
+	elif echo "$os" | grep -q BSD; then
+	       number_of_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
+	elif [ -e "$procfs/cpuinfo" ]; then
+	       number_of_cores=$(grep -c ^processor "$procfs/cpuinfo" 2>/dev/null || echo 1)
+	else
+	       # if we don't know, default to 1 CPU
+	       number_of_cores=1
+	fi
+	max_core_id=$(( number_of_cores - 1 ))
 
 	if [ -e "$procfs/cpuinfo" ]; then
 		cpu_vendor=$(  grep '^vendor_id'  "$procfs/cpuinfo" | awk '{print $3}' | head -1)
@@ -2108,6 +2162,11 @@ fi
 parse_cpu_details
 get_cmdline
 
+if [ "$opt_cpu" != all ] && [ "$opt_cpu" -gt "$max_core_id" ]; then
+	echo "$0: error: --cpu can't be higher than $max_core_id, got $opt_cpu" >&2
+	exit 255
+fi
+
 if [ "$opt_live" = 1 ]; then
 	# root check (only for live mode, for offline mode, we already checked if we could read the files)
 	if [ "$(id -u)" -ne 0 ]; then
@@ -2363,45 +2422,73 @@ sys_interface_check()
 	return 0
 }
 
-number_of_cpus()
-{
-	if echo "$os" | grep -q BSD; then
-		n=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
-	elif [ -e "$procfs/cpuinfo" ]; then
-		n=$(grep -c ^processor "$procfs/cpuinfo" 2>/dev/null || echo 1)
-	else
-		# if we don't know, default to 1 CPU
-		n=1
-	fi
-	return "$n"
-}
-
 # write_msr
 # param1 (mandatory): MSR, can be in hex or decimal.
 # param2 (optional): CPU index, starting from 0. Default 0.
+WRITE_MSR_RET_OK=0
+WRITE_MSR_RET_KO=1
+WRITE_MSR_RET_ERR=2
+WRITE_MSR_RET_LOCKDOWN=3
 write_msr()
 {
-	_msr_dec=$(( $1 ))
+	if [ "$opt_cpu" != all ]; then
+		# we only have one core to write to, do it and return the result
+		write_msr_one_core $opt_cpu "$@"
+		return $?
+	fi
+
+	# otherwise we must write on all cores
+	for _core in $(seq 0 $max_core_id); do
+		write_msr_one_core "$_core" "$@"; ret=$?
+		if [ "$_core" = 0 ]; then
+			# save the result of the first core, for comparison with the others
+			_first_core_ret=$ret
+		else
+			# compare first core with the other ones
+			if [ $_first_core_ret != $ret ]; then
+				write_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
+				return $WRITE_MSR_RET_ERR
+			fi
+		fi
+	done
+	# if we're here, all cores agree, return the result
+	return $ret
+}
+
+write_msr_one_core()
+{
+	_core="$1"
+	_msr_dec=$(( $2 ))
 	_msr=$(printf "0x%x" "$_msr_dec")
-	_cpu="$2"
-	[ -z "$_cpu" ] && _cpu=0
+
+	write_msr_msg='unknown error'
 
 	_mockvarname="SMC_MOCK_WRMSR_${_msr}_RET"
 	# shellcheck disable=SC2086
 	if [ -n "$(eval echo \$$_mockvarname)" ]; then
 		_debug "write_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
 		mocked=1
-		[ "$(eval echo \$$_mockvarname)" = 202 ] && msr_locked_down=1
+		[ "$(eval echo \$$_mockvarname)" = $WRITE_MSR_RET_LOCKDOWN ] && msr_locked_down=1
 		return "$(eval echo \$$_mockvarname)"
 	fi
 
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+		load_msr
+	fi
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		read_msr_msg="is msr kernel module available?"
+		return $WRITE_MSR_RET_ERR
+	fi
+
 	if [ "$os" != Linux ]; then
-		cpucontrol -m "$_msr=0" "/dev/cpuctl$_cpu" >/dev/null 2>&1; ret=$?
+		cpucontrol -m "$_msr=0" "/dev/cpuctl$_core" >/dev/null 2>&1; ret=$?
 	else
 		# for Linux
 		# convert to decimal
-		if [ ! -w /dev/cpu/"$_cpu"/msr ]; then
-			ret=200 # permission error
+		if [ ! -w /dev/cpu/"$_core"/msr ]; then
+			write_msr_msg="No write permission on /dev/cpu/$_core/msr"
+			return $WRITE_MSR_RET_ERR
 		# if wrmsr is available, use it
 		elif command -v wrmsr >/dev/null 2>&1 && [ "$SMC_NO_WRMSR" != 1 ]; then
 			_debug "write_msr: using wrmsr"
@@ -2410,15 +2497,16 @@ write_msr()
 		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
 			_debug "write_msr: using perl"
 			ret=1
-			perl -e "open(M,'>','/dev/cpu/$_cpu/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
+			perl -e "open(M,'>','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
 		# fallback to dd if it supports seek_bytes
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; then
 			_debug "write_msr: using dd"
-			dd if=/dev/zero of=/dev/cpu/"$_cpu"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
+			dd if=/dev/zero of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
 		else
 			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=201")
-			return 201 # missing tool error
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_ERR")
+			write_msr_msg="missing tool, install either msr-tools or perl"
+			return $WRITE_MSR_RET_ERR
 		fi
 		if [ "$ret" != 0 ]; then
 			# * Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
@@ -2429,22 +2517,27 @@ write_msr()
 			# * we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
 			if dmesg | grep -qF "msr: Direct access to MSR"; then
 				_debug "write_msr: locked down kernel detected (Red Hat / Fedora)"
-				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=202")
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
 				msr_locked_down=1
-				msr_locked_down_msg="your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
-				return 202 # lockdown error
+				write_msr_msg="your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+				return $WRITE_MSR_RET_LOCKDOWN
 			elif dmesg | grep -qF "raw MSR access is restricted"; then
 				_debug "write_msr: locked down kernel detected (vanilla)"
-				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=202")
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
 				msr_locked_down=1
-				msr_locked_down_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
-				return 202 # lockdown error
+				write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
+				return $WRITE_MSR_RET_LOCKDOWN
 			fi
 		fi
 	fi
+
 	# normalize ret
-	[ "$ret" != 0 ] && ret=1
-	_debug "write_msr: for cpu $_cpu on msr $_msr, ret=$ret"
+	if [ "$ret" = 0 ]; then
+		ret=$WRITE_MSR_RET_OK
+	else
+		ret=$WRITE_MSR_RET_KO
+	fi
+	_debug "write_msr: for cpu $_core on msr $_msr, ret=$ret"
 	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$ret")
 	return $ret
 }
@@ -2453,14 +2546,44 @@ write_msr()
 # param1 (mandatory): MSR, can be in hex or decimal.
 # param2 (optional): CPU index, starting from 0. Default 0.
 # returned data is available in $read_msr_value
+READ_MSR_RET_OK=0
+READ_MSR_RET_KO=1
+READ_MSR_RET_ERR=2
 read_msr()
 {
-	_msr_dec=$(( $1 ))
+	if [ "$opt_cpu" != all ]; then
+		# we only have one core to read, do it and return the result
+		read_msr_one_core $opt_cpu "$@"
+		return $?
+	fi
+
+	# otherwise we must read all cores
+	for _core in $(seq 0 $max_core_id); do
+		read_msr_one_core "$_core" "$@"; ret=$?
+		if [ "$_core" = 0 ]; then
+			# save the result of the first core, for comparison with the others
+			_first_core_ret=$ret
+			_first_core_value=$read_msr_value
+		else
+			# compare first core with the other ones
+			if [ $_first_core_ret != $ret ] || [ "$_first_core_value" != "$read_msr_value" ]; then
+				read_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
+				return $READ_MSR_RET_ERR
+			fi
+		fi
+	done
+	# if we're here, all cores agree, return the result
+	return $ret
+}
+
+read_msr_one_core()
+{
+	_core="$1"
+	_msr_dec=$(( $2 ))
 	_msr=$(printf "0x%x" "$_msr_dec")
-	_cpu="$2"
-	[ -z "$_cpu" ] && _cpu=0
 
 	read_msr_value=''
+	read_msr_msg='unknown error'
 
 	_mockvarname="SMC_MOCK_RDMSR_${_msr}"
 	# shellcheck disable=SC2086
@@ -2468,7 +2591,7 @@ read_msr()
 		read_msr_value="$(eval echo \$$_mockvarname)"
 		_debug "read_msr: MOCKING enabled for msr $_msr, returning $read_msr_value"
 		mocked=1
-		return 0
+		return $READ_MSR_RET_OK
 	fi
 
 	_mockvarname="SMC_MOCK_RDMSR_${_msr}_RET"
@@ -2479,12 +2602,21 @@ read_msr()
 		return "$(eval echo \$$_mockvarname)"
 	fi
 
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+		load_msr
+	fi
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		read_msr_msg="is msr kernel module available?"
+		return $READ_MSR_RET_ERR
+	fi
+
 	if [ "$os" != Linux ]; then
 		# for BSD
-		_msr=$(cpucontrol -m "$_msr" "/dev/cpuctl$_cpu" 2>/dev/null); ret=$?
+		_msr=$(cpucontrol -m "$_msr" "/dev/cpuctl$_core" 2>/dev/null); ret=$?
 		if [ $ret -ne 0 ]; then
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=1")
-			return 1
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_KO")
+			return $READ_MSR_RET_KO
 		fi
 		# MSR 0x10: 0x000003e1 0xb106dded
 		_msr_h=$(echo "$_msr" | awk '{print $3}');
@@ -2492,9 +2624,10 @@ read_msr()
 		read_msr_value=$(( _msr_h << 32 | _msr_l ))
 	else
 		# for Linux
-		if [ ! -r /dev/cpu/"$_cpu"/msr ]; then
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=200")
-			return 200 # permission error
+		if [ ! -r /dev/cpu/"$_core"/msr ]; then
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_ERR")
+			read_msr_msg="No read permission for /dev/cpu/$_core/msr"
+			return $READ_MSR_RET_ERR
 		# if rdmsr is available, use it
 		elif command -v rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
 			_debug "read_msr: using rdmsr on $_msr"
@@ -2502,27 +2635,28 @@ read_msr()
 		# or if we have perl, use it, any 5.x version will work
 		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
 			_debug "read_msr: using perl on $_msr"
-			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_cpu/msr') and seek(M,$_msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
+			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
 		# fallback to dd if it supports skip_bytes
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null; then
 			_debug "read_msr: using dd on $_msr"
-			read_msr_value=$(dd if=/dev/cpu/"$_cpu"/msr bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
+			read_msr_value=$(dd if=/dev/cpu/"$_core"/msr bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
 		else
 			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=201")
-			return 201 # missing tool error
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_ERR")
+			read_msr_msg='missing tool, install either msr-tools or perl'
+			return $READ_MSR_RET_ERR
 		fi
 		if [ -z "$read_msr_value" ]; then
 			# MSR doesn't exist, don't check for $? because some versions of dd still return 0!
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=1")
-			return 1
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_KO")
+			return $READ_MSR_RET_KO
 		fi
-	# remove sparse spaces od might give us
-	read_msr_value=$(( read_msr_value ))
+		# remove sparse spaces od might give us
+		read_msr_value=$(( read_msr_value ))
 	fi
 	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}='$read_msr_value'")
 	_debug "read_msr: MSR=$_msr value is $read_msr_value"
-	return 0
+	return $READ_MSR_RET_OK
 }
 
 check_cpu()
@@ -2536,55 +2670,17 @@ check_cpu()
 	_info     "* Hardware support (CPU microcode) for mitigation techniques"
 	_info     "  * Indirect Branch Restricted Speculation (IBRS)"
 	_info_nol "    * SPEC_CTRL MSR is available: "
-	number_of_cpus
-	ncpus=$?
-	idx_max_cpu=$((ncpus-1))
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-		load_msr
-	fi
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		spec_ctrl_msr=-1
-		pstatus yellow UNKNOWN "is msr kernel module available?"
+	# the new MSR 'SPEC_CTRL' is at offset 0x48
+	read_msr 0x48; ret=$?
+	if [ $ret = $READ_MSR_RET_OK ]; then
+		spec_ctrl_msr=1
+		pstatus green YES
+	elif [ $ret = $READ_MSR_RET_KO ]; then
+		spec_ctrl_msr=0
+		pstatus yellow NO
 	else
-		# the new MSR 'SPEC_CTRL' is at offset 0x48
-		# we check if we have it for all cpus
-		val=0
-		cpu_mismatch=0
-		for i in $(seq 0 "$idx_max_cpu")
-		do
-			read_msr 0x48 "$i"; ret=$?
-			if [ "$i" -eq 0 ]; then
-				val=$ret
-			else
-				if [ "$ret" -eq $val ]; then
-					continue
-				else
-					cpu_mismatch=1
-				fi
-			fi
-		done
-		if [ $val -eq 0 ]; then
-			if [ $cpu_mismatch -eq 0 ]; then
-				spec_ctrl_msr=1
-				pstatus green YES
-			else
-				spec_ctrl_msr=1
-				pstatus green YES "But not in all CPUs"
-			fi
-		elif [ $val -eq 200 ]; then
-			pstatus yellow UNKNOWN "is msr kernel module available?"
-			spec_ctrl_msr=-1
-		elif [ $val -eq 201 ]; then
-			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
-			spec_ctrl_msr=-1
-		elif [ $val -eq 202 ]; then
-			pstatus yellow UNKNOWN "$msr_locked_down_msg"
-			spec_ctrl_msr=-1
-		else
-			spec_ctrl_msr=0
-			pstatus yellow NO
-		fi
+		spec_ctrl_msr=-1
+		pstatus yellow UNKNOWN "$read_msr_msg"
 	fi
 
 	_info_nol "    * CPU indicates IBRS capability: "
@@ -2642,44 +2738,14 @@ check_cpu()
 	# IBPB
 	_info     "  * Indirect Branch Prediction Barrier (IBPB)"
 	_info_nol "    * PRED_CMD MSR is available: "
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		pstatus yellow UNKNOWN "is msr kernel module available?"
-	elif [ ! -r /dev/cpu/0/msr ] && [ ! -w /dev/cpuctl0 ]; then
-		pstatus yellow UNKNOWN "are you root?"
+	# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
+	write_msr 0x49; ret=$?
+	if [ $ret = $WRITE_MSR_RET_OK ]; then
+		pstatus green YES
+	elif [ $ret = $WRITE_MSR_RET_KO ]; then
+		pstatus yellow NO
 	else
-		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
-		# we test if of all cpus
-		val=0
-		cpu_mismatch=0
-		for i in $(seq 0 "$idx_max_cpu")
-		do
-			write_msr 0x49 "$i"; ret=$?
-			if [ "$i" -eq 0 ]; then
-				val=$ret
-			else
-				if [ "$ret" -eq $val ]; then
-					continue
-				else
-					cpu_mismatch=1
-				fi
-			fi
-		done
-
-		if [ $val -eq 0 ]; then
-			if [ $cpu_mismatch -eq 0 ]; then
-				pstatus green YES
-			else
-				pstatus green YES "But not in all CPUs"
-			fi
-		elif [ $val -eq 200 ]; then
-			pstatus yellow UNKNOWN "is msr kernel module available?"
-		elif [ $val -eq 201 ]; then
-			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
-		elif [ $val -eq 202 ]; then
-			pstatus yellow UNKNOWN "$msr_locked_down_msg"
-		else
-			pstatus yellow NO
-		fi
+		pstatus yellow UNKNOWN "$write_msr_msg"
 	fi
 
 	_info_nol "    * CPU indicates IBPB capability: "
@@ -2825,46 +2891,17 @@ check_cpu()
 
 	_info "  * L1 data cache invalidation"
 	_info_nol "    * FLUSH_CMD MSR is available: "
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		pstatus yellow UNKNOWN "is msr kernel module available?"
-	elif [ ! -r /dev/cpu/0/msr ] && [ ! -w /dev/cpuctl0 ]; then
-		pstatus yellow UNKNOWN "are you root?"
+	# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+	write_msr 0x10b; ret=$?
+	if [ $ret = $WRITE_MSR_RET_OK ]; then
+		pstatus green YES
+		cpu_flush_cmd=1
+	elif [ $ret = $WRITE_MSR_RET_KO ]; then
+		pstatus yellow NO
 	else
-		# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
-		# we test if of all cpus
-		val=0
-		cpu_mismatch=0
-		for i in $(seq 0 "$idx_max_cpu")
-		do
-			write_msr 0x10b "$i"; ret=$?
-			if [ "$i" -eq 0 ]; then
-				val=$ret
-			else
-				if [ "$ret" -eq $val ]; then
-					continue
-				else
-					cpu_mismatch=1
-				fi
-			fi
-		done
-
-		if [ $val -eq 0 ]; then
-			if [ $cpu_mismatch -eq 0 ]; then
-				pstatus green YES
-				cpu_flush_cmd=1
-			else
-				pstatus green YES "But not in all CPUs"
-			fi
-		elif [ $val -eq 200 ]; then
-			pstatus yellow UNKNOWN "is msr kernel module available?"
-		elif [ $val -eq 201 ]; then
-			pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
-		elif [ $val -eq 202 ]; then
-			pstatus yellow UNKNOWN "$msr_locked_down_msg"
-		else
-			pstatus yellow NO
-		fi
+		pstatus yellow UNKNOWN "$write_msr_msg"
 	fi
+
 	# CPUID of L1D
 	_info_nol "    * CPU indicates L1D flush capability: "
 	read_cpuid 0x7 0x0 $EDX 28 1 1; ret=$?
@@ -2977,31 +3014,9 @@ check_cpu()
 			capabilities_pschange_msc_no=0
 			capabilities_tsx_ctrl_msr=0
 			pstatus yellow NO
-		elif [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-			spec_ctrl_msr=-1
-			pstatus yellow UNKNOWN "is msr kernel module available?"
 		else
 			# the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
-			# we check if we have it for all cpus
-			val=0
-			val_cap_msr=0
-			cpu_mismatch=0
-			for i in $(seq 0 "$idx_max_cpu")
-			do
-				read_msr 0x10a "$i"; ret=$?
-				capabilities=$read_msr_value
-				if [ "$i" -eq 0 ]; then
-					val=$ret
-					val_cap_msr=$capabilities
-				else
-					if [ "$ret" -eq "$val" ] && [ "$capabilities" -eq "$val_cap_msr" ]; then
-						continue
-					else
-						cpu_mismatch=1
-					fi
-				fi
-			done
-			capabilities=$val_cap_msr
+			read_msr 0x10a; ret=$?
 			capabilities_rdcl_no=0
 			capabilities_taa_no=0
 			capabilities_mds_no=0
@@ -3011,7 +3026,8 @@ check_cpu()
 			capabilities_ssb_no=0
 			capabilities_pschange_msc_no=0
 			capabilities_tsx_ctrl_msr=0
-			if [ $val -eq 0 ]; then
+			if [ $ret = $READ_MSR_RET_OK ]; then
+				capabilities=$read_msr_value
 				# https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/msr-index.h#n82
 				_debug "capabilities MSR is $capabilities (decimal)"
 				[ $(( capabilities >> 0 & 1 )) -eq 1 ] && capabilities_rdcl_no=1
@@ -3025,22 +3041,14 @@ check_cpu()
 				[ $(( capabilities >> 8 & 1 )) -eq 1 ] && capabilities_taa_no=1
 				_debug "capabilities says rdcl_no=$capabilities_rdcl_no ibrs_all=$capabilities_ibrs_all rsba=$capabilities_rsba l1dflush_no=$capabilities_l1dflush_no ssb_no=$capabilities_ssb_no mds_no=$capabilities_mds_no taa_no=$capabilities_taa_no pschange_msc_no=$capabilities_pschange_msc_no"
 				if [ "$capabilities_ibrs_all" = 1 ]; then
-					if [ $cpu_mismatch -eq 0 ]; then
-						pstatus green YES
-					else
-						pstatus green YES "But not in all CPUs"
-					fi
+					pstatus green YES
 				else
 					pstatus yellow NO
 				fi
-			elif [ $val -eq 200 ]; then
-				pstatus yellow UNKNOWN "is msr kernel module available?"
-			elif [ $val -eq 201 ]; then
-				pstatus yellow UNKNOWN "missing tool, install either msr-tools or perl"
-			elif [ $val -eq 202 ]; then
-				pstatus yellow UNKNOWN "$msr_locked_down_msg"
-			else
+			elif [ $ret = $READ_MSR_RET_KO ]; then
 				pstatus yellow NO
+			else
+				pstatus yellow UNKNOWN "$read_msr_msg"
 			fi
 		fi
 
@@ -3117,8 +3125,8 @@ check_cpu()
 		fi
 
 		if [ "$capabilities_tsx_ctrl_msr" = 1 ]; then
-			read_msr 0x122 0; ret=$?
-			if [ "$ret" = 0 ]; then
+			read_msr 0x122; ret=$?
+			if [ "$ret" = $READ_MSR_RET_OK ]; then
 				tsx_ctrl_msr=$read_msr_value
 				tsx_ctrl_msr_rtm_disable=$(( tsx_ctrl_msr >> 0 & 1 ))
 				tsx_ctrl_msr_cpuid_clear=$(( tsx_ctrl_msr >> 1 & 1 ))
@@ -3188,9 +3196,9 @@ check_cpu()
 	if [ $ret = $READ_CPUID_RET_OK ]; then
 		pstatus blue YES
 		cpuid_srbds=1
-		read_msr 0x123 0; ret=$?
-		if [ $ret -eq 0 ]; then
-			if [ $read_msr_value -eq 0 ]; then
+		read_msr 0x123; ret=$?
+		if [ $ret = $READ_MSR_RET_OK ]; then
+			if [ $read_msr_value = 0 ]; then
 				#SRBDS mitigation control exists and is enabled via microcode
 				srbds_on=1
 			else
@@ -5210,7 +5218,7 @@ check_mds_linux()
 		_info_nol "* Kernel supports using MD_CLEAR mitigation: "
 		kernel_md_clear=''
 		kernel_md_clear_can_tell=1
-		if [ "$opt_live" = 1 ] && grep ^flags $procfs/cpuinfo | grep -qw md_clear; then
+		if [ "$opt_live" = 1 ] && grep ^flags "$procfs/cpuinfo" | grep -qw md_clear; then
 			kernel_md_clear="md_clear found in $procfs/cpuinfo"
 			pstatus green YES "$kernel_md_clear"
 		fi
@@ -5700,7 +5708,7 @@ exit 0  # ok
 # The builtin version follows, but the user can download an up-to-date copy (to be stored in his $HOME) by using --update-fwdb
 # To update the builtin version itself (by *modifying* this very file), use --update-builtin-fwdb
 
-# %%% MCEDB v220+i20220208
+# %%% MCEDB v221+i20220208
 # I,0x00000611,0x00000B27,19961218
 # I,0x00000612,0x000000C6,19961210
 # I,0x00000616,0x000000C6,19961210
@@ -5857,9 +5865,9 @@ exit 0  # ok
 # I,0x000206C2,0x0000001F,20180508
 # I,0x000206D0,0x80000006,20100816
 # I,0x000206D1,0x80000106,20101201
-# I,0x000206D2,0x9584020C,20110622
-# I,0x000206D3,0x80000304,20110420
-# I,0x000206D5,0x00000513,20111013
+# I,0x000206D2,0xAF506958,20110714
+# I,0x000206D3,0xAF50696A,20110816
+# I,0x000206D5,0xAF5069E5,20120118
 # I,0x000206D6,0x00000621,20200304
 # I,0x000206D7,0x0000071A,20200324
 # I,0x000206E0,0xE3493401,20090108
@@ -5897,14 +5905,14 @@ exit 0  # ok
 # I,0x000306D2,0xFFFF0009,20131219
 # I,0x000306D3,0xE3121338,20140825
 # I,0x000306D4,0x0000002F,20191112
-# I,0x000306E0,0x00000008,20120726
-# I,0x000306E2,0x0000020D,20130321
+# I,0x000306E0,0xE920080F,20121113
+# I,0x000306E2,0xE9220827,20130523
 # I,0x000306E3,0x00000308,20130321
 # I,0x000306E4,0x0000042E,20190314
 # I,0x000306E6,0x00000600,20130619
 # I,0x000306E7,0x00000715,20190314
 # I,0x000306F0,0xFFFF0017,20130730
-# I,0x000306F1,0x00000014,20140110
+# I,0x000306F1,0xD141D629,20140416
 # I,0x000306F2,0x00000049,20210811
 # I,0x000306F3,0x0000000D,20160211
 # I,0x000306F4,0x0000001A,20210524
@@ -6002,8 +6010,8 @@ exit 0  # ok
 # I,0x000906A0,0x0000001C,20210614
 # I,0x000906A1,0x0000011F,20211104
 # I,0x000906A2,0x00000315,20220102
-# I,0x000906A3,0x00000418,20220207
-# I,0x000906A4,0x00000418,20220207
+# I,0x000906A3,0x00000419,20220220
+# I,0x000906A4,0x00000419,20220220
 # I,0x000906C0,0x2400001F,20210809
 # I,0x000906E9,0x000000EC,20210429
 # I,0x000906EA,0x000000EC,20210428
