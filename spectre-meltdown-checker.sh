@@ -295,8 +295,8 @@ cve2name()
 	esac
 }
 
-is_cpu_vulnerable_cached=0
-_is_cpu_vulnerable_cached()
+is_cpu_affected_cached=0
+_is_cpu_affected_cached()
 {
 	# shellcheck disable=SC2086
 	case "$1" in
@@ -315,19 +315,19 @@ _is_cpu_vulnerable_cached()
 		CVE-2019-11135) return $variant_taa;;
 		CVE-2018-12207) return $variant_itlbmh;;
 		CVE-2020-0543) return $variant_srbds;;
-		*) echo "$0: error: invalid variant '$1' passed to is_cpu_vulnerable()" >&2; exit 255;;
+		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
 
-is_cpu_vulnerable()
+is_cpu_affected()
 {
 	# param: one of the $supported_cve_list items
-	# returns 0 if vulnerable, 1 if not vulnerable
+	# returns 0 if affected, 1 if not affected
 	# (note that in shell, a return of 0 is success)
-	# by default, everything is vulnerable, we work in a "whitelist" logic here.
-	# usage: is_cpu_vulnerable CVE-xxxx-yyyy && do something if vulnerable
-	if [ "$is_cpu_vulnerable_cached" = 1 ]; then
-		_is_cpu_vulnerable_cached "$1"
+	# by default, everything is affected, we work in a "whitelist" logic here.
+	# usage: is_cpu_affected CVE-xxxx-yyyy && do something if affected
+	if [ "$is_cpu_affected_cached" = 1 ]; then
+		_is_cpu_affected_cached "$1"
 		return $?
 	fi
 
@@ -350,17 +350,17 @@ is_cpu_vulnerable()
 		[ -z "$variant_mfbds" ] && variant_mfbds=immune
 		[ -z "$variant_mlpds" ] && variant_mlpds=immune
 		[ -z "$variant_mdsum" ] && variant_mdsum=immune
-		_debug "is_cpu_vulnerable: cpu not affected by Microarchitectural Data Sampling"
+		_debug "is_cpu_affected: cpu not affected by Microarchitectural Data Sampling"
 	fi
 
 	if is_cpu_taa_free; then
 		[ -z "$variant_taa" ] && variant_taa=immune
-		_debug "is_cpu_vulnerable: cpu not affected by TSX Asynhronous Abort"
+		_debug "is_cpu_affected: cpu not affected by TSX Asynhronous Abort"
 	fi
 
 	if is_cpu_srbds_free; then
 		[ -z "$variant_srbds" ] && variant_srbds=immune
-		_debug "is_cpu_vulnerable: cpu not affected by Special Register Buffer Data Sampling"
+		_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
 	fi
 
 	if is_cpu_specex_free; then
@@ -378,8 +378,8 @@ is_cpu_vulnerable()
 		variant_srbds=immune
 	elif is_intel; then
 		# Intel
-		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not vulnerable
-		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown vulnerable
+		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
+		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown affected
 		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
 		if echo "$cpu_friendly_name" | grep -qE 'Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K?'; then
 			variant1=vuln
@@ -388,36 +388,36 @@ is_cpu_vulnerable()
 		fi
 		if [ "$capabilities_rdcl_no" = 1 ]; then
 			# capability bit for future Intel processor that will explicitly state
-			# that they're not vulnerable to Meltdown
+			# that they're not affected to Meltdown
 			# this var is set in check_cpu()
 			[ -z "$variant3" ]    && variant3=immune
 			[ -z "$variantl1tf" ] && variantl1tf=immune
-			_debug "is_cpu_vulnerable: RDCL_NO is set so not vuln to meltdown nor l1tf"
+			_debug "is_cpu_affected: RDCL_NO is set so not vuln to meltdown nor l1tf"
 		fi
 		if [ "$capabilities_ssb_no" = 1 ]; then
 			# capability bit for future Intel processor that will explicitly state
-			# that they're not vulnerable to Variant 4
+			# that they're not affected to Variant 4
 			# this var is set in check_cpu()
 			[ -z "$variant4" ] && variant4=immune
-			_debug "is_cpu_vulnerable: SSB_NO is set so not vuln to variant4"
+			_debug "is_cpu_affected: SSB_NO is set so not vuln to variant4"
 		fi
 		if is_cpu_ssb_free; then
 			[ -z "$variant4" ] && variant4=immune
-			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
+			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
 		# variant 3a
 		if [ "$cpu_family" = 6 ]; then
 			if [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] || [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
-				_debug "is_cpu_vulnerable: xeon phi immune to variant 3a"
+				_debug "is_cpu_affected: xeon phi immune to variant 3a"
 				[ -z "$variant3a" ] && variant3a=immune
 			elif [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ]; then
 					# https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00115.html
 					# https://github.com/speed47/spectre-meltdown-checker/issues/310
-					# => silvermont CPUs (aka cherry lake for tablets and brawsell for mobile/desktop) don't seem to be vulnerable
-					# => goldmont ARE vulnerable
-					_debug "is_cpu_vulnerable: silvermont immune to variant 3a"
+					# => silvermont CPUs (aka cherry lake for tablets and brawsell for mobile/desktop) don't seem to be affected
+					# => goldmont ARE affected
+					_debug "is_cpu_affected: silvermont immune to variant 3a"
 					[ -z "$variant3a" ] && variant3a=immune
 			fi
 		fi
@@ -441,18 +441,18 @@ is_cpu_vulnerable()
 				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL"     ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
 
-				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune to l1tf"
+				_debug "is_cpu_affected: intel family 6 but model known to be immune to l1tf"
 				[ -z "$variantl1tf" ] && variantl1tf=immune
 			else
-				_debug "is_cpu_vulnerable: intel family 6 is vuln to l1tf"
+				_debug "is_cpu_affected: intel family 6 is vuln to l1tf"
 				variantl1tf=vuln
 			fi
 		elif [ "$cpu_family" -lt 6 ]; then
-			_debug "is_cpu_vulnerable: intel family < 6 is immune to l1tf"
+			_debug "is_cpu_affected: intel family < 6 is immune to l1tf"
 			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
 	elif is_amd || is_hygon; then
-		# AMD revised their statement about variant2 => vulnerable
+		# AMD revised their statement about variant2 => affected
 		# https://www.amd.com/en/corporate/speculative-execution
 		variant1=vuln
 		variant2=vuln
@@ -462,7 +462,7 @@ is_cpu_vulnerable()
 		[ -z "$variant3a" ] && variant3a=immune
 		if is_cpu_ssb_free; then
 			[ -z "$variant4" ] && variant4=immune
-			_debug "is_cpu_vulnerable: cpu not affected by speculative store bypass so not vuln to variant4"
+			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
 		variantl1tf=immune
 	elif [ "$cpu_vendor" = CAVIUM ]; then
@@ -495,55 +495,55 @@ is_cpu_vulnerable()
 				# part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b d0c         d0d
 				# arch  7? 7? 7   7   7   7   7   8   8   8   8   8   8           8
 				#
-				# Whitelist identified non-vulnerable processors, use vulnerability information from 
+				# Whitelist identified non-affected processors, use vulnerability information from 
 				# https://developer.arm.com/support/arm-security-updates/speculative-processor-vulnerability
 				# Partnumbers can be found here:
 				# https://github.com/gcc-mirror/gcc/blob/master/gcc/config/arm/arm-cpus.in
 				#
 				# Maintain cumulative check of vulnerabilities -
-				# if at least one of the cpu is vulnerable, then the system is vulnerable
+				# if at least one of the cpu is affected, then the system is affected
 				if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc08 -e 0xc09 -e 0xc0d -e 0xc0e; then
 					variant1=vuln
 					variant2=vuln
 					[ -z "$variant3" ] && variant3=immune
 					[ -z "$variant3a" ] && variant3a=immune
 					[ -z "$variant4" ] && variant4=immune
-					_debug "checking cpu$i: armv7 A8/A9/A12/A17 non vulnerable to variants 3, 3a & 4"
+					_debug "checking cpu$i: armv7 A8/A9/A12/A17 non affected to variants 3, 3a & 4"
 				elif [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc0f; then
 					variant1=vuln
 					variant2=vuln
 					[ -z "$variant3" ] && variant3=immune
 					variant3a=vuln
 					[ -z "$variant4" ] && variant4=immune
-					_debug "checking cpu$i: armv7 A15 non vulnerable to variants 3 & 4"
+					_debug "checking cpu$i: armv7 A15 non affected to variants 3 & 4"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd07 -e 0xd08; then
 					variant1=vuln
 					variant2=vuln
 					[ -z "$variant3" ] && variant3=immune
 					variant3a=vuln
 					variant4=vuln
-					_debug "checking cpu$i: armv8 A57/A72 non vulnerable to variants 3"
+					_debug "checking cpu$i: armv8 A57/A72 non affected to variants 3"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd09; then
 					variant1=vuln
 					variant2=vuln
 					[ -z "$variant3" ] && variant3=immune
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
-					_debug "checking cpu$i: armv8 A73 non vulnerable to variants 3 & 3a"
+					_debug "checking cpu$i: armv8 A73 non affected to variants 3 & 3a"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0a; then
 					variant1=vuln
 					variant2=vuln
 					variant3=vuln
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
-					_debug "checking cpu$i: armv8 A75 non vulnerable to variant 3a"
+					_debug "checking cpu$i: armv8 A75 non affected to variant 3a"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0b -e 0xd0c -e 0xd0d; then
 					variant1=vuln
 					[ -z "$variant2" ] && variant2=immune
 					[ -z "$variant3" ] && variant3=immune
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
-					_debug "checking cpu$i: armv8 A76/A77/NeoverseN1 non vulnerable to variant 2, 3 & 3a"
+					_debug "checking cpu$i: armv8 A76/A77/NeoverseN1 non affected to variant 2, 3 & 3a"
 				elif [ "$cpuarch" -le 7 ] || { [ "$cpuarch" = 8 ] && [ $(( cpupart )) -lt $(( 0xd07 )) ]; } ; then
 					[ -z "$variant1" ] && variant1=immune
 					[ -z "$variant2" ] && variant2=immune
@@ -560,7 +560,7 @@ is_cpu_vulnerable()
 					_debug "checking cpu$i: arm unknown arch$cpuarch part$cpupart, considering vuln"
 				fi
 			fi
-			_debug "is_cpu_vulnerable: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
+			_debug "is_cpu_affected: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 		variantl1tf=immune
 	fi
@@ -584,22 +584,22 @@ is_cpu_vulnerable()
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
-				_debug "is_cpu_vulnerable: intel family 6 but model known to be immune to itlbmh"
+				_debug "is_cpu_affected: intel family 6 but model known to be immune to itlbmh"
 				[ -z "$variant_itlbmh" ] && variant_itlbmh=immune
 			else
-				_debug "is_cpu_vulnerable: intel family 6 is vuln to itlbmh"
+				_debug "is_cpu_affected: intel family 6 is vuln to itlbmh"
 				variant_itlbmh=vuln
 			fi
 		elif [ "$cpu_family" -lt 6 ]; then
-			_debug "is_cpu_vulnerable: intel family < 6 is immune to itlbmh"
+			_debug "is_cpu_affected: intel family < 6 is immune to itlbmh"
 			[ -z "$variant_itlbmh" ] && variant_itlbmh=immune
 		fi
 	else
-		_debug "is_cpu_vulnerable: non-intel not vulnerable to itlbmh"
+		_debug "is_cpu_affected: non-intel not affected to itlbmh"
 		[ -z "$variant_itlbmh" ] && variant_itlbmh=immune
 	fi
 
-	_debug "is_cpu_vulnerable: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
+	_debug "is_cpu_affected: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
 	[ "$variant1"       = "immune" ] && variant1=1       || variant1=0
 	[ "$variant2"       = "immune" ] && variant2=1       || variant2=0
 	[ "$variant3"       = "immune" ] && variant3=1       || variant3=0
@@ -614,11 +614,11 @@ is_cpu_vulnerable()
 	[ "$variant_itlbmh" = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
 	[ "$variant_srbds" = "immune" ] && variant_srbds=1 || variant_srbds=0
 	variantl1tf_sgx="$variantl1tf"
-	# even if we are vulnerable to L1TF, if there's no SGX, we're not vulnerable to the original foreshadow
+	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
-	_debug "is_cpu_vulnerable: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
-	is_cpu_vulnerable_cached=1
-	_is_cpu_vulnerable_cached "$1"
+	_debug "is_cpu_affected: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
+	is_cpu_affected_cached=1
+	_is_cpu_affected_cached "$1"
 	return $?
 }
 
@@ -685,7 +685,7 @@ is_cpu_mds_free()
 		[ "$capabilities_mds_no" = 1 ] && return 0
 	fi
 
-	# official statement from AMD says none of their CPUs are vulnerable
+	# official statement from AMD says none of their CPUs are affected
 	# https://www.amd.com/en/corporate/product-security
 	# https://www.amd.com/system/files/documents/security-whitepaper.pdf
 	if is_amd; then
@@ -1661,7 +1661,7 @@ parse_cpu_details()
 		if grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' "$procfs/cpuinfo"; then
 			cpu_vendor='ARM'
 			# some devices (phones or other) have several ARMs and as such different part numbers,
-			# an example is "bigLITTLE", so we need to store the whole list, this is needed for is_cpu_vulnerable
+			# an example is "bigLITTLE", so we need to store the whole list, this is needed for is_cpu_affected
 			cpu_part_list=$(awk '/CPU part/         {print $4}' "$procfs/cpuinfo")
 			cpu_arch_list=$(awk '/CPU architecture/ {print $3}' "$procfs/cpuinfo")
 			# take the first one to fill the friendly name, do NOT quote the vars below
@@ -3078,7 +3078,7 @@ check_cpu()
 			fi
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to Meltdown/L1TF (RDCL_NO): "
+		_info_nol "  * CPU explicitly indicates not being affected by Meltdown/L1TF (RDCL_NO): "
 		if [ "$capabilities_rdcl_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_rdcl_no" = 1 ]; then
@@ -3087,7 +3087,7 @@ check_cpu()
 			pstatus yellow NO
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to Variant 4 (SSB_NO): "
+		_info_nol "  * CPU explicitly indicates not being affected by Variant 4 (SSB_NO): "
 		if [ "$capabilities_ssb_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_ssb_no" = 1 ] || [ "$amd_ssb_no" = 1 ] || [ "$hygon_ssb_no" = 1 ]; then
@@ -3105,7 +3105,7 @@ check_cpu()
 			pstatus yellow NO
 		fi
 
-		_info_nol "  * Hypervisor indicates host CPU might be vulnerable to RSB underflow (RSBA): "
+		_info_nol "  * Hypervisor indicates host CPU might be affected by RSB underflow (RSBA): "
 		if [ "$capabilities_rsba" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_rsba" = 1 ]; then
@@ -3114,7 +3114,7 @@ check_cpu()
 			pstatus blue NO
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to Microarchitectural Data Sampling (MDS_NO): "
+		_info_nol "  * CPU explicitly indicates not being affected by Microarchitectural Data Sampling (MDS_NO): "
 		if [ "$capabilities_mds_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_mds_no" = 1 ]; then
@@ -3123,7 +3123,7 @@ check_cpu()
 			pstatus yellow NO
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to TSX Asynchronous Abort (TAA_NO): "
+		_info_nol "  * CPU explicitly indicates not being affected by TSX Asynchronous Abort (TAA_NO): "
 		if [ "$capabilities_taa_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_taa_no" = 1 ]; then
@@ -3132,7 +3132,7 @@ check_cpu()
 			pstatus yellow NO
 		fi
 
-		_info_nol "  * CPU explicitly indicates not being vulnerable to iTLB Multihit (PSCHANGE_MSC_NO): "
+		_info_nol "  * CPU explicitly indicates not being affected by iTLB Multihit (PSCHANGE_MSC_NO): "
 		if [ "$capabilities_pschange_msc_no" = -1 ]; then
 			pstatus yellow UNKNOWN
 		elif [ "$capabilities_pschange_msc_no" = 1 ]; then
@@ -3270,7 +3270,7 @@ check_cpu_vulnerabilities()
 	_info     "* CPU vulnerability to the speculative execution attack variants"
 	for cve in $supported_cve_list; do
 		_info_nol "  * Affected by $cve ($(cve2name "$cve")): "
-		if is_cpu_vulnerable "$cve"; then
+		if is_cpu_affected "$cve"; then
 			pstatus yellow YES
 		else
 			pstatus green NO
@@ -3559,9 +3559,9 @@ check_CVE_2017_5753_linux()
 	fi
 
 	# report status
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ -n "$v1_mask_nospec" ]; then
@@ -3594,9 +3594,9 @@ check_CVE_2017_5753_linux()
 
 check_CVE_2017_5753_bsd()
 {
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	else
 		pvulnstatus $cve VULN "no mitigation for BSD yet"
 	fi
@@ -4010,9 +4010,9 @@ check_CVE_2017_5715_linux()
 		status=UNK
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_vulnerable_to_empty_rsb || [ "$rsb_filling" = 1 ] ); then
 			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
@@ -4189,9 +4189,9 @@ check_CVE_2017_5715_bsd()
 		fi
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$retpoline" = 1 ]; then
 		pvulnstatus $cve OK "Retpoline mitigates the vulnerability"
 	elif [ "$ibrs_active" = 1 ]; then
@@ -4394,9 +4394,9 @@ check_CVE_2017_5754_linux()
 		fi
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$opt_live" = 1 ]; then
@@ -4481,9 +4481,9 @@ check_CVE_2017_5754_bsd()
 
 	pti_performance_check
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$kpti_enabled" = 1 ]; then
 		pvulnstatus $cve OK "PTI mitigates the vulnerability"
 	elif [ -n "$kpti_enabled" ]; then
@@ -4515,9 +4515,9 @@ check_CVE_2018_3640()
 		pstatus yellow NO
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -n "$cpuid_ssbd" ]; then
 		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
 	else
@@ -4635,9 +4635,9 @@ check_CVE_2018_3639_linux()
 		status=UNK
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ] || [ "$msg" = "Vulnerable" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ -n "$cpuid_ssbd" ]; then
@@ -4698,8 +4698,8 @@ check_CVE_2018_3639_bsd()
 		*) pstatus yellow NO;;
 	esac
 
-	if ! is_cpu_vulnerable "$cve"; then
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	if ! is_cpu_affected "$cve"; then
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$ssb_active" = 1 ]; then
 				pvulnstatus $cve OK "SSBD mitigates the vulnerability"
@@ -4746,9 +4746,9 @@ check_CVE_2018_3615()
 		pstatus blue N/A
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$cpu_flush_cmd" = 1 ] || { [ "$msr_locked_down" = 1 ] && [ "$cpuid_l1df" = 1 ]; } ; then
 		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
 	else
@@ -4821,9 +4821,9 @@ check_CVE_2018_3620_linux()
 		status=UNK
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$pteinv_supported" = 1 ]; then
@@ -4861,8 +4861,8 @@ check_CVE_2018_3620_bsd()
 		bsd_zero_reserved=0
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	if ! is_cpu_affected "$cve"; then
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$bsd_zero_reserved" = 1 ]; then
 			pvulnstatus $cve OK "kernel mitigates the vulnerability"
@@ -5016,12 +5016,12 @@ check_CVE_2018_3646_linux()
 		l1d_mode=-1
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$fullmsg" = "Not affected" ]; then
 		# just in case a very recent kernel knows better than we do
-		pvulnstatus $cve OK "your kernel reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your kernel reported your CPU model as not affected"
 	elif [ "$has_vmm" = 0 ]; then
 		pvulnstatus $cve OK "this system is not running a hypervisor"
 	else
@@ -5079,8 +5079,8 @@ check_CVE_2018_3646_bsd()
 		*) pstatus yellow UNKNOWN;;
 	esac
 
-	if ! is_cpu_vulnerable "$cve"; then
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+	if ! is_cpu_affected "$cve"; then
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$kernel_l1d_enabled" = 1 ]; then
 			pvulnstatus $cve OK "L1D flushing mitigates the vulnerability"
@@ -5207,8 +5207,8 @@ check_mds_bsd()
 		*)         pstatus yellow UNKNOWN
 	esac
 
-	if ! is_cpu_vulnerable "$cve"; then
-		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+	if ! is_cpu_affected "$cve"; then
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$cpuid_md_clear" = 1 ]; then
 			if [ "$kernel_md_clear" = 1 ]; then
@@ -5300,9 +5300,9 @@ check_mds_linux()
 		status=UNK
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$opt_sysfs_only" != 1 ]; then
 			# compute mystatus and mymsg from our own logic
@@ -5424,9 +5424,9 @@ check_CVE_2019_11135_linux()
 		status=UNK
 	fi
 
-	if ! is_cpu_vulnerable "$cve" ; then
+	if ! is_cpu_affected "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$opt_live" = 1 ]; then
@@ -5519,9 +5519,9 @@ check_CVE_2018_12207_linux()
 		status=UNK
 	fi
 
-	if ! is_cpu_vulnerable "$cve" ; then
+	if ! is_cpu_affected "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$has_vmm" = 0 ]; then
 		pvulnstatus "$cve" OK "this system is not running a hypervisor"
 	elif [ -z "$msg" ]; then
@@ -5558,9 +5558,9 @@ check_CVE_2018_12207_bsd()
 		pstatus yellow NO
 	fi
 
-	if ! is_cpu_vulnerable "$cve"; then
+	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$kernel_2m_x_ept" ]; then
 		pvulnstatus $cve VULN "Your kernel doesn't support mitigating this CVE, you should update it"
 	elif [ "$kernel_2m_x_ept" != 0 ]; then
@@ -5629,9 +5629,9 @@ check_CVE_2020_0543_linux()
 		msg="/sys vulnerability interface use forced, but it's not available!"
 		status=UNK
 	fi
-	if ! is_cpu_vulnerable "$cve" ; then
+	if ! is_cpu_affected "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not vulnerable"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$opt_sysfs_only" != 1 ]; then
 			if [ "$cpuid_srbds" = 1 ]; then
