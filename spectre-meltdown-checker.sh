@@ -19,17 +19,17 @@ trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
 exit_cleanup()
 {
 	# cleanup the temp decompressed config & kernel image
-	[ -n "$dumped_config" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
-	[ -n "$kerneltmp"     ] && [ -f "$kerneltmp"     ] && rm -f "$kerneltmp"
-	[ -n "$kerneltmp2"    ] && [ -f "$kerneltmp2"    ] && rm -f "$kerneltmp2"
-	[ -n "$mcedb_tmp"     ] && [ -f "$mcedb_tmp"     ] && rm -f "$mcedb_tmp"
-	[ -n "$intel_tmp"     ] && [ -d "$intel_tmp"     ] && rm -rf "$intel_tmp"
-	[ "$mounted_debugfs" = 1 ] && umount /sys/kernel/debug 2>/dev/null
-	[ "$mounted_procfs"  = 1 ] && umount "$procfs" 2>/dev/null
-	[ "$insmod_cpuid"    = 1 ] && rmmod cpuid 2>/dev/null
-	[ "$insmod_msr"      = 1 ] && rmmod msr 2>/dev/null
-	[ "$kldload_cpuctl"  = 1 ] && kldunload cpuctl 2>/dev/null
-	[ "$kldload_vmm"     = 1 ] && kldunload vmm    2>/dev/null
+	[ -n "${dumped_config:-}" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
+	[ -n "${kerneltmp:-}"     ] && [ -f "$kerneltmp"     ] && rm -f "$kerneltmp"
+	[ -n "${kerneltmp2:-}"    ] && [ -f "$kerneltmp2"    ] && rm -f "$kerneltmp2"
+	[ -n "${mcedb_tmp:-}"     ] && [ -f "$mcedb_tmp"     ] && rm -f "$mcedb_tmp"
+	[ -n "${intel_tmp:-}"     ] && [ -d "$intel_tmp"     ] && rm -rf "$intel_tmp"
+	[ "${mounted_debugfs:-}" = 1 ] && umount /sys/kernel/debug 2>/dev/null
+	[ "${mounted_procfs:-}"  = 1 ] && umount "$procfs" 2>/dev/null
+	[ "${insmod_cpuid:-}"    = 1 ] && rmmod cpuid 2>/dev/null
+	[ "${insmod_msr:-}"      = 1 ] && rmmod msr 2>/dev/null
+	[ "${kldload_cpuctl:-}"  = 1 ] && kldunload cpuctl 2>/dev/null
+	[ "${kldload_vmm:-}"     = 1 ] && kldunload vmm    2>/dev/null
 }
 
 # if we were git clone'd, adjust VERSION
@@ -1003,7 +1003,7 @@ parse_opt_file()
 	exit 0
 }
 
-while [ -n "$1" ]; do
+while [ -n "${1:-}" ]; do
 	if [ "$1" = "--kernel" ]; then
 		opt_kernel=$(parse_opt_file kernel "$2"); ret=$?
 		[ $ret -ne 0 ] && exit 255
@@ -1186,23 +1186,26 @@ if [ "$opt_live" = -1 ]; then
 fi
 
 # print status function
+# param1: color
+# param2: message to print
+# param3(optional): supplement message to print between ()
 pstatus()
 {
 	if [ "$opt_no_color" = 1 ]; then
 		_info_nol "$2"
 	else
 		case "$1" in
-			red)    col="\033[41m\033[30m";;
-			green)  col="\033[42m\033[30m";;
-			yellow) col="\033[43m\033[30m";;
-			blue)   col="\033[44m\033[30m";;
-			*)      col="";;
+			red)    _col="\033[41m\033[30m";;
+			green)  _col="\033[42m\033[30m";;
+			yellow) _col="\033[43m\033[30m";;
+			blue)   _col="\033[44m\033[30m";;
+			*)      _col="";;
 		esac
-		_info_nol "$col $2 \033[0m"
+		_info_nol "$_col $2 \033[0m"
 	fi
-	[ -n "$3" ] && _info_nol " ($3)"
+	[ -n "${3:-}" ] && _info_nol " ($3)"
 	_info
-	unset col
+	unset _col
 }
 
 # Print the final status of a vulnerability (incl. batch mode)
@@ -1264,6 +1267,7 @@ pvulnstatus()
 	vulnstatus="$2"
 	shift 2
 	_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
+	: "${final_summary:=}"
 	case "$vulnstatus" in
 		UNK)  pstatus yellow 'UNKNOWN'        "$@"; final_summary="$final_summary \033[43m\033[30m$pvulnstatus_last_cve:??\033[0m";;
 		VULN) pstatus red    'VULNERABLE'     "$@"; final_summary="$final_summary \033[41m\033[30m$pvulnstatus_last_cve:KO\033[0m";;
@@ -1294,7 +1298,7 @@ kernel_err=''
 check_kernel()
 {
 	_file="$1"
-	_mode="$2"
+	_mode="${2:-normal}"
 	# checking the return code of readelf -h is not enough, we could get
 	# a damaged ELF file and validate it, check for stderr warnings too
 
@@ -1380,7 +1384,7 @@ try_decompress()
 
 extract_kernel()
 {
-	[ -n "$1" ] || return 1
+	[ -n "${1:-}" ] || return 1
 	# Prepare temp files:
 	kerneltmp="$(mktemp /tmp/kernel-XXXXXX)"
 
@@ -1427,7 +1431,7 @@ mount_debugfs()
 load_msr()
 {
 	# only attempt to do it once even if called multiple times
-	[ "$load_msr_once" = 1 ] && return
+	[ "${load_msr_once:-}" = 1 ] && return
 	load_msr_once=1
 
 	if [ "$os" = Linux ]; then
@@ -1450,7 +1454,7 @@ load_msr()
 load_cpuid()
 {
 	# only attempt to do it once even if called multiple times
-	[ "$load_cpuid_once" = 1 ] && return
+	[ "${load_cpuid_once:-}" = 1 ] && return
 	load_cpuid_once=1
 
 	if [ "$os" = Linux ]; then
@@ -1517,7 +1521,7 @@ read_cpuid_one_core()
 	# mask to apply as an AND operand to the shifted register value
 	_mask="$6"
 	# wanted value (optional), if present we return 0(true) if the obtained value is equal, 1 otherwise:
-	_wanted="$7"
+	_wanted="${7:-}"
 	# in any case, the read value is globally available in $read_cpuid_value
 	read_cpuid_value=''
 	read_cpuid_msg='unknown error'
@@ -1575,7 +1579,8 @@ read_cpuid_one_core()
 
 	_debug "cpuid: leaf$_leaf subleaf$_subleaf on cpu$_core, eax-ebx-ecx-edx: $_cpuid"
 	_mockvarname="SMC_MOCK_CPUID_${_leaf}_${_subleaf}"
-	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+	# shellcheck disable=SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
 		_cpuid="$(eval echo \$$_mockvarname)"
 		_debug "read_cpuid: MOCKING enabled for leaf $_leaf subleaf $_subleaf, will return $_cpuid"
 		mocked=1
@@ -1635,7 +1640,7 @@ is_coreos()
 
 parse_cpu_details()
 {
-	[ "$parse_cpu_details_done" = 1 ] && return 0
+	[ "${parse_cpu_details_done:-}" = 1 ] && return 0
 
 	if command -v nproc >/dev/null; then
 	       number_of_cores=$(nproc)
@@ -1689,35 +1694,35 @@ parse_cpu_details()
 		cpu_friendly_name=$(sysctl -n hw.model 2>/dev/null)
 	fi
 
-	if [ -n "$SMC_MOCK_CPU_FRIENDLY_NAME" ]; then
+	if [ -n "${SMC_MOCK_CPU_FRIENDLY_NAME:-}" ]; then
 		cpu_friendly_name="$SMC_MOCK_CPU_FRIENDLY_NAME"
 		_debug "parse_cpu_details: MOCKING cpu friendly name to $cpu_friendly_name"
 		mocked=1
 	else
 		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_FRIENDLY_NAME='$cpu_friendly_name'")
 	fi
-	if [ -n "$SMC_MOCK_CPU_VENDOR" ]; then
+	if [ -n "${SMC_MOCK_CPU_VENDOR:-}" ]; then
 		cpu_vendor="$SMC_MOCK_CPU_VENDOR"
 		_debug "parse_cpu_details: MOCKING cpu vendor to $cpu_vendor"
 		mocked=1
 	else
 		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_VENDOR='$cpu_vendor'")
 	fi
-	if [ -n "$SMC_MOCK_CPU_FAMILY" ]; then
+	if [ -n "${SMC_MOCK_CPU_FAMILY:-}" ]; then
 		cpu_family="$SMC_MOCK_CPU_FAMILY"
 		_debug "parse_cpu_details: MOCKING cpu family to $cpu_family"
 		mocked=1
 	else
 		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_FAMILY='$cpu_family'")
 	fi
-	if [ -n "$SMC_MOCK_CPU_MODEL" ]; then
+	if [ -n "${SMC_MOCK_CPU_MODEL:-}" ]; then
 		cpu_model="$SMC_MOCK_CPU_MODEL"
 		_debug "parse_cpu_details: MOCKING cpu model to $cpu_model"
 		mocked=1
 	else
 		mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_CPU_MODEL='$cpu_model'")
 	fi
-	if [ -n "$SMC_MOCK_CPU_STEPPING" ]; then
+	if [ -n "${SMC_MOCK_CPU_STEPPING:-}" ]; then
 		cpu_stepping="$SMC_MOCK_CPU_STEPPING"
 		_debug "parse_cpu_details: MOCKING cpu stepping to $cpu_stepping"
 		mocked=1
@@ -1750,9 +1755,9 @@ parse_cpu_details()
 	fi
 
 	# if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
-	[ -z "$cpu_ucode" ] && cpu_ucode=0x0
+	: "${cpu_ucode:=0x0}"
 
-	if [ -n "$SMC_MOCK_CPU_UCODE" ]; then
+	if [ -n "${SMC_MOCK_CPU_UCODE:-}" ]; then
 		cpu_ucode="$SMC_MOCK_CPU_UCODE"
 		_debug "parse_cpu_details: MOCKING cpu ucode to $cpu_ucode"
 		mocked=1
@@ -2029,7 +2034,7 @@ if [ -r "$mcedb_cache" ]; then
 	fi
 fi
 # if mcedb_source is not set, either we don't have a local cached db, or it is older than the builtin db
-if [ -z "$mcedb_source" ]; then
+if [ -z "${mcedb_source:-}" ]; then
 	mcedb_source="$0"
 	mcedb_info="builtin firmwares DB $builtin_dbversion"
 fi
@@ -2072,11 +2077,11 @@ is_latest_known_ucode()
 
 get_cmdline()
 {
-	if [ -n "$kernel_cmdline" ]; then
+	if [ -n "${kernel_cmdline:-}" ]; then
 		return
 	fi
 
-	if [ -n "$SMC_MOCK_CMDLINE" ]; then
+	if [ -n "${SMC_MOCK_CMDLINE:-}" ]; then
 		mocked=1
 		_debug "get_cmdline: using mocked cmdline '$SMC_MOCK_CMDLINE'"
 		kernel_cmdline="$SMC_MOCK_CMDLINE"
@@ -2157,6 +2162,11 @@ if echo "$os" | grep -q BSD; then
 		_debug "We do: $procfs"
 	fi
 fi
+
+# define a few vars we might reference later without these being inited
+mockme=''
+mocked=0
+specex_knob_dir=/dev/no_valid_path
 
 parse_cpu_details
 get_cmdline
@@ -2288,7 +2298,7 @@ if [ "$os" = Linux ]; then
 		opt_config=''
 	fi
 
-	if [ -n "$dumped_config" ] && [ -n "$opt_config" ]; then
+	if [ -n "${dumped_config:-}" ] && [ -n "$opt_config" ]; then
 		_verbose "Will use kconfig \033[35m$procfs/config.gz (decompressed)\033[0m"
 	elif [ -n "$opt_config" ]; then
 		_verbose "Will use kconfig \033[35m$opt_config\033[0m"
@@ -2304,7 +2314,7 @@ if [ "$os" = Linux ]; then
 		bad_accuracy=1
 	fi
 
-	if [ "$bad_accuracy" = 1 ]; then
+	if [ "${bad_accuracy:=0}" = 1 ]; then
 		_warn "We're missing some kernel info (see -v), accuracy might be reduced"
 	fi
 fi
@@ -2361,8 +2371,8 @@ _info
 sys_interface_check()
 {
 	file="$1"
-	regex="$2"
-	mode="$3"
+	regex="${2:-}"
+	mode="${3:-}"
 	msg=''
 	fullmsg=''
 
@@ -2374,8 +2384,8 @@ sys_interface_check()
 	fi
 
 	_mockvarname="SMC_MOCK_SYSFS_$(basename "$file")_RET"
-	# shellcheck disable=SC2086
-	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
 		_debug "sysfs: MOCKING enabled for $file func returns $(eval echo \$$_mockvarname)"
 		mocked=1
 		return "$(eval echo \$$_mockvarname)"
@@ -2383,8 +2393,8 @@ sys_interface_check()
 
 	[ -n "$regex" ] || regex='.*'
 	_mockvarname="SMC_MOCK_SYSFS_$(basename "$file")"
-	# shellcheck disable=SC2086
-	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
 		fullmsg="$(eval echo \$$_mockvarname)"
 		msg=$(echo "$fullmsg" | grep -Eo "$regex")
 		_debug "sysfs: MOCKING enabled for $file, will return $fullmsg"
@@ -2461,10 +2471,11 @@ write_msr_one_core()
 	_msr=$(printf "0x%x" "$_msr_dec")
 
 	write_msr_msg='unknown error'
+	: "${msr_locked_down:=0}"
 
 	_mockvarname="SMC_MOCK_WRMSR_${_msr}_RET"
-	# shellcheck disable=SC2086
-	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
 		_debug "write_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
 		mocked=1
 		[ "$(eval echo \$$_mockvarname)" = $WRITE_MSR_RET_LOCKDOWN ] && msr_locked_down=1
@@ -2489,11 +2500,11 @@ write_msr_one_core()
 			write_msr_msg="No write permission on /dev/cpu/$_core/msr"
 			return $WRITE_MSR_RET_ERR
 		# if wrmsr is available, use it
-		elif command -v wrmsr >/dev/null 2>&1 && [ "$SMC_NO_WRMSR" != 1 ]; then
+		elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
 			_debug "write_msr: using wrmsr"
 			wrmsr $_msr_dec 0 2>/dev/null; ret=$?
 		# or if we have perl, use it, any 5.x version will work
-		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
+		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
 			_debug "write_msr: using perl"
 			ret=1
 			perl -e "open(M,'>','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
@@ -2585,8 +2596,8 @@ read_msr_one_core()
 	read_msr_msg='unknown error'
 
 	_mockvarname="SMC_MOCK_RDMSR_${_msr}"
-	# shellcheck disable=SC2086
-	if [ -n "$(eval echo \$$_mockvarname)" ]; then
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
 		read_msr_value="$(eval echo \$$_mockvarname)"
 		_debug "read_msr: MOCKING enabled for msr $_msr, returning $read_msr_value"
 		mocked=1
@@ -2594,8 +2605,8 @@ read_msr_one_core()
 	fi
 
 	_mockvarname="SMC_MOCK_RDMSR_${_msr}_RET"
-	# shellcheck disable=SC2086
-	if [ -n "$(eval echo \$$_mockvarname)" ] && [ "$(eval echo \$$_mockvarname)" -ne 0 ]; then
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ] && [ "$(eval echo \$$_mockvarname)" -ne 0 ]; then
 		_debug "read_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
 		mocked=1
 		return "$(eval echo \$$_mockvarname)"
@@ -2628,11 +2639,11 @@ read_msr_one_core()
 			read_msr_msg="No read permission for /dev/cpu/$_core/msr"
 			return $READ_MSR_RET_ERR
 		# if rdmsr is available, use it
-		elif command -v rdmsr >/dev/null 2>&1 && [ "$SMC_NO_RDMSR" != 1 ]; then
+		elif command -v rdmsr >/dev/null 2>&1 && [ "${SMC_NO_RDMSR:-}" != 1 ]; then
 			_debug "read_msr: using rdmsr on $_msr"
 			read_msr_value=$(rdmsr -r $_msr_dec 2>/dev/null | od -t u8 -A n)
 		# or if we have perl, use it, any 5.x version will work
-		elif command -v perl >/dev/null 2>&1 && [ "$SMC_NO_PERL" != 1 ]; then
+		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
 			_debug "read_msr: using perl on $_msr"
 			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
 		# fallback to dd if it supports skip_bytes
@@ -2686,6 +2697,7 @@ check_cpu()
 	# from kernel src: { X86_FEATURE_SPEC_CTRL,        CPUID_EDX,26, 0x00000007, 0 },
 	# amd: https://developer.amd.com/wp-content/resources/Architecture_Guidelines_Update_Indirect_Branch_Control.pdf
 	# amd: 8000_0008 EBX[14]=1
+	cpuid_ibrs=''
 	if is_intel; then
 		read_cpuid 0x7 0x0 $EDX 26 1 1; ret=$?
 		if [ $ret = $READ_CPUID_RET_OK ]; then
@@ -2865,7 +2877,7 @@ check_cpu()
 		fi
 	fi
 
-	if [ -n "$cpuid_ssbd" ]; then
+	if [ -n "${cpuid_ssbd:=}" ]; then
 		pstatus green YES "$cpuid_ssbd"
 	elif [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ]; then
 		pstatus yellow UNKNOWN "$read_cpuid_msg"
@@ -2873,18 +2885,23 @@ check_cpu()
 		pstatus yellow NO
 	fi
 
+	amd_ssb_no=0
+	hygon_ssb_no=0
 	if is_amd; then
 		# similar to SSB_NO for intel
 		read_cpuid 0x80000008 0x0 $EBX 26 1 1; ret=$?
 		if [ $ret = $READ_CPUID_RET_OK ]; then
 			amd_ssb_no=1
+		elif [ $ret = $READ_CPUID_RET_ERR ]; then
+			amd_ssb_no=-1
 		fi
 	elif is_hygon; then
 		# indicate when speculative store bypass disable is no longer needed to prevent speculative loads bypassing older stores
 		read_cpuid 0x80000008 0x0 $EBX 26 1 1; ret=$?
 		if [ $ret = $READ_CPUID_RET_OK ]; then
 			hygon_ssb_no=1
-			_debug "hygon_ssb_no=1"
+		elif [ $ret = $READ_CPUID_RET_ERR ]; then
+			hygon_ssb_no=-1
 		fi
 	fi
 
@@ -2897,8 +2914,10 @@ check_cpu()
 		cpu_flush_cmd=1
 	elif [ $ret = $WRITE_MSR_RET_KO ]; then
 		pstatus yellow NO
+		cpu_flush_cmd=0
 	else
 		pstatus yellow UNKNOWN "$write_msr_msg"
+		cpu_flush_cmd=-1
 	fi
 
 	# CPUID of L1D
@@ -2909,8 +2928,10 @@ check_cpu()
 		cpuid_l1df=1
 	elif [ $ret = $READ_CPUID_RET_KO ]; then
 		pstatus yellow NO
+		cpuid_l1df=0
 	else
 		pstatus yellow UNKNOWN "$read_cpuid_msg"
+		cpuid_l1df=-1
 	fi
 
 	if is_intel; then
@@ -3254,7 +3275,7 @@ check_cpu_vulnerabilities()
 check_redhat_canonical_spectre()
 {
 	# if we were already called, don't do it again
-	[ -n "$redhat_canonical_spectre" ] && return
+	[ -n "${redhat_canonical_spectre:-}" ] && return
 
 	if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
 		redhat_canonical_spectre=-1
@@ -3315,7 +3336,7 @@ check_has_vmm()
 		else
 			# ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
 			# shellcheck disable=SC2009
-			if ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
+			if command -v ps >/devnull && ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
 				has_vmm=1
 			fi
 		fi
@@ -3396,6 +3417,7 @@ check_CVE_2017_5753_linux()
 		#: "cc");
 		#
 		# http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
+		v1_mask_nospec=''
 		if [ -n "$kernel_err" ]; then
 			pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 		elif ! command -v perl >/dev/null 2>&1; then
@@ -3558,7 +3580,7 @@ check_CVE_2017_5753_linux()
 				_explain="Your kernel is too old to have the mitigation for Variant 1, you should upgrade to a newer kernel. If you're using a Linux distro and didn't compile the kernel yourself, you should upgrade your distro to get a newer kernel."
 			fi
 			pvulnstatus $cve "$status" "$msg"
-			[ -n "$_explain" ] && explain "$_explain"
+			[ -n "${_explain:-}" ] && explain "$_explain"
 			unset _explain
 		fi
 	fi
@@ -3819,6 +3841,8 @@ check_CVE_2017_5715_linux()
 
 		_info "* Mitigation 2"
 		_info_nol "  * Kernel has branch predictor hardening (arm): "
+		bp_harden_can_tell=0
+		bp_harden=''
 		if [ -r "$opt_config" ]; then
 			bp_harden_can_tell=1
 			bp_harden=$(grep -w 'CONFIG_HARDEN_BRANCH_PREDICTOR=y' "$opt_config")
@@ -3845,6 +3869,7 @@ check_CVE_2017_5715_linux()
 
 		_info_nol "  * Kernel compiled with retpoline option: "
 		# We check the RETPOLINE kernel options
+		retpoline=0
 		if [ -r "$opt_config" ]; then
 			if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
 				pstatus green YES
@@ -3920,6 +3945,7 @@ check_CVE_2017_5715_linux()
 		fi
 
 		# only Red Hat has a tunable to disable it on runtime
+		retp_enabled=-1
 		if [ "$opt_live" = 1 ]; then
 			if [ -e "$specex_knob_dir/retp_enabled" ]; then
 				retp_enabled=$(cat "$specex_knob_dir/retp_enabled" 2>/dev/null)
@@ -4088,7 +4114,7 @@ check_CVE_2017_5715_linux()
 			# RETPOLINE (amd & intel &hygon )
 			if is_amd || is_intel || is_hygon; then
 				if [ "$retpoline" = 0 ]; then
-					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with  a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
+					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 0 ]; then
 					explain "Your kernel is compiled with retpoline, but without a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" = 0 ]; then
@@ -4140,6 +4166,7 @@ check_CVE_2017_5715_bsd()
 
 	_info     "* Mitigation 2"
 	_info_nol "  * Kernel compiled with RETPOLINE: "
+	retpoline=0
 	if [ -n "$kernel_err" ]; then
 		pstatus yellow UNKNOWN "couldn't check ($kernel_err)"
 	else
@@ -4345,6 +4372,8 @@ check_CVE_2017_5754_linux()
 
 
 	# Test if the current host is a Xen PV Dom0 / DomU
+	xen_pv_domo=0
+	xen_pv_domu=0
 	is_xen_dom0 && xen_pv_domo=1
 	is_xen_domU && xen_pv_domu=1
 
@@ -4412,8 +4441,8 @@ check_CVE_2017_5754_linux()
 			_explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 		fi
 		pvulnstatus $cve "$status" "$msg"
-		[ -z "$_explain" ] && [ "$msg" = "Vulnerable" ] && _explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
-		[ -n "$_explain" ] && explain "$_explain"
+		[ -z "${_explain:-}" ] && [ "$msg" = "Vulnerable" ] && _explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+		[ -n "${_explain:-}" ] && explain "$_explain"
 		unset _explain
 	fi
 
@@ -4866,6 +4895,7 @@ check_CVE_2018_3646_linux()
 
 		_info "* Mitigation 1 (KVM)"
 		_info_nol "  * EPT is disabled: "
+		ept_disabled=-1
 		if [ "$opt_live" = 1 ]; then
 			if ! [ -r /sys/module/kvm_intel/parameters/ept ]; then
 				pstatus blue N/A "the kvm_intel module is not loaded"
