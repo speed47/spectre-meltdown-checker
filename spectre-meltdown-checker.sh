@@ -1770,7 +1770,7 @@ parse_cpu_details()
 
 	# also define those that we will need in other funcs
 	# taken from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
-	# curl -s 'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/arch/x86/include/asm/intel-family.h' | awk '/#define INTEL_FAM6/ {print $2"=$(( "$3" )) # "$4,$5,$6,$7,$8,$9}'
+	# curl -s 'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/arch/x86/include/asm/intel-family.h' | awk '/#define INTEL_FAM6/ {print $2"=$(( "$3" )) # "$4,$5,$6,$7,$8,$9}' | sed -re 's/ +$//'
 	# shellcheck disable=SC2034
 	{
 	INTEL_FAM6_CORE_YONAH=$(( 0x0E )) #
@@ -1797,21 +1797,27 @@ parse_cpu_details()
 	INTEL_FAM6_BROADWELL_G=$(( 0x47 )) #
 	INTEL_FAM6_BROADWELL_X=$(( 0x4F )) #
 	INTEL_FAM6_BROADWELL_D=$(( 0x56 )) #
-	INTEL_FAM6_SKYLAKE_L=$(( 0x4E )) #
-	INTEL_FAM6_SKYLAKE=$(( 0x5E )) #
-	INTEL_FAM6_SKYLAKE_X=$(( 0x55 )) #
-	INTEL_FAM6_KABYLAKE_L=$(( 0x8E )) #
-	INTEL_FAM6_KABYLAKE=$(( 0x9E )) #
-	INTEL_FAM6_CANNONLAKE_L=$(( 0x66 )) #
-	INTEL_FAM6_ICELAKE_X=$(( 0x6A )) #
-	INTEL_FAM6_ICELAKE_D=$(( 0x6C )) #
-	INTEL_FAM6_ICELAKE=$(( 0x7D )) #
-	INTEL_FAM6_ICELAKE_L=$(( 0x7E )) #
-	INTEL_FAM6_ICELAKE_NNPI=$(( 0x9D )) #
-	INTEL_FAM6_TIGERLAKE_L=$(( 0x8C )) #
-	INTEL_FAM6_TIGERLAKE=$(( 0x8D )) #
-	INTEL_FAM6_COMETLAKE=$(( 0xA5 )) #
-	INTEL_FAM6_COMETLAKE_L=$(( 0xA6 )) #
+	INTEL_FAM6_SKYLAKE_L=$(( 0x4E )) # /* Sky Lake */
+	INTEL_FAM6_SKYLAKE=$(( 0x5E )) # /* Sky Lake */
+	INTEL_FAM6_SKYLAKE_X=$(( 0x55 )) # /* Sky Lake */
+	INTEL_FAM6_KABYLAKE_L=$(( 0x8E )) # /* Sky Lake */
+	INTEL_FAM6_KABYLAKE=$(( 0x9E )) # /* Sky Lake */
+	INTEL_FAM6_COMETLAKE=$(( 0xA5 )) # /* Sky Lake */
+	INTEL_FAM6_COMETLAKE_L=$(( 0xA6 )) # /* Sky Lake */
+	INTEL_FAM6_CANNONLAKE_L=$(( 0x66 )) # /* Palm Cove */
+	INTEL_FAM6_ICELAKE_X=$(( 0x6A )) # /* Sunny Cove */
+	INTEL_FAM6_ICELAKE_D=$(( 0x6C )) # /* Sunny Cove */
+	INTEL_FAM6_ICELAKE=$(( 0x7D )) # /* Sunny Cove */
+	INTEL_FAM6_ICELAKE_L=$(( 0x7E )) # /* Sunny Cove */
+	INTEL_FAM6_ICELAKE_NNPI=$(( 0x9D )) # /* Sunny Cove */
+	INTEL_FAM6_LAKEFIELD=$(( 0x8A )) # /* Sunny Cove / Tremont */
+	INTEL_FAM6_ROCKETLAKE=$(( 0xA7 )) # /* Cypress Cove */
+	INTEL_FAM6_TIGERLAKE_L=$(( 0x8C )) # /* Willow Cove */
+	INTEL_FAM6_TIGERLAKE=$(( 0x8D )) # /* Willow Cove */
+	INTEL_FAM6_SAPPHIRERAPIDS_X=$(( 0x8F )) # /* Golden Cove */
+	INTEL_FAM6_ALDERLAKE=$(( 0x97 )) # /* Golden Cove / Gracemont */
+	INTEL_FAM6_ALDERLAKE_L=$(( 0x9A )) # /* Golden Cove / Gracemont */
+	INTEL_FAM6_RAPTORLAKE=$(( 0xB7 )) #
 	INTEL_FAM6_ATOM_BONNELL=$(( 0x1C )) # /* Diamondville, Pineview */
 	INTEL_FAM6_ATOM_BONNELL_MID=$(( 0x26 )) # /* Silverthorne, Lincroft */
 	INTEL_FAM6_ATOM_SALTWELL=$(( 0x36 )) # /* Cedarview */
@@ -1828,9 +1834,9 @@ parse_cpu_details()
 	INTEL_FAM6_ATOM_GOLDMONT_PLUS=$(( 0x7A )) # /* Gemini Lake */
 	INTEL_FAM6_ATOM_TREMONT_D=$(( 0x86 )) # /* Jacobsville */
 	INTEL_FAM6_ATOM_TREMONT=$(( 0x96 )) # /* Elkhart Lake */
+	INTEL_FAM6_ATOM_TREMONT_L=$(( 0x9C )) # /* Jasper Lake */
 	INTEL_FAM6_XEON_PHI_KNL=$(( 0x57 )) # /* Knights Landing */
 	INTEL_FAM6_XEON_PHI_KNM=$(( 0x85 )) # /* Knights Mill */
-	INTEL_FAM6_CORE_YONAH=$(( 0x0E ))
 	}
 	parse_cpu_details_done=1
 }
