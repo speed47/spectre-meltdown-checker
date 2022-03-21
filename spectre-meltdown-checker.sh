@@ -1553,7 +1553,7 @@ read_cpuid_one_core()
 		# on some kernel versions, /dev/cpu/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error,
 		# we use that fact to load the module if dd returns an error
 		if ! dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1; then
-		    load_cpuid
+			load_cpuid
 		fi
 		# we need _leaf to be converted to decimal for dd
 		_leaf=$(( _leaf ))
@@ -1643,14 +1643,14 @@ parse_cpu_details()
 	[ "${parse_cpu_details_done:-}" = 1 ] && return 0
 
 	if command -v nproc >/dev/null; then
-	       number_of_cores=$(nproc)
+		number_of_cores=$(nproc)
 	elif echo "$os" | grep -q BSD; then
-	       number_of_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
+		number_of_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
 	elif [ -e "$procfs/cpuinfo" ]; then
-	       number_of_cores=$(grep -c ^processor "$procfs/cpuinfo" 2>/dev/null || echo 1)
+		number_of_cores=$(grep -c ^processor "$procfs/cpuinfo" 2>/dev/null || echo 1)
 	else
-	       # if we don't know, default to 1 CPU
-	       number_of_cores=1
+		# if we don't know, default to 1 CPU
+		number_of_cores=1
 	fi
 	max_core_id=$(( number_of_cores - 1 ))
 
