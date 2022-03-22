@@ -850,7 +850,7 @@ update_fwdb()
 	fi
 
 	# first, download the MCE.db from the excellent platomav's MCExtractor project
-	mcedb_tmp="$(mktemp /tmp/mcedb-XXXXXX)"
+	mcedb_tmp="$(mktemp -t smc-mcedb-XXXXXX)"
 	mcedb_url='https://github.com/platomav/MCExtractor/raw/master/MCE.db'
 	_info_nol "Fetching MCE.db from the MCExtractor project... "
 	if command -v wget >/dev/null 2>&1; then
@@ -870,7 +870,7 @@ update_fwdb()
 	echo DONE
 
 	# second, get the Intel firmwares from GitHub
-	intel_tmp="$(mktemp -d /tmp/intelfw-XXXXXX)"
+	intel_tmp="$(mktemp -d -t smc-intelfw-XXXXXX)"
 	intel_url="https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/archive/main.zip"
 	_info_nol "Fetching Intel firmwares... "
 	## https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files.git
@@ -970,7 +970,7 @@ update_fwdb()
 	echo DONE "(version $dbversion)"
 
 	if [ "$1" = builtin ]; then
-		newfile=$(mktemp /tmp/smc-XXXXXX)
+		newfile=$(mktemp -t smc-builtin-XXXXXX)
 		awk '/^# %%% MCEDB / { exit }; { print }' "$0" > "$newfile"
 		awk '{ if (NR>1) { print } }' "$mcedb_cache" >> "$newfile"
 		cat "$newfile" > "$0"
@@ -1377,7 +1377,7 @@ try_decompress()
 			return 0
 		elif [ "$3" != "cat" ]; then
 			_debug "try_decompress: decompression with $3 worked but result is not a kernel, trying with an offset"
-			[ -z "$kerneltmp2" ] && kerneltmp2=$(mktemp /tmp/kernel-XXXXXX)
+			[ -z "$kerneltmp2" ] && kerneltmp2=$(mktemp -t smc-kernel-XXXXXX)
 			cat "$kerneltmp" > "$kerneltmp2"
 			try_decompress '\177ELF' xxy 'cat' '' cat "$kerneltmp2" && return 0
 		else
@@ -1391,7 +1391,7 @@ extract_kernel()
 {
 	[ -n "${1:-}" ] || return 1
 	# Prepare temp files:
-	kerneltmp="$(mktemp /tmp/kernel-XXXXXX)"
+	kerneltmp="$(mktemp -t smc-kernel-XXXXXX)"
 
 	# Initial attempt for uncompressed images or objects:
 	if check_kernel "$1"; then
@@ -2179,6 +2179,12 @@ mockme=''
 mocked=0
 specex_knob_dir=/dev/no_valid_path
 
+# if /tmp doesn't exist and TMPDIR is not set, try to set it to a sane default for Android
+if [ -z "${TMPDIR:-}" ] && ! [ -d "/tmp" ] && [ -d "/data/local/tmp" ]; then
+	TMPDIR=/data/local/tmp
+	export TMPDIR
+fi
+
 parse_cpu_details
 get_cmdline
 
@@ -2277,7 +2283,7 @@ if [ "$opt_live" = 1 ]; then
 		# specified by user on cmdline, with --live, don't override
 		:
 	elif [ -e "$procfs/config.gz" ] ; then
-		dumped_config="$(mktemp /tmp/config-XXXXXX)"
+		dumped_config="$(mktemp -t smc-config-XXXXXX)"
 		gunzip -c "$procfs/config.gz" > "$dumped_config"
 		# dumped_config will be deleted at the end of the script
 		opt_config="$dumped_config"
