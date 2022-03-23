@@ -91,6 +91,7 @@ show_usage()
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
+		--allow-msr-write	allow probing for write-only MSRs, this might produce kernel logs or be blocked by your system
 		--cpu [#,all]		interact with CPUID and MSR of CPU core number #, or all (default: CPU core 0)
 		--update-fwdb		update our local copy of the CPU microcodes versions database (using the awesome
 					MCExtractor project and the Intel firmwares GitHub repository)
@@ -157,6 +158,7 @@ opt_arch_prefix=''
 opt_hw_only=0
 opt_no_hw=0
 opt_vmm=-1
+opt_allow_msr_write=0
 opt_cpu=0
 opt_explain=0
 opt_paranoid=0
@@ -1046,6 +1048,9 @@ while [ -n "${1:-}" ]; do
 		shift
 	elif [ "$1" = "--no-hw" ]; then
 		opt_no_hw=1
+		shift
+	elif [ "$1" = "--allow-msr-write" ]; then
+		opt_allow_msr_write=1
 		shift
 	elif [ "$1" = "--cpu" ]; then
 		opt_cpu=$2
@@ -2497,6 +2502,7 @@ write_msr_one_core()
 		return $WRITE_MSR_RET_ERR
 	fi
 
+	_write_denied=0
 	if [ "$os" != Linux ]; then
 		cpucontrol -m "$_msr=0" "/dev/cpuctl$_core" >/dev/null 2>&1; ret=$?
 	else
@@ -2509,15 +2515,23 @@ write_msr_one_core()
 		elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
 			_debug "write_msr: using wrmsr"
 			wrmsr $_msr_dec 0 2>/dev/null; ret=$?
+			# ret=4: msr doesn't exist, ret=127: msr.allow_writes=off
+			[ "$ret" = 127 ] && _write_denied=1
+		# or fallback to dd if it supports seek_bytes, we prefer it over perl because we can tell the difference between EPERM and EIO
+		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null && [ "${SMC_NO_DD:-}" != 1 ]; then
+			_debug "write_msr: using dd"
+			dd if=/dev/zero of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
+			# if it failed, inspect stderrto look for EPERM
+			if [ "$ret" != 0 ]; then
+				if dd if=/dev/zero of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
+					_write_denied=1
+				fi
+			fi
 		# or if we have perl, use it, any 5.x version will work
 		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
 			_debug "write_msr: using perl"
 			ret=1
 			perl -e "open(M,'>','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
-		# fallback to dd if it supports seek_bytes
-		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; then
-			_debug "write_msr: using dd"
-			dd if=/dev/zero of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
 		else
 			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
 			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_ERR")
@@ -2531,7 +2545,15 @@ write_msr_one_core()
 			# when this happens, any write will fail and dmesg will have a msg printed "msr: Direct access to MSR"
 			# * A version of this patch also made it to vanilla in 5.4+, in that case the message is: 'raw MSR access is restricted'
 			# * we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
-			if dmesg | grep -qF "msr: Direct access to MSR"; then
+			# yet more recent versions of the msr module can be set to msr.allow_writes=off, in which case no dmesg message is printed,
+			# but the write fails
+			if [ "$_write_denied" = 1 ]; then
+				_debug "write_msr: writing to msr has been denied"
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+				msr_locked_down=1
+				write_msr_msg="your kernel is configured to deny writes to MSRs from user space"
+				return $WRITE_MSR_RET_LOCKDOWN
+			elif dmesg | grep -qF "msr: Direct access to MSR"; then
 				_debug "write_msr: locked down kernel detected (Red Hat / Fedora)"
 				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
 				msr_locked_down=1
@@ -2544,6 +2566,7 @@ write_msr_one_core()
 				write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
 				return $WRITE_MSR_RET_LOCKDOWN
 			fi
+			unset _write_denied
 		fi
 	fi
 
@@ -2754,15 +2777,18 @@ check_cpu()
 
 	# IBPB
 	_info     "  * Indirect Branch Prediction Barrier (IBPB)"
-	_info_nol "    * PRED_CMD MSR is available: "
-	# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
-	write_msr 0x49; ret=$?
-	if [ $ret = $WRITE_MSR_RET_OK ]; then
-		pstatus green YES
-	elif [ $ret = $WRITE_MSR_RET_KO ]; then
-		pstatus yellow NO
-	else
-		pstatus yellow UNKNOWN "$write_msr_msg"
+
+	if [ "$opt_allow_msr_write" = 1 ]; then
+		_info_nol "    * PRED_CMD MSR is available: "
+		# the new MSR 'PRED_CTRL' is at offset 0x49, write-only
+		write_msr 0x49; ret=$?
+		if [ $ret = $WRITE_MSR_RET_OK ]; then
+			pstatus green YES
+		elif [ $ret = $WRITE_MSR_RET_KO ]; then
+			pstatus yellow NO
+		else
+			pstatus yellow UNKNOWN "$write_msr_msg"
+		fi
 	fi
 
 	_info_nol "    * CPU indicates IBPB capability: "
@@ -2912,18 +2938,21 @@ check_cpu()
 	fi
 
 	_info "  * L1 data cache invalidation"
-	_info_nol "    * FLUSH_CMD MSR is available: "
-	# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
-	write_msr 0x10b; ret=$?
-	if [ $ret = $WRITE_MSR_RET_OK ]; then
-		pstatus green YES
-		cpu_flush_cmd=1
-	elif [ $ret = $WRITE_MSR_RET_KO ]; then
-		pstatus yellow NO
-		cpu_flush_cmd=0
-	else
-		pstatus yellow UNKNOWN "$write_msr_msg"
-		cpu_flush_cmd=-1
+
+	if [ "$opt_allow_msr_write" = 1 ]; then
+		_info_nol "    * FLUSH_CMD MSR is available: "
+		# the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+		write_msr 0x10b; ret=$?
+		if [ $ret = $WRITE_MSR_RET_OK ]; then
+			pstatus green YES
+			cpu_flush_cmd=1
+		elif [ $ret = $WRITE_MSR_RET_KO ]; then
+			pstatus yellow NO
+			cpu_flush_cmd=0
+		else
+			pstatus yellow UNKNOWN "$write_msr_msg"
+			cpu_flush_cmd=-1
+		fi
 	fi
 
 	# CPUID of L1D
@@ -2938,6 +2967,12 @@ check_cpu()
 	else
 		pstatus yellow UNKNOWN "$read_cpuid_msg"
 		cpuid_l1df=-1
+	fi
+
+	# if we weren't allowed to probe the write-only MSR but the CPUID
+	# bit says that it shoul be there, make the assumption that it is
+	if [ "$opt_allow_msr_write" != 1 ]; then
+		cpu_flush_cmd=$cpuid_l1df
 	fi
 
 	if is_intel; then
