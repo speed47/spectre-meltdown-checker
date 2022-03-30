@@ -1,27 +1,35 @@
-name: CI
+name: Shellcheck, Shfmt and execution test
 
-on: [push, pull_request]
+on:
+  push:
+    paths:
+      # Run workflow on every push
+      # only if a file within the specified paths has been changed:
+      - '*.sh'
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
-  build:
-
+  sh-checker:
+    name: Shfmt Lint
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Run the sh-checker
+        uses: luizm/action-sh-checker@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHELLCHECK_OPTS: -e SC1091,SC1090 # exclude some shellcheck warnings.
+          SHFMT_OPTS: -s # arguments to shfmt.
+        with:
+          sh_checker_comment: true
 
+  check-execution:
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
     - name: install prerequisites
-      run: sudo apt-get update && sudo apt-get install -y shellcheck jq sqlite3 iucode-tool
-    - name: shellcheck
-      run: shellcheck -s sh spectre-meltdown-checker.sh
-    - name: check indentation
-      run: |
-        if [ $(grep -cPv "^\t*\S|^$" spectre-meltdown-checker.sh) != 0 ]; then
-          echo "Badly indented lines found:"
-          grep -nPv "^\t*\S|^$" spectre-meltdown-checker.sh
-          exit 1
-        else
-          echo "Indentation seems correct."
-        fi
+      run: sudo apt-get update && sudo apt-get install -y jq sqlite3 iucode-tool
     - name: check direct execution
       run: |
         expected=15
