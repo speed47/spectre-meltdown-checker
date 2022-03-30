@@ -1,7 +1,7 @@
-FROM alpine:3.7
+FROM alpine:latest
 
-RUN apk --update --no-cache add kmod binutils grep perl
+RUN apk --update --no-cache add kmod binutils grep perl zstd wget sharutils unzip sqlite procps coreutils iucode-tool gzip xz bzip2 lz4
 
-COPY . /check
+COPY spectre-meltdown-checker.sh /
 
-ENTRYPOINT ["/check/spectre-meltdown-checker.sh"]
+ENTRYPOINT ["/spectre-meltdown-checker.sh"]
