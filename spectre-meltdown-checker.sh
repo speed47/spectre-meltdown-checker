@@ -168,7 +168,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543 CVE-2022-21127'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -293,6 +293,7 @@ cve2name()
 		CVE-2019-11135) echo "ZombieLoad V2, TSX Asynchronous Abort (TAA)";;
 		CVE-2018-12207) echo "No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)";;
 		CVE-2020-0543) echo "Special Register Buffer Data Sampling (SRBDS)";;
+		CVE-2022-21127) echo "Special Register Buffer Data Sampling (SRBDS) Update";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -317,6 +318,7 @@ _is_cpu_affected_cached()
 		CVE-2019-11135) return $variant_taa;;
 		CVE-2018-12207) return $variant_itlbmh;;
 		CVE-2020-0543) return $variant_srbds;;
+		CVE-2022-21127) return $variant_srbds_update;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
@@ -346,6 +348,7 @@ is_cpu_affected()
 	variant_taa=''
 	variant_itlbmh=''
 	variant_srbds=''
+	variant_srbds_update=''
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -365,6 +368,11 @@ is_cpu_affected()
 		_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
 	fi
 
+	if is_cpu_srbds_update_free; then
+		[ -z "$variant_srbds_update" ] && variant_srbds_update=immune
+		_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling Update"
+	fi
+
 	if is_cpu_specex_free; then
 		variant1=immune
 		variant2=immune
@@ -378,6 +386,7 @@ is_cpu_affected()
 		variant_mdsum=immune
 		variant_taa=immune
 		variant_srbds=immune
+		variant_srbds_update=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
@@ -615,10 +624,11 @@ is_cpu_affected()
 	[ "$variant_taa"    = "immune" ] && variant_taa=1    || variant_taa=0
 	[ "$variant_itlbmh" = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
 	[ "$variant_srbds" = "immune" ] && variant_srbds=1 || variant_srbds=0
+	[ "$variant_srbds_update" = "immune" ] && variant_srbds_update=1 || variant_srbds_update=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
-	_debug "is_cpu_affected: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx>"
+	_debug "is_cpu_affected: final results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf> <$variantl1tf_sgx> <$variant_srbds> <$variant_srbds_update>"
 	is_cpu_affected_cached=1
 	_is_cpu_affected_cached "$1"
 	return $?
@@ -775,6 +785,68 @@ is_cpu_srbds_free()
 				else
 					return 1
 				fi
+			fi
+		fi
+	fi
+
+	return 0
+
+}
+
+is_cpu_srbds_update_free()
+{
+	# return zero (0) if the CPU isn't affected by special register buffer data sampling update, one (1) if it is.
+	# If it's not in the list we know, return one (1).
+	# source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+	#
+	# A processor is affected by SRBDS Update if its Family_Model and stepping is in the
+	# following list, with the exception of the listed processors
+	# exporting MDS_NO while Intel TSX is available yet not enabled. The
+	# latter class of processors are only affected when Intel TSX is enabled
+	# by software using TSX_CTRL_MSR otherwise they are not affected.
+	#
+	# =============  ============  ========
+	# common name    Family_Model  Stepping
+	# =============  ============  ========
+	# IvyBridge      06_3AH        All              (INTEL_FAM6_IVYBRIDGE)
+	#
+	# Haswell        06_3CH        All              (INTEL_FAM6_HASWELL)
+	# Haswell_L      06_45H        All              (INTEL_FAM6_HASWELL_L)
+	# Haswell_G      06_46H        All              (INTEL_FAM6_HASWELL_G)
+	#
+	# Broadwell_G    06_47H        All              (INTEL_FAM6_BROADWELL_G)
+	# Broadwell      06_3DH        All              (INTEL_FAM6_BROADWELL)
+	#
+	# Skylake_L      06_4EH        All              (INTEL_FAM6_SKYLAKE_L)
+	# Skylake        06_5EH        All              (INTEL_FAM6_SKYLAKE)
+	#
+	# Kabylake_L     06_8EH        <=0xC (MDS_NO)   (INTEL_FAM6_KABYLAKE_L)
+	#
+	# Kabylake       06_9EH        <=0xD (MDS_NO)   (INTEL_FAM6_KABYLAKE)
+	#
+	# Tigerlake      06_8CH        1                (INTEL_FAM6_TIGERLAKE_L)
+	# =============  ============  ========
+	parse_cpu_details
+	if is_intel; then
+		if [ "$cpu_family" = 6 ]; then
+			if [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_HASWELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_HASWELL_L" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_HASWELL_G" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_BROADWELL_G" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_BROADWELL" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ]; then
+				return 1
+			elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -le 12 ] || \
+				[ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -le 13 ]; then
+					if [ "$capabilities_mds_no" -eq 1 ] && { [ "$cpuid_rtm" -eq 0 ] || [ "$tsx_ctrl_msr_rtm_disable" -eq 1 ] ;} ; then
+						return 0
+					else
+						return 1
+					fi
+			elif [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE_L" ] && [ "$cpu_stepping" -eq 1 ]; then
+				return 1
 			fi
 		fi
 	fi
@@ -1145,7 +1217,7 @@ while [ -n "${1:-}" ]; do
 			l1tf)	opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
 			taa)	opt_cve_list="$opt_cve_list CVE-2019-11135"; opt_cve_all=0;;
 			mcepsc)	opt_cve_list="$opt_cve_list CVE-2018-12207"; opt_cve_all=0;;
-			srbds)  opt_cve_list="$opt_cve_list CVE-2020-0543"; opt_cve_all=0;;
+			srbds)  opt_cve_list="$opt_cve_list CVE-2020-0543 CVE-2022-21127"; opt_cve_all=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc or srbds" >&2;
 				exit 255
@@ -1238,6 +1310,7 @@ pvulnstatus()
 			CVE-2019-11135) aka="TAA";;
 			CVE-2018-12207) aka="ITLBMH";;
 			CVE-2020-0543) aka="SRBDS";;
+			CVE-2022-21127)	aka="SRBDS Update";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -5634,15 +5707,29 @@ check_CVE_2020_0543()
 	cve='CVE-2020-0543'
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 	if [ "$os" = Linux ]; then
-		check_CVE_2020_0543_linux
+		check_CVE_srbds_linux
 	elif echo "$os" | grep -q BSD; then
-		check_CVE_2020_0543_bsd
+		check_CVE_srbds_bsd
 	else
 		_warn "Unsupported OS ($os)"
 	fi
 }
 
-check_CVE_2020_0543_linux()
+# Special Register Buffer Data Sampling (SRBDS) Update
+check_CVE_2022_21127()
+{
+	cve='CVE-2022-21127'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_srbds_linux
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_srbds_bsd
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
+
+check_CVE_srbds_linux()
 {
 	status=UNK
 	sys_interface_available=0
@@ -5737,7 +5824,7 @@ check_CVE_2020_0543_linux()
 	fi
 }
 
-check_CVE_2020_0543_bsd()
+check_CVE_srbds_bsd()
 {
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
