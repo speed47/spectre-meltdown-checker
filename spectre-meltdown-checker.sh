@@ -3386,7 +3386,7 @@ check_has_vmm()
 		else
 			# ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
 			# shellcheck disable=SC2009
-			if command -v ps >/devnull && ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
+			if command -v ps >/dev/null && ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
 				has_vmm=1
 			fi
 		fi
