@@ -539,6 +539,9 @@ is_cpu_affected()
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
 					_debug "checking cpu$i: armv8 A75 non affected to variant 3a"
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd40; then
+					[ -z "$variant3a" ] && variant3a=immune
+					_debug "checking cpu$i: armv8 NeoverseV1 non affected to variant 3a"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0b -e 0xd0c -e 0xd0d; then
 					variant1=vuln
 					[ -z "$variant2" ] && variant2=immune
