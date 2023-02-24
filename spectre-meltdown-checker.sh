@@ -896,13 +896,13 @@ update_fwdb()
 		echo ERROR "please install the \`sqlite3\` program"
 		return 1
 	fi
-	mcedb_revision=$(sqlite3 "$mcedb_tmp" "select revision from MCE")
+	mcedb_revision=$(sqlite3 "$mcedb_tmp" "SELECT \"revision\" from \"MCE\"")
 	if [ -z "$mcedb_revision" ]; then
 		echo ERROR "downloaded file seems invalid"
 		return 1
 	fi
-	sqlite3 "$mcedb_tmp" "alter table Intel add column origin text"
-	sqlite3 "$mcedb_tmp" "update Intel set origin='mce'"
+	sqlite3 "$mcedb_tmp" "ALTER TABLE \"Intel\" ADD COLUMN \"origin\" TEXT"
+	sqlite3 "$mcedb_tmp" "UPDATE \"Intel\" SET \"origin\"='mce'"
 
 	echo OK "MCExtractor database revision $mcedb_revision"
 
@@ -940,7 +940,7 @@ update_fwdb()
 		_version=$(echo "$_line" | awk '{print $8}')
 		_version=$(( _version ))
 		_version=$(printf "0x%08X" "$_version")
-		_sqlstm="$(printf "INSERT INTO Intel (origin,cpuid,version,yyyymmdd) VALUES (\"%s\",\"%s\",\"%s\",\"%s\");" "intel" "$(printf "%08X" "$_cpuid")" "$(printf "%08X" "$_version")" "$_date")"
+		_sqlstm="$(printf "INSERT INTO \"Intel\" (\"origin\",\"cpuid\",\"version\",\"yyyymmdd\") VALUES ('%s','%s','%s','%s');" "intel" "$(printf "%08X" "$_cpuid")" "$(printf "%08X" "$_version")" "$_date")"
 		sqlite3 "$mcedb_tmp" "$_sqlstm"
 	done
 	_intel_timestamp=$(stat -c %Y "$intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-main/license" 2>/dev/null)
@@ -949,7 +949,7 @@ update_fwdb()
 		_intel_latest_date=$(date +%Y%m%d -d @"$_intel_timestamp")
 	else
 		echo "Falling back to the latest microcode date"
-		_intel_latest_date=$(sqlite3 "$mcedb_tmp" "SELECT yyyymmdd from Intel WHERE origin = 'intel' ORDER BY yyyymmdd DESC LIMIT 1;")
+		_intel_latest_date=$(sqlite3 "$mcedb_tmp" "SELECT \"yyyymmdd\" FROM \"Intel\" WHERE \"origin\"='intel' ORDER BY \"yyyymmdd\" DESC LIMIT 1;")
 	fi
 	echo DONE "(version $_intel_latest_date)"
 
@@ -965,10 +965,10 @@ update_fwdb()
 		echo "# Spectre & Meltdown Checker";
 		echo "# %%% MCEDB v$dbversion";
 		# ensure the official Intel DB always has precedence over mcedb, even if mcedb has seen a more recent fw
-		sqlite3 "$mcedb_tmp" "DELETE FROM Intel WHERE origin!='intel' AND cpuid IN (SELECT cpuid FROM Intel WHERE origin='intel' GROUP BY cpuid ORDER BY cpuid ASC);"
+		sqlite3 "$mcedb_tmp" "DELETE FROM \"Intel\" WHERE \"origin\"!='intel' AND \"cpuid\" IN (SELECT \"cpuid\" FROM \"Intel\" WHERE \"origin\"='intel' GROUP BY \"cpuid\" ORDER BY \"cpuid\" ASC);"
 		# we'll use the more recent fw for Intel and AMD
-		sqlite3 "$mcedb_tmp" "SELECT '# I,0x'||t1.cpuid||',0x'||MAX(t1.version)||','||t1.yyyymmdd FROM Intel AS t1 LEFT OUTER JOIN Intel AS t2 ON t2.cpuid=t1.cpuid AND t2.yyyymmdd > t1.yyyymmdd WHERE t2.yyyymmdd IS NULL GROUP BY t1.cpuid ORDER BY t1.cpuid ASC;" | grep -v '^# .,0x00000000,';
-		sqlite3 "$mcedb_tmp" "SELECT '# A,0x'||t1.cpuid||',0x'||MAX(t1.version)||','||t1.yyyymmdd FROM AMD   AS t1 LEFT OUTER JOIN AMD   AS t2 ON t2.cpuid=t1.cpuid AND t2.yyyymmdd > t1.yyyymmdd WHERE t2.yyyymmdd IS NULL GROUP BY t1.cpuid ORDER BY t1.cpuid ASC;" | grep -v '^# .,0x00000000,';
+		sqlite3 "$mcedb_tmp" "SELECT '# I,0x'||\"t1\".\"cpuid\"||',0x'||MAX(\"t1\".\"version\")||','||\"t1\".\"yyyymmdd\" FROM \"Intel\" AS \"t1\" LEFT OUTER JOIN \"Intel\" AS \"t2\" ON \"t2\".\"cpuid\"=\"t1\".\"cpuid\" AND \"t2\".\"yyyymmdd\" > \"t1\".\"yyyymmdd\" WHERE \"t2\".\"yyyymmdd\" IS NULL GROUP BY \"t1\".\"cpuid\" ORDER BY \"t1\".\"cpuid\" ASC;" | grep -v '^# .,0x00000000,';
+		sqlite3 "$mcedb_tmp" "SELECT '# A,0x'||\"t1\".\"cpuid\"||',0x'||MAX(\"t1\".\"version\")||','||\"t1\".\"yyyymmdd\" FROM \"AMD\" AS \"t1\" LEFT OUTER JOIN \"AMD\" AS \"t2\" ON \"t2\".\"cpuid\"=\"t1\".\"cpuid\" AND \"t2\".\"yyyymmdd\" > \"t1\".\"yyyymmdd\" WHERE \"t2\".\"yyyymmdd\" IS NULL GROUP BY \"t1\".\"cpuid\" ORDER BY \"t1\".\"cpuid\" ASC;" | grep -v '^# .,0x00000000,';
 	} > "$mcedb_cache"
 	echo DONE "(version $dbversion)"
 
