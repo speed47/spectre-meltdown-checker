@@ -18,6 +18,7 @@ trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
 exit_cleanup()
 {
+	saved_ret=$?
 	# cleanup the temp decompressed config & kernel image
 	[ -n "${dumped_config:-}" ] && [ -f "$dumped_config" ] && rm -f "$dumped_config"
 	[ -n "${kerneltmp:-}"     ] && [ -f "$kerneltmp"     ] && rm -f "$kerneltmp"
@@ -30,6 +31,7 @@ exit_cleanup()
 	[ "${insmod_msr:-}"      = 1 ] && rmmod msr 2>/dev/null
 	[ "${kldload_cpuctl:-}"  = 1 ] && kldunload cpuctl 2>/dev/null
 	[ "${kldload_vmm:-}"     = 1 ] && kldunload vmm    2>/dev/null
+	exit $saved_ret
 }
 
 # if we were git clone'd, adjust VERSION
