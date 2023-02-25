@@ -495,9 +495,9 @@ is_cpu_affected()
 			if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
 				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 				# I can't find their CPU part number, but it's probably not that useful anyway
-				# model R7 R8 A8  A9  A12 A15 A17 A57 A72 A73 A75 A76 Neoverse-N1 A77
-				# part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b d0c         d0d
-				# arch  7? 7? 7   7   7   7   7   8   8   8   8   8   8           8
+				# model R7 R8 A8  A9  A12 A15 A17 A57 A72 A73 A75 A76 A77 Neoverse-N1 Neoverse-V1
+				# part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b d0d d0c         d40
+				# arch  7? 7? 7   7   7   7   7   8   8   8   8   8   8   8           8
 				#
 				# Whitelist identified non-affected processors, use vulnerability information from 
 				# https://developer.arm.com/support/arm-security-updates/speculative-processor-vulnerability
@@ -548,6 +548,13 @@ is_cpu_affected()
 					[ -z "$variant3a" ] && variant3a=immune
 					variant4=vuln
 					_debug "checking cpu$i: armv8 A76/A77/NeoverseN1 non affected to variant 2, 3 & 3a"
+				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd40; then
+					variant1=vuln
+					[ -z "$variant2" ] && variant2=immune
+					[ -z "$variant3" ] && variant3=immune
+					[ -z "$variant3a" ] && variant3a=immune
+					[ -z "$variant4" ] && variant4=immune
+					_debug "checking cpu$i: armv8 NeoverseV1 non affected to variant 2, 3, 3a & 4"
 				elif [ "$cpuarch" -le 7 ] || { [ "$cpuarch" = 8 ] && [ $(( cpupart )) -lt $(( 0xd07 )) ]; } ; then
 					[ -z "$variant1" ] && variant1=immune
 					[ -z "$variant2" ] && variant2=immune
