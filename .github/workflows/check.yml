@@ -24,7 +24,7 @@ jobs:
         fi
     - name: check direct execution
       run: |
-        expected=15
+        expected=16
         nb=$(sudo ./spectre-meltdown-checker.sh --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
@@ -34,7 +34,7 @@ jobs:
         fi
     - name: check docker-compose run execution
       run: |
-        expected=15
+        expected=16
         docker-compose build
         nb=$(docker-compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
