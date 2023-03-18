@@ -5783,6 +5783,7 @@ check_CVE_2021_26341()
 check_CVE_2021_26341_linux()
 {
 	status=UNK
+	sys_interface_available=0
 	sls_kernel_mitigation=''
 	msg=''
 	_info_nol "* Mitigated according to the /sys interface: "
