@@ -87,7 +87,7 @@ show_usage()
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
 		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked
-					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc, srbds
+					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc, srbds, sls
 					can be specified multiple times (e.g. --variant 2 --variant 3)
 		--cve [cve1,cve2,...]	specify which CVE you'd like to check, by default all supported CVEs are checked
 		--hw-only		only check for CPU information, don't check for any variant
@@ -170,7 +170,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543 CVE-2021-26341'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -295,6 +295,7 @@ cve2name()
 		CVE-2019-11135) echo "ZombieLoad V2, TSX Asynchronous Abort (TAA)";;
 		CVE-2018-12207) echo "No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)";;
 		CVE-2020-0543) echo "Special Register Buffer Data Sampling (SRBDS)";;
+		CVE-2021-26341) echo "Straight-line speculation (SLS)";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -319,6 +320,7 @@ _is_cpu_affected_cached()
 		CVE-2019-11135) return $variant_taa;;
 		CVE-2018-12207) return $variant_itlbmh;;
 		CVE-2020-0543) return $variant_srbds;;
+		CVE-2021-26341) return $variant_sls;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
@@ -348,6 +350,7 @@ is_cpu_affected()
 	variant_taa=''
 	variant_itlbmh=''
 	variant_srbds=''
+	variant_sls=''
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -380,6 +383,7 @@ is_cpu_affected()
 		variant_mdsum=immune
 		variant_taa=immune
 		variant_srbds=immune
+		variant_sls=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
@@ -455,6 +459,7 @@ is_cpu_affected()
 			_debug "is_cpu_affected: intel family < 6 is immune to l1tf"
 			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
+		variant_sls=immune
 	elif is_amd || is_hygon; then
 		# AMD revised their statement about variant2 => affected
 		# https://www.amd.com/en/corporate/speculative-execution
@@ -469,14 +474,17 @@ is_cpu_affected()
 			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
 		variantl1tf=immune
+		variant_sls=vuln
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		variant3=immune
 		variant3a=immune
 		variantl1tf=immune
+		variant_sls=immune
 	elif [ "$cpu_vendor" = PHYTIUM ]; then
 		variant3=immune
 		variant3a=immune
 		variantl1tf=immune
+		variant_sls=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -574,6 +582,7 @@ is_cpu_affected()
 			_debug "is_cpu_affected: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 		variantl1tf=immune
+		variant_sls=immune
 	fi
 
 	# we handle iTLB Multihit here (not linked to is_specex_free)
@@ -624,6 +633,7 @@ is_cpu_affected()
 	[ "$variant_taa"    = "immune" ] && variant_taa=1    || variant_taa=0
 	[ "$variant_itlbmh" = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
 	[ "$variant_srbds" = "immune" ] && variant_srbds=1 || variant_srbds=0
+	[ "$variant_sls" = "immune" ] && variant_sls=1 || variant_sls=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
@@ -1155,6 +1165,7 @@ while [ -n "${1:-}" ]; do
 			taa)	opt_cve_list="$opt_cve_list CVE-2019-11135"; opt_cve_all=0;;
 			mcepsc)	opt_cve_list="$opt_cve_list CVE-2018-12207"; opt_cve_all=0;;
 			srbds)  opt_cve_list="$opt_cve_list CVE-2020-0543"; opt_cve_all=0;;
+			sls)	opt_cve_list="$opt_cve_list CVE-2021-26341"; opt_cve_all=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc or srbds" >&2;
 				exit 255
@@ -1247,6 +1258,7 @@ pvulnstatus()
 			CVE-2019-11135) aka="TAA";;
 			CVE-2018-12207) aka="ITLBMH";;
 			CVE-2020-0543) aka="SRBDS";;
+			CVE-2021-26341) aka="SLS";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -5753,6 +5765,66 @@ check_CVE_2020_0543_bsd()
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+	else
+		pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+	fi
+}
+
+
+#######################
+# SLS SECTION
+
+check_CVE_2021_26341()
+{
+	cve='CVE-2021-26341'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_2021_26341_linux
+	elif echo "$os" | grep -q BSD; then
+		check_CVE_CVE-2021-26341_bsd
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
+
+check_CVE_2021_26341_linux()
+{
+	status=UNK
+	sys_interface_available=0
+	sls_kernel_mitigation=''
+	msg=''
+	_info_nol "* Mitigated according to the /sys interface: "
+	pstatus blue "N/A"
+	if [ "$opt_sysfs_only" = 1 ]; then
+		msg="/sys vulnerability interface use forced, but SLS mitigation is not reported"
+	elif [ -r "$opt_config" ]; then
+		sls_kernel_mitigation=$(grep -w 'CONFIG_SLS=y' "$opt_config")
+		_info_nol "* Kernel is compiled with SLS mitigation option: "
+		if [ -n "$sls_kernel_mitigation" ]; then
+			_debug "sls_mitigation: found '$sls_kernel_mitigation' in $opt_config"
+			pstatus green "YES"
+			status=OK
+			msg="Kernel is compiled to mitigate the vulnerability"
+		else
+			pstatus yellow "NO"
+			status=VULN
+			msg="Kernel is not compiled to mitigate the vulnerability"
+		fi
+	else
+		msg="(Unable to determine if kernel is compiled to mitigate the vunerability)"
+	fi
+	if ! is_cpu_affected "$cve"; then
+		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+	else
+		pvulnstatus "$cve" $status "$msg"
+	fi
+}
+
+check_CVE_2021_26341_bsd()
+{
+	if ! is_cpu_affected "$cve"; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
 	fi

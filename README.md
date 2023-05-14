@@ -20,6 +20,7 @@ CVE                                                                             
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX asynchronous abort                              | TAA, ZombieLoad V2
 [CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Mheck Exception on Page Size Changes        | MCEPSC, No eXcuses, iTLB Multihit
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543)   | Special Register Buffer Data Sampling               | SRBDS
+[CVE-2021-26341](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2021-26341) | Straight-line Speculation                           | SLS
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -177,4 +178,10 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
    - Impact: Kernel
    - Mitigation: microcode update + kernel update helping to protect various CPU internal buffers from unprivileged speculative access to data
+   - Performance impact of the mitigation: low
+
+**CVE-2021-26341** Straight-line Speculation (SLS)
+
+   - Impact: Kernel
+   - Mitigation: kernel update blocking speculation after RET or indirect branch
    - Performance impact of the mitigation: low
