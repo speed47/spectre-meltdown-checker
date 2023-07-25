@@ -585,6 +585,7 @@ is_cpu_affected()
 			_debug "is_cpu_affected: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 		variantl1tf=immune
+		variant_zenbleed=immune
 	fi
 
 	# we handle iTLB Multihit here (not linked to is_specex_free)
