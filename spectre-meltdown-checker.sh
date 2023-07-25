@@ -170,7 +170,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543 CVE-2023-20593'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -295,6 +295,7 @@ cve2name()
 		CVE-2019-11135) echo "ZombieLoad V2, TSX Asynchronous Abort (TAA)";;
 		CVE-2018-12207) echo "No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)";;
 		CVE-2020-0543) echo "Special Register Buffer Data Sampling (SRBDS)";;
+		CVE-2023-20593) echo "Zenbleed, cross-process information leak";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -319,6 +320,7 @@ _is_cpu_affected_cached()
 		CVE-2019-11135) return $variant_taa;;
 		CVE-2018-12207) return $variant_itlbmh;;
 		CVE-2020-0543) return $variant_srbds;;
+		CVE-2023-20593) return $variant_zenbleed;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
@@ -348,6 +350,7 @@ is_cpu_affected()
 	variant_taa=''
 	variant_itlbmh=''
 	variant_srbds=''
+	variant_zenbleed=''
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -380,6 +383,7 @@ is_cpu_affected()
 		variant_mdsum=immune
 		variant_taa=immune
 		variant_srbds=immune
+		variant_zenbleed=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
@@ -455,6 +459,7 @@ is_cpu_affected()
 			_debug "is_cpu_affected: intel family < 6 is immune to l1tf"
 			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
+		variant_zenbleed=immune
 	elif is_amd || is_hygon; then
 		# AMD revised their statement about variant2 => affected
 		# https://www.amd.com/en/corporate/speculative-execution
@@ -469,6 +474,12 @@ is_cpu_affected()
 			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to variant4"
 		fi
 		variantl1tf=immune
+
+		# Zenbleed
+		variant_zenbleed=immune
+		amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && variant_zenbleed=vuln
+		amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && variant_zenbleed=vuln
+		amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && variant_zenbleed=vuln
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		variant3=immune
 		variant3a=immune
@@ -624,6 +635,7 @@ is_cpu_affected()
 	[ "$variant_taa"    = "immune" ] && variant_taa=1    || variant_taa=0
 	[ "$variant_itlbmh" = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
 	[ "$variant_srbds" = "immune" ] && variant_srbds=1 || variant_srbds=0
+	[ "$variant_zenbleed" = "immune" ] && variant_zenbleed=1 || variant_zenbleed=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
@@ -1247,6 +1259,7 @@ pvulnstatus()
 			CVE-2019-11135) aka="TAA";;
 			CVE-2018-12207) aka="ITLBMH";;
 			CVE-2020-0543) aka="SRBDS";;
+			CVE-2023-20593) aka="ZENBLEED";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -1987,12 +2000,75 @@ is_zen_cpu()
 	[ "$cpu_family" = 23 ] && return 0
 	return 1
 }
+
 is_moksha_cpu()
 {
 	parse_cpu_details
 	is_hygon || return 1
 	[ "$cpu_family" = 24 ] && return 0
 	return 1
+}
+
+# mimick the Linux macro
+##define AMD_MODEL_RANGE(f, m_start, s_start, m_end, s_end) \
+#	((f << 24) | (m_start << 16) | (s_start << 12) | (m_end << 4) | (s_end))
+amd_model_range()
+{
+	echo $(( ($1 << 24) | ($2 << 16) | ($3 << 12) | ($4 << 4) | ($5) ))
+}
+
+# mimick the Linux func, usage:
+# amd_legacy_erratum $(amd_model_range 0x17 0x30 0x0 0x4f 0xf)
+# return true (0) if the current CPU is affected by this erratum, 1 otherwise
+amd_legacy_erratum()
+{
+	_range="$1"
+	_ms=$((cpu_model << 4 | cpu_stepping))
+	if [ "$cpu_family" = $(( ( (_range) >> 24) & 0xff )) ] && \
+		[ $_ms -ge $(( ( (_range) >> 12) & 0xfff )) ] && \
+		[ $_ms -le $(( (_range) & 0xfff )) ]; then
+		return 0
+	fi
+	return 1
+}
+
+# returns 0 (true) if yes, 1 otherwise
+# returns 2 if not applicable
+has_zenbleed_fixed_firmware()
+{
+	# return cached data
+	[ -n "$zenbleed_fw" ] && return "$zenbleed_fw"
+	# or compute it:
+	zenbleed_fw=2 # unknown
+	# only amd
+	if ! is_amd; then
+		zenbleed_fw=1
+		return $zenbleed_fw
+	fi
+	# list of known fixed firmwares, from commit 522b1d69219d8f083173819fde04f994aa051a98
+	_tuples="
+		0x30,0x3f,0x0830107a
+		0x60,0x67,0x0860010b
+		0x68,0x6f,0x08608105
+		0x70,0x7f,0x08701032
+		0xa0,0xaf,0x08a00008
+	"
+	for tuple in $_tuples; do
+		_model_low=$( echo "$tuple" | cut -d, -f1)
+		_model_high=$(echo "$tuple" | cut -d, -f2)
+		_fwver=$(     echo "$tuple" | cut -d, -f3)
+		if [ $((cpu_model)) -ge $((_model_low)) ] && [ $((cpu_model)) -le $((_model_high)) ]; then
+			if [ $((cpu_ucode)) -ge $((_fwver)) ]; then
+				zenbleed_fw=0 # true
+				break
+			else
+				zenbleed_fw=1 # false
+				zenbleed_fw_required=$_fwver
+			fi
+		fi
+	done
+	unset _tuples
+	return $zenbleed_fw
 }
 
 # Test if the current host is a Xen PV Dom0 / DomU
@@ -3294,6 +3370,21 @@ check_cpu()
 	else
 		pstatus yellow UNKNOWN "$read_cpuid_msg"
 		cpuid_srbds=0
+	fi
+
+	if is_amd; then
+		_info_nol "  * CPU microcode is known to fix Zenbleed: "
+		has_zenbleed_fixed_firmware; ret=$?
+		if [ $ret -eq 0 ]; then
+			# affected CPU, new fw
+			pstatus green YES
+		elif [ $ret -eq 1 ]; then
+			# affected CPU, old fw
+			pstatus red NO "required version: $zenbleed_fw_required"
+		else
+			# unaffected CPU
+			pstatus yellow NO
+		fi
 	fi
 
 	_info_nol "  * CPU microcode is known to cause stability problems: "
@@ -5758,6 +5849,121 @@ check_CVE_2020_0543_bsd()
 	fi
 }
 
+####################
+# Zenbleed section
+
+check_CVE_2023_20593()
+{
+	cve='CVE-2023-20593'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]; then
+		check_CVE_2023_20593_linux
+	#elif echo "$os" | grep -q BSD; then
+	#	check_CVE_2023_20593_bsd
+	else
+		_warn "Unsupported OS ($os)"
+	fi
+}
+
+check_CVE_2023_20593_linux()
+{
+	status=UNK
+	sys_interface_available=0
+	msg=''
+	if [ "$opt_sysfs_only" != 1 ]; then
+		_info_nol "* Zenbleed mitigation is supported by kernel: "
+		kernel_zenbleed=''
+		if [ -n "$kernel_err" ]; then
+			kernel_zenbleed_err="$kernel_err"
+		# commit 522b1d69219d8f083173819fde04f994aa051a98
+		elif grep -q 'Zenbleed:' "$kernel"; then
+			kernel_zenbleed="found zenbleed message in kernel image"
+		fi
+		if [ -n "$kernel_zenbleed" ]; then
+			pstatus green YES "$kernel_zenbleed"
+		elif [ -n "$kernel_zenbleed_err" ]; then
+			pstatus yellow UNKNOWN "$kernel_zenbleed_err"
+		else
+			pstatus yellow NO
+		fi
+		_info_nol "* Zenbleed kernel mitigation enabled and active: "
+		if [ "$opt_live" = 1 ]; then
+			# read the DE_CFG MSR, we want to check the 9th bit
+			# don't do it on non-Zen2 AMD CPUs or later, aka Family 17h,
+			# as the behavior could be unknown on others
+			if is_amd && [ "$cpu_family" -ge $((0x17)) ]; then
+				read_msr 0xc0011029; ret=$?
+				if [ $ret = $READ_MSR_RET_OK ]; then
+					if [ $(( read_msr_value >> 9 & 1 )) -eq 1 ]; then
+						pstatus green YES "FP_BACKUP_FIX bit set in DE_CFG"
+						fp_backup_fix=1
+					else
+						pstatus yellow NO "FP_BACKUP_FIX is cleared in DE_CFG"
+						fp_backup_fix=0
+					fi
+				elif [ $ret = $READ_MSR_RET_KO ]; then
+					pstatus yellow UNKNOWN "Couldn't read the DE_CFG MSR"
+				else
+					pstatus yellow UNKNOWN "$read_msr_msg"
+				fi
+			else
+				fp_backup_fix=0
+				pstatus blue N/A "CPU is incompatible"
+			fi
+		else
+			pstatus blue N/A "not testable in offline mode"
+		fi
+
+		_info_nol "* Zenbleed mitigation is supported by CPU microcode: "
+		has_zenbleed_fixed_firmware; ret=$?
+		if [ $ret -eq 0 ]; then
+			pstatus green YES
+			cpu_ucode_zenbleed=1
+		elif [ $ret -eq 1 ]; then
+			pstatus yellow NO
+			cpu_ucode_zenbleed=2
+		else
+			pstatus yellow UNKNOWN
+			cpu_ucode_zenbleed=3
+		fi
+
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
+
+	if ! is_cpu_affected "$cve" ; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		if [ "$opt_live" = 1 ]; then
+			if [ "$fp_backup_fix" = 1 ] && [ "$cpu_ucode_zenbleed" = 1 ]; then
+				# this should never happen, but if it does, it's interesting to know
+				pvulnstatus $cve OK "Both your CPU microcode and kernel are mitigating Zenbleed"
+			elif [ "$cpu_ucode_zenbleed" = 1 ]; then
+				pvulnstatus $cve OK "Your CPU microcode mitigates Zenbleed"
+			elif [ "$fp_backup_fix" = 1 ]; then
+				pvulnstatus $cve OK "Your kernel mitigates Zenbleed"
+			else
+				pvulnstatus $cve VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+			fi
+		else
+			if [ "$cpu_ucode_zenbleed" = 1 ]; then
+				pvulnstatus $cve OK "Your CPU microcode mitigates Zenbleed"
+			elif [ -n "$kernel_zenbleed" ]; then
+				pvulnstatus $cve OK "Your kernel mitigates Zenbleed"
+			else
+				pvulnstatus $cve VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+			fi
+		fi
+	else
+		pvulnstatus $cve "$status" "$msg"
+	fi
+}
+
+
 #######################
 # END OF VULNS SECTIONS
 
@@ -5850,7 +6056,7 @@ exit 0  # ok
 # The builtin version follows, but the user can download an up-to-date copy (to be stored in his $HOME) by using --update-fwdb
 # To update the builtin version itself (by *modifying* this very file), use --update-builtin-fwdb
 
-# %%% MCEDB v266+i20230512
+# %%% MCEDB v270+i20230614
 # I,0x00000611,0x00000B27,19961218
 # I,0x00000612,0x000000C6,19961210
 # I,0x00000616,0x000000C6,19961210
@@ -6286,8 +6492,8 @@ exit 0  # ok
 # A,0x00A10F01,0x0A100104,20220207
 # A,0x00A10F0B,0x0A100B07,20220610
 # A,0x00A10F10,0x0A101020,20220913
-# A,0x00A10F11,0x0A101116,20230127
-# A,0x00A10F12,0x0A101203,20230125
+# A,0x00A10F11,0x0A101135,20230509
+# A,0x00A10F12,0x0A101235,20230509
 # A,0x00A20F00,0x0A200025,20200121
 # A,0x00A20F10,0x0A201025,20211014
 # A,0x00A20F12,0x0A20120A,20211014
@@ -6299,5 +6505,5 @@ exit 0  # ok
 # A,0x00A60F11,0x0A601114,20220712
 # A,0x00A60F12,0x0A601203,20220715
 # A,0x00AA0F00,0x0AA00009,20221006
-# A,0x00AA0F01,0x0AA00107,20230127
-# A,0x00AA0F02,0x0AA00205,20230202
+# A,0x00AA0F01,0x0AA00112,20230510
+# A,0x00AA0F02,0x0AA0020E,20230510
