@@ -869,8 +869,16 @@ fms2cpuid()
 	_model="$2"
 	_stepping="$3"
 
-	_extfamily=$(( (_family & 0xFF0) >> 4 ))
-	_lowfamily=$(( (_family & 0x00F) >> 0 ))
+	if [ "$(( _family ))" -le 15 ]; then
+		_extfamily=0
+		_lowfamily=$(( _family ))
+	else
+		# when we have a family > 0xF, then lowfamily is stuck at 0xF
+		# and extfamily is ADDED to it (as in "+"), to ensure old software
+		# never sees a lowfamily < 0xF for newer families
+		_lowfamily=15
+		_extfamily=$(( (_family) - 15 ))
+	fi
 	_extmodel=$((  (_model  & 0xF0 ) >> 4 ))
 	_lowmodel=$((  (_model  & 0x0F ) >> 0 ))
 	echo $(( (_stepping & 0x0F) | (_lowmodel << 4) | (_lowfamily << 8) | (_extmodel << 16) | (_extfamily << 20) ))
@@ -1027,6 +1035,7 @@ update_fwdb()
 		_cpuid=$(printf "0x%08X" "$_cpuid")
 		_date="20000101"
 		_sqlstm="$(printf "INSERT INTO \"AMD\" (\"origin\",\"cpuid\",\"version\",\"yyyymmdd\") VALUES ('%s','%s','%s','%s');" "linux-firmware" "$(printf "%08X" "$_cpuid")" "$(printf "%08X" "$_version")" "$_date")"
+		_debug "family $_family model $_model stepping $_stepping cpuid $_cpuid"
 		_debug "$_sqlstm"
 		sqlite3 "$mcedb_tmp" "$_sqlstm"
 		nbfound=$((nbfound + 1))
@@ -6490,41 +6499,22 @@ exit 0  # ok
 # A,0x000C0F1B,0x0000006E,20060921
 # A,0x000F0F00,0x00000005,20020627
 # A,0x000F0F01,0x00000015,20020627
-# A,0x00100022,0x01000083,20000101
-# A,0x0010002A,0x01000084,20000101
-# A,0x00100052,0x010000DB,20000101
-# A,0x00100053,0x010000C8,20000101
-# A,0x00100062,0x010000C7,20000101
-# A,0x00100080,0x010000DA,20000101
-# A,0x00100091,0x010000D9,20000101
-# A,0x001000A0,0x010000DC,20000101
-# A,0x00100131,0x02000032,20000101
-# A,0x00100210,0x03000027,20000101
-# A,0x00100410,0x05000029,20000101
-# A,0x00100420,0x05000119,20000101
-# A,0x00100512,0x0600063E,20000101
-# A,0x00100520,0x06000852,20000101
-# A,0x00100601,0x0700010F,20000101
-# A,0x00100712,0x0800126E,20000101
-# A,0x00100782,0x0800820D,20000101
-# A,0x00100910,0x0A001079,20000101
-# A,0x00100911,0x0A0011D1,20000101
-# A,0x00100912,0x0A001234,20000101
 # A,0x00100F00,0x01000020,20070326
 # A,0x00100F20,0x010000CA,20100331
 # A,0x00100F22,0x010000C9,20100331
+# A,0x00100F2A,0x01000084,20000101
 # A,0x00100F40,0x01000085,20080501
 # A,0x00100F41,0x010000DB,20111024
 # A,0x00100F42,0x01000092,20081021
 # A,0x00100F43,0x010000C8,20100311
+# A,0x00100F52,0x010000DB,20000101
+# A,0x00100F53,0x010000C8,20000101
 # A,0x00100F62,0x010000C7,20100311
 # A,0x00100F80,0x010000DA,20111024
 # A,0x00100F81,0x010000D9,20111012
+# A,0x00100F91,0x010000D9,20000101
 # A,0x00100FA0,0x010000DC,20111024
-# A,0x00110501,0x06001119,20000101
 # A,0x00120F00,0x03000002,20100324
-# A,0x00130710,0x0830107A,20000101
-# A,0x001A0700,0x08A00008,20000101
 # A,0x00200F30,0x02000018,20070921
 # A,0x00200F31,0x02000057,20080502
 # A,0x00200F32,0x02000034,20080307
