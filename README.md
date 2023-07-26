@@ -18,7 +18,7 @@ CVE                                                                             
 [CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | Microarchitectural Load Port Data Sampling          | MLPDS, RIDL
 [CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX asynchronous abort                              | TAA, ZombieLoad V2
-[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Mheck Exception on Page Size Changes        | MCEPSC, No eXcuses, iTLB Multihit
+[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes        | MCEPSC, No eXcuses, iTLB Multihit
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543)   | Special Register Buffer Data Sampling               | SRBDS
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak                      | Zenbleed
 
