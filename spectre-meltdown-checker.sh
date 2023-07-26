@@ -5944,6 +5944,7 @@ check_CVE_2023_20593_linux()
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		zenbleed_print_vuln=0
 		if [ "$opt_live" = 1 ]; then
 			if [ "$fp_backup_fix" = 1 ] && [ "$cpu_ucode_zenbleed" = 1 ]; then
 				# this should never happen, but if it does, it's interesting to know
@@ -5953,7 +5954,7 @@ check_CVE_2023_20593_linux()
 			elif [ "$fp_backup_fix" = 1 ]; then
 				pvulnstatus $cve OK "Your kernel mitigates Zenbleed"
 			else
-				pvulnstatus $cve VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+				zenbleed_print_vuln=1
 			fi
 		else
 			if [ "$cpu_ucode_zenbleed" = 1 ]; then
@@ -5961,9 +5962,17 @@ check_CVE_2023_20593_linux()
 			elif [ -n "$kernel_zenbleed" ]; then
 				pvulnstatus $cve OK "Your kernel mitigates Zenbleed"
 			else
-				pvulnstatus $cve VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+				zenbleed_print_vuln=1
 			fi
 		fi
+		if [ "$zenbleed_print_vuln" = 1 ]; then
+			pvulnstatus $cve VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+			explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above)."
+			explain "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case"
+			explain "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to."
+			explain "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue."
+		fi
+		unset zenbleed_print_vuln
 	else
 		pvulnstatus $cve "$status" "$msg"
 	fi
