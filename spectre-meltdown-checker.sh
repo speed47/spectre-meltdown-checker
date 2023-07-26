@@ -6038,7 +6038,9 @@ check_CVE_2023_20593_linux()
 			explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
 "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
 "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
-"Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue."
+"Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue.\n " \
+"To manually mitigate the issue right now, you may use the following command: \`wrmsr -a 0xc0011029 \$((\$(rdmsr -c 0xc0011029) | (1<<9)))\`,\n " \
+"however note that this manual mitigation will only be active until the next reboot."
 		fi
 		unset zenbleed_print_vuln
 	else
