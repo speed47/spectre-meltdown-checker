@@ -25,6 +25,7 @@ exit_cleanup()
 	[ -n "${kerneltmp2:-}"    ] && [ -f "$kerneltmp2"    ] && rm -f "$kerneltmp2"
 	[ -n "${mcedb_tmp:-}"     ] && [ -f "$mcedb_tmp"     ] && rm -f "$mcedb_tmp"
 	[ -n "${intel_tmp:-}"     ] && [ -d "$intel_tmp"     ] && rm -rf "$intel_tmp"
+	[ -n "${linuxfw_tmp:-}"   ] && [ -f "$linuxfw_tmp"   ] && rm -f "$linuxfw_tmp"
 	[ "${mounted_debugfs:-}" = 1 ] && umount /sys/kernel/debug 2>/dev/null
 	[ "${mounted_procfs:-}"  = 1 ] && umount "$procfs" 2>/dev/null
 	[ "${insmod_cpuid:-}"    = 1 ] && rmmod cpuid 2>/dev/null
@@ -860,6 +861,21 @@ show_header()
 	_info
 }
 
+# Family-Model-Stepping to CPUID
+# prints CPUID in base-10 to stdout
+fms2cpuid()
+{
+	_family="$1"
+	_model="$2"
+	_stepping="$3"
+
+	_extfamily=$(( (_family & 0xFF0) >> 4 ))
+	_lowfamily=$(( (_family & 0x00F) >> 0 ))
+	_extmodel=$((  (_model  & 0xF0 ) >> 4 ))
+	_lowmodel=$((  (_model  & 0x0F ) >> 0 ))
+	echo $(( (_stepping & 0x0F) | (_lowmodel << 4) | (_lowfamily << 8) | (_extmodel << 16) | (_extfamily << 20) ))
+}
+
 [ -z "$HOME" ] && HOME="$(getent passwd "$(whoami)" | cut -d: -f6)"
 mcedb_cache="$HOME/.mcedb"
 update_fwdb()
@@ -925,7 +941,9 @@ update_fwdb()
 		return 1
 	fi
 	sqlite3 "$mcedb_tmp" "ALTER TABLE \"Intel\" ADD COLUMN \"origin\" TEXT"
+	sqlite3 "$mcedb_tmp" "ALTER TABLE \"AMD\" ADD COLUMN \"origin\" TEXT"
 	sqlite3 "$mcedb_tmp" "UPDATE \"Intel\" SET \"origin\"='mce'"
+	sqlite3 "$mcedb_tmp" "UPDATE \"AMD\" SET \"origin\"='mce'"
 
 	echo OK "MCExtractor database revision $mcedb_revision"
 
@@ -975,6 +993,47 @@ update_fwdb()
 		_intel_latest_date=$(sqlite3 "$mcedb_tmp" "SELECT \"yyyymmdd\" FROM \"Intel\" WHERE \"origin\"='intel' ORDER BY \"yyyymmdd\" DESC LIMIT 1;")
 	fi
 	echo DONE "(version $_intel_latest_date)"
+
+	# now parse the most recent linux-firmware amd-ucode README file
+	_info_nol "Fetching latest amd-ucode README from linux-firmware project... "
+	linuxfw_url="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/amd-ucode/README"
+	linuxfw_tmp=$(mktemp -t smc-linuxfw-XXXXXX)
+	if command -v wget >/dev/null 2>&1; then
+		wget -q "$linuxfw_url" -O "$linuxfw_tmp"; ret=$?
+	elif command -v curl >/dev/null 2>&1; then
+		curl -sL "$linuxfw_url" -o "$linuxfw_tmp"; ret=$?
+	elif command -v fetch >/dev/null 2>&1; then
+		fetch -q "$linuxfw_url" -o "$linuxfw_tmp"; ret=$?
+	else
+		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
+		return 1
+	fi
+	if [ "$ret" != 0 ]; then
+		echo ERROR "error $ret while downloading linux-firmware README"
+		return $ret
+	fi
+	echo DONE
+
+	_info_nol "Parsing the README... "
+	nbfound=0
+	for line in $(grep -E 'Family=0x[0-9a-f]+ Model=0x[0-9a-f]+ Stepping=0x[0-9a-f]+: Patch=0x[0-9a-f]+' "$linuxfw_tmp" | tr " " ","); do
+		_debug "Parsing line $line"
+		_family=$(  echo "$line" | grep -Eoi 'Family=0x[0-9a-f]+'   | cut -d= -f2)
+		_model=$(   echo "$line" | grep -Eoi 'Model=0x[0-9a-f]+'    | cut -d= -f2)
+		_stepping=$(echo "$line" | grep -Eoi 'Stepping=0x[0-9a-f]+' | cut -d= -f2)
+		_version=$( echo "$line" | grep -Eoi 'Patch=0x[0-9a-f]+'    | cut -d= -f2)
+		_version=$(printf "0x%08X" "$(( _version ))")
+		_cpuid=$(fms2cpuid "$_family" "$_model" "$_stepping")
+		_cpuid=$(printf "0x%08X" "$_cpuid")
+		_date="20000101"
+		_sqlstm="$(printf "INSERT INTO \"AMD\" (\"origin\",\"cpuid\",\"version\",\"yyyymmdd\") VALUES ('%s','%s','%s','%s');" "linux-firmware" "$(printf "%08X" "$_cpuid")" "$(printf "%08X" "$_version")" "$_date")"
+		_debug "$_sqlstm"
+		sqlite3 "$mcedb_tmp" "$_sqlstm"
+		nbfound=$((nbfound + 1))
+		unset _family _model _stepping _version _cpuid _date _sqlstm
+	done
+	echo "found $nbfound microcodes"
+	unset nbfound
 
 	dbversion="$mcedb_revision+i$_intel_latest_date"
 
@@ -6071,7 +6130,7 @@ exit 0  # ok
 # The builtin version follows, but the user can download an up-to-date copy (to be stored in his $HOME) by using --update-fwdb
 # To update the builtin version itself (by *modifying* this very file), use --update-builtin-fwdb
 
-# %%% MCEDB v270+i20230614
+# %%% MCEDB v271+i20230614
 # I,0x00000611,0x00000B27,19961218
 # I,0x00000612,0x000000C6,19961210
 # I,0x00000616,0x000000C6,19961210
@@ -6409,7 +6468,8 @@ exit 0  # ok
 # I,0x000B06E0,0x00000010,20221219
 # I,0x000B06F2,0x0000002C,20230104
 # I,0x000B06F5,0x0000002C,20230104
-# I,0x000C06F1,0x20000270,20230221
+# I,0x000C06F1,0x21000030,20230410
+# I,0x000C06F2,0x21000030,20230410
 # A,0x00000F00,0x02000008,20070614
 # A,0x00000F01,0x0000001C,20021031
 # A,0x00000F10,0x00000003,20020325
@@ -6430,6 +6490,26 @@ exit 0  # ok
 # A,0x000C0F1B,0x0000006E,20060921
 # A,0x000F0F00,0x00000005,20020627
 # A,0x000F0F01,0x00000015,20020627
+# A,0x00100022,0x01000083,20000101
+# A,0x0010002A,0x01000084,20000101
+# A,0x00100052,0x010000DB,20000101
+# A,0x00100053,0x010000C8,20000101
+# A,0x00100062,0x010000C7,20000101
+# A,0x00100080,0x010000DA,20000101
+# A,0x00100091,0x010000D9,20000101
+# A,0x001000A0,0x010000DC,20000101
+# A,0x00100131,0x02000032,20000101
+# A,0x00100210,0x03000027,20000101
+# A,0x00100410,0x05000029,20000101
+# A,0x00100420,0x05000119,20000101
+# A,0x00100512,0x0600063E,20000101
+# A,0x00100520,0x06000852,20000101
+# A,0x00100601,0x0700010F,20000101
+# A,0x00100712,0x0800126E,20000101
+# A,0x00100782,0x0800820D,20000101
+# A,0x00100910,0x0A001079,20000101
+# A,0x00100911,0x0A0011D1,20000101
+# A,0x00100912,0x0A001234,20000101
 # A,0x00100F00,0x01000020,20070326
 # A,0x00100F20,0x010000CA,20100331
 # A,0x00100F22,0x010000C9,20100331
@@ -6441,7 +6521,10 @@ exit 0  # ok
 # A,0x00100F80,0x010000DA,20111024
 # A,0x00100F81,0x010000D9,20111012
 # A,0x00100FA0,0x010000DC,20111024
+# A,0x00110501,0x06001119,20000101
 # A,0x00120F00,0x03000002,20100324
+# A,0x00130710,0x0830107A,20000101
+# A,0x001A0700,0x08A00008,20000101
 # A,0x00200F30,0x02000018,20070921
 # A,0x00200F31,0x02000057,20080502
 # A,0x00200F32,0x02000034,20080307
@@ -6489,18 +6572,18 @@ exit 0  # ok
 # A,0x00820F00,0x08200002,20180214
 # A,0x00820F01,0x08200103,20190417
 # A,0x00830F00,0x08300027,20190401
-# A,0x00830F10,0x08301072,20220215
+# A,0x00830F10,0x0830107A,20230517
 # A,0x00850F00,0x08500004,20180212
 # A,0x00860F00,0x0860000E,20200127
 # A,0x00860F01,0x08600109,20220328
 # A,0x00860F81,0x08608104,20220328
 # A,0x00870F00,0x08700004,20181206
 # A,0x00870F10,0x08701030,20220328
-# A,0x008A0F00,0x08A00006,20220322
+# A,0x008A0F00,0x08A00008,20230615
 # A,0x00A00F00,0x0A000033,20200413
-# A,0x00A00F10,0x0A001078,20230117
-# A,0x00A00F11,0x0A0011CE,20230114
-# A,0x00A00F12,0x0A001231,20230117
+# A,0x00A00F10,0x0A001079,20230609
+# A,0x00A00F11,0x0A0011D1,20230710
+# A,0x00A00F12,0x0A001234,20230710
 # A,0x00A00F80,0x0A008003,20211015
 # A,0x00A00F82,0x0A008205,20220414
 # A,0x00A10F00,0x0A10004B,20220309
