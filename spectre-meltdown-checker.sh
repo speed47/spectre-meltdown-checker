@@ -352,7 +352,8 @@ is_cpu_affected()
 	variant_taa=''
 	variant_itlbmh=''
 	variant_srbds=''
-	variant_zenbleed=''
+	# Zenbleed if extremely AMD specific, look for "is_and" below:
+	variant_zenbleed=immune
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -385,7 +386,6 @@ is_cpu_affected()
 		variant_mdsum=immune
 		variant_taa=immune
 		variant_srbds=immune
-		variant_zenbleed=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
@@ -461,7 +461,6 @@ is_cpu_affected()
 			_debug "is_cpu_affected: intel family < 6 is immune to l1tf"
 			[ -z "$variantl1tf" ] && variantl1tf=immune
 		fi
-		variant_zenbleed=immune
 	elif is_amd || is_hygon; then
 		# AMD revised their statement about variant2 => affected
 		# https://www.amd.com/en/corporate/speculative-execution
@@ -478,7 +477,6 @@ is_cpu_affected()
 		variantl1tf=immune
 
 		# Zenbleed
-		variant_zenbleed=immune
 		amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && variant_zenbleed=vuln
 		amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && variant_zenbleed=vuln
 		amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && variant_zenbleed=vuln
@@ -587,7 +585,6 @@ is_cpu_affected()
 			_debug "is_cpu_affected: for cpu$i and so far, we have <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4>"
 		done
 		variantl1tf=immune
-		variant_zenbleed=immune
 	fi
 
 	# we handle iTLB Multihit here (not linked to is_specex_free)
