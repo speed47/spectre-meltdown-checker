@@ -5967,10 +5967,10 @@ check_CVE_2023_20593_linux()
 		fi
 		if [ "$zenbleed_print_vuln" = 1 ]; then
 			pvulnstatus $cve VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
-			explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above)."
-			explain "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case"
-			explain "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to."
-			explain "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue."
+			explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
+"Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
+"your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
+"Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue."
 		fi
 		unset zenbleed_print_vuln
 	else
