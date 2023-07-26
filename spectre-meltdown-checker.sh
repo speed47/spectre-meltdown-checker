@@ -86,10 +86,11 @@ show_usage()
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 
-		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked
-					VARIANT can be one of 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc, srbds
-					can be specified multiple times (e.g. --variant 2 --variant 3)
-		--cve [cve1,cve2,...]	specify which CVE you'd like to check, by default all supported CVEs are checked
+		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked.
+					can be used multiple times (e.g. --variant 3a --variant l1tf)
+					for a list of supported VARIANT parameters, use --variant help
+		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
+					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
 		--hw-only		only check for CPU information, don't check for any variant
 		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
@@ -1151,25 +1152,29 @@ while [ -n "${1:-}" ]; do
 		shift 2
 	elif [ "$1" = "--variant" ]; then
 		if [ -z "$2" ]; then
-			echo "$0: error: option --variant expects a parameter (1, 2, 3, 3a, 4 or l1tf)" >&2
+			echo "$0: error: option --variant expects a parameter (see --variant help)" >&2
 			exit 255
 		fi
 		case "$2" in
-			1)		opt_cve_list="$opt_cve_list CVE-2017-5753"; opt_cve_all=0;;
-			2)		opt_cve_list="$opt_cve_list CVE-2017-5715"; opt_cve_all=0;;
-			3)		opt_cve_list="$opt_cve_list CVE-2017-5754"; opt_cve_all=0;;
-			3a)		opt_cve_list="$opt_cve_list CVE-2018-3640"; opt_cve_all=0;;
-			4)		opt_cve_list="$opt_cve_list CVE-2018-3639"; opt_cve_all=0;;
-			msbds)  opt_cve_list="$opt_cve_list CVE-2018-12126"; opt_cve_all=0;;
-			mfbds)  opt_cve_list="$opt_cve_list CVE-2018-12130"; opt_cve_all=0;;
-			mlpds)  opt_cve_list="$opt_cve_list CVE-2018-12127"; opt_cve_all=0;;
-			mdsum)  opt_cve_list="$opt_cve_list CVE-2019-11091"; opt_cve_all=0;;
-			l1tf)	opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
-			taa)	opt_cve_list="$opt_cve_list CVE-2019-11135"; opt_cve_all=0;;
-			mcepsc)	opt_cve_list="$opt_cve_list CVE-2018-12207"; opt_cve_all=0;;
-			srbds)  opt_cve_list="$opt_cve_list CVE-2020-0543"; opt_cve_all=0;;
+			help)	echo "The following parameters are supported for --variant (can be used multiple times):";
+					echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed";
+					exit 0;;
+			1)			opt_cve_list="$opt_cve_list CVE-2017-5753"; opt_cve_all=0;;
+			2)			opt_cve_list="$opt_cve_list CVE-2017-5715"; opt_cve_all=0;;
+			3)			opt_cve_list="$opt_cve_list CVE-2017-5754"; opt_cve_all=0;;
+			3a)			opt_cve_list="$opt_cve_list CVE-2018-3640"; opt_cve_all=0;;
+			4)			opt_cve_list="$opt_cve_list CVE-2018-3639"; opt_cve_all=0;;
+			msbds)		opt_cve_list="$opt_cve_list CVE-2018-12126"; opt_cve_all=0;;
+			mfbds)		opt_cve_list="$opt_cve_list CVE-2018-12130"; opt_cve_all=0;;
+			mlpds)		opt_cve_list="$opt_cve_list CVE-2018-12127"; opt_cve_all=0;;
+			mdsum)		opt_cve_list="$opt_cve_list CVE-2019-11091"; opt_cve_all=0;;
+			l1tf)		opt_cve_list="$opt_cve_list CVE-2018-3615 CVE-2018-3620 CVE-2018-3646"; opt_cve_all=0;;
+			taa)		opt_cve_list="$opt_cve_list CVE-2019-11135"; opt_cve_all=0;;
+			mcepsc)		opt_cve_list="$opt_cve_list CVE-2018-12207"; opt_cve_all=0;;
+			srbds)		opt_cve_list="$opt_cve_list CVE-2020-0543"; opt_cve_all=0;;
+			zenbleed)	opt_cve_list="$opt_cve_list CVE-2023-20593"; opt_cve_all=0;;
 			*)
-				echo "$0: error: invalid parameter '$2' for --variant, expected either 1, 2, 3, 3a, 4, l1tf, msbds, mfbds, mlpds, mdsum, taa, mcepsc or srbds" >&2;
+				echo "$0: error: invalid parameter '$2' for --variant, see --variant help for a list" >&2;
 				exit 255
 				;;
 		esac
