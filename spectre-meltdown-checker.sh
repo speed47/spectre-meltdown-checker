@@ -118,24 +118,27 @@ show_disclaimer()
 Disclaimer:
 
 This tool does its best to determine whether your system is immune (or has proper mitigations in place) for the
-collectively named "speculative execution" vulnerabilities. It doesn't attempt to run any kind of exploit, and can't guarantee
-that your system is secure, but rather helps you verifying whether your system has the known correct mitigations in place.
+collectively named "transient execution" (aka "speculative execution") vulnerabilities that started to appear
+since early 2018 with the infamous Spectre & Meltdown.
+
+This tool does NOT attempt to run any kind of exploit, and can't 100% guarantee that your system is secure,
+but rather helps you verifying whether your system has the known correct mitigations in place.
 However, some mitigations could also exist in your kernel that this script doesn't know (yet) how to detect, or it might
 falsely detect mitigations that in the end don't work as expected (for example, on backported or modified kernels).
 
-Your system exposure also depends on your CPU. As of now, AMD and ARM processors are marked as immune to some or all of these
-vulnerabilities (except some specific ARM models). All Intel processors manufactured since circa 1995 are thought to be vulnerable,
-except some specific/old models, such as some early Atoms. Whatever processor one uses, one might seek more information
-from the manufacturer of that processor and/or of the device in which it runs.
+Your system affectability to a given vulnerability depends on your CPU model and CPU microcode version, whereas the
+mitigations in place depend on your CPU (model and microcode), your kernel version, and both the runtime configuration
+of your CPU (through bits set through the MSRs) and your kernel. The script attempts to explain everything for each
+vulnerability, so you know where your system stands. For a given vulnerability, detailed information is sometimes
+available using the \`--explain\` switch.
 
-The nature of the discovered vulnerabilities being quite new, the landscape of vulnerable processors can be expected
-to change over time, which is why this script makes the assumption that all CPUs are vulnerable, except if the manufacturer
-explicitly stated otherwise in a verifiable public announcement.
+Please also note that for the Spectre-like vulnerabilities, all software can possibly be exploited, in which case
+this tool only verifies that the kernel (which is the core of the system) you're using has the proper protections
+in place. Verifying all the other software is out of the scope of this tool, as it can't be done in a simple way.
+As a general measure, ensure you always have the most up to date stable versions of all the software you use,
+especially for those who are exposed to the world, such as network daemons and browsers.
 
-Please also note that for Spectre vulnerabilities, all software can possibly be exploited, this tool only verifies that the
-kernel (which is the core of the system) you're using has the proper protections in place. Verifying all the other software
-is out of the scope of this tool. As a general measure, ensure you always have the most up to date stable versions of all
-the software you use, especially for those who are exposed to the world, such as network daemons and browsers.
+For more information and answers to related questions, please refer to the FAQ.md file.
 
 This tool has been released in the hope that it'll be useful, but don't use it to jump to conclusions about your security.
 

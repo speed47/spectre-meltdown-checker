@@ -45,9 +45,9 @@ Software vulnerability:
 
 Hardware vulnerability:
 - Can be fixed? No, only mitigated (or buy new hardware!)
-- How to ~~fix~~ mitigate? In the worst case scenario, 5 "layers" need to be updated: the microcode/firmware, the host OS kernel, the hypervisor, the VM OS kernel, and possibly all the software running on the VM.
+- How to ~~fix~~ mitigate? In the worst case scenario, 5 "layers" need to be updated: the microcode/firmware, the host OS kernel, the hypervisor, the VM OS kernel, and possibly all the software running on the machine. Sometimes only a subset of those layers need to be updated. In yet other cases, there can be several possible mitigations for the same vulnerability, implying different layers. Yes, it can get horribly complicated.
 
-A more detailed video explanation is available here: https://youtu.be/2gB9U1EcCss?t=85
+A more detailed video explanation is available here: https://youtu.be/2gB9U1EcCss?t=425
 
 ## What do "affected", "vulnerable" and "mitigated" mean exactly?
 
@@ -75,7 +75,7 @@ There are a few rules that govern how this tool is written.
 
 A lot as changed since 2018. Nowadays, the industry adapted and this range of vulnerabilities is almost "business as usual", as software vulnerabilities are. However, due to their complexity, it's still not as easy as just checking a version number to ensure a vulnerability is closed.
 
-Granted, we now have a standard way under Linux to check whether our system is affected, vulnerable, mitigated against most of these vulnerabilities. By having a look at the `sysfs` hierarchy, and more precisely the `/sys/devices/system/cpu/vulnerabilities/` folder, one can have a pretty good insight about its system state for each of the listed vulnerabilities. Note that the output can be a little different with some vendors (e.g. Red Hat has some slightly different output than the vanilla kernel for some vulnerabilities), but it's still a gigantic leap forward, given where we were in 2018 when this script was started, and it's very good news. The kernel is the proper place to have this because the kernel knows everything about itself (the mitigations it might have), and the CPU (its model, and microcode features that are exposed).
+Granted, we now have a standard way under Linux to check whether our system is affected, vulnerable, mitigated against most of these vulnerabilities. By having a look at the `sysfs` hierarchy, and more precisely the `/sys/devices/system/cpu/vulnerabilities/` folder, one can have a pretty good insight about its system state for each of the listed vulnerabilities. Note that the output can be a little different with some vendors (e.g. Red Hat has some slightly different output than the vanilla kernel for some vulnerabilities), but it's still a gigantic leap forward, given where we were in 2018 when this script was started, and it's very good news. The kernel is the proper place to have this because the kernel knows everything about itself (the mitigations it might have), and the CPU (its model, and microcode features that are exposed). Note however that some vulnerabilities are not reported through this file hierarchy at all, such as Zenbleed.
 
 However I see a few reasons why this script might still be useful to you, and that's why its development has not halted when the `sysfs` hierarchy came out:
 
@@ -109,12 +109,13 @@ This tool only supports Linux, and [some flavors of BSD](#which-bsd-oses-are-sup
 
 ## The tool says there is an updated microcode for my CPU, but I don't have it!
 
-Even if your operating system is fully up to date, the tool might still tell you that there is a more recent microcode version for your CPU. Currently, it uses (and merges) information from two sources:
+Even if your operating system is fully up to date, the tool might still tell you that there is a more recent microcode version for your CPU. Currently, it uses (and merges) information from three sources:
 
 - The official [Intel microcode repository](https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files)
 - The awesome platomav's [MCExtractor database](https://github.com/platomav/MCExtractor) for non-Intel CPUs
+- The official [linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git) repository for AMD
 
-Generally, for Intel CPUs it means that Intel does have a more recent version for your CPU, and for other CPUs it means that a more recent version has already been seen in the wild. However, your OS vendor might have chosen not to ship this new version (yet), maybe because it's currently being tested, or for other reasons. This tool can't tell you when or if this will be the case. You should ask your vendor about it. Technically, you can still go and upgrade your microcode yourself, and use this tool to confirm whether you did it successfully. Updating the microcode for you is out of the scope of this tool, as this would violate [rule 1b](#what-are-the-main-design-decisions-regarding-this-script).
+Generally, it means a more recent version of the microcode has been seen in the wild. However, your OS vendor might have chosen not to ship this new version (yet), maybe because it's currently being tested, or for other reasons. This tool can't tell you when or if this will be the case. You should ask your vendor about it. Technically, you can still go and upgrade your microcode yourself, and use this tool to confirm whether you did it successfully. Updating the microcode for you is out of the scope of this tool, as this would violate [rule 1b](#what-are-the-main-design-decisions-regarding-this-script).
 
 ## The tool says that I need a more up-to-date microcode, but I have the more recent version!
 
