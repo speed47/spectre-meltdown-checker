@@ -884,6 +884,29 @@ fms2cpuid()
 	echo $(( (_stepping & 0x0F) | (_lowmodel << 4) | (_lowfamily << 8) | (_extmodel << 16) | (_extfamily << 20) ))
 }
 
+download_file()
+{
+	_url="$1"
+	_file="$2"
+	if command -v wget >/dev/null 2>&1; then
+		wget -q "$_url" -O "$_file"; ret=$?
+	elif command -v curl >/dev/null 2>&1; then
+		curl -sL "$_url" -o "$_file"; ret=$?
+	elif command -v fetch >/dev/null 2>&1; then
+		fetch -q "$_url" -o "$_file"; ret=$?
+	else
+		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
+		unset _file _url
+		return 1
+	fi
+	unset _file _url
+	if [ "$ret" != 0 ]; then
+		echo ERROR "error $ret"
+		return $ret
+	fi
+	echo DONE
+}
+
 [ -z "$HOME" ] && HOME="$(getent passwd "$(whoami)" | cut -d: -f6)"
 mcedb_cache="$HOME/.mcedb"
 update_fwdb()
@@ -900,42 +923,14 @@ update_fwdb()
 	mcedb_tmp="$(mktemp -t smc-mcedb-XXXXXX)"
 	mcedb_url='https://github.com/platomav/MCExtractor/raw/master/MCE.db'
 	_info_nol "Fetching MCE.db from the MCExtractor project... "
-	if command -v wget >/dev/null 2>&1; then
-		wget -q "$mcedb_url" -O "$mcedb_tmp"; ret=$?
-	elif command -v curl >/dev/null 2>&1; then
-		curl -sL "$mcedb_url" -o "$mcedb_tmp"; ret=$?
-	elif command -v fetch >/dev/null 2>&1; then
-		fetch -q "$mcedb_url" -o "$mcedb_tmp"; ret=$?
-	else
-		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
-		return 1
-	fi
-	if [ "$ret" != 0 ]; then
-		echo ERROR "error $ret while downloading MCE.db"
-		return $ret
-	fi
-	echo DONE
+	download_file "$mcedb_url" "$mcedb_tmp" || return $?
 
 	# second, get the Intel firmwares from GitHub
 	intel_tmp="$(mktemp -d -t smc-intelfw-XXXXXX)"
 	intel_url="https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/archive/main.zip"
 	_info_nol "Fetching Intel firmwares... "
 	## https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files.git
-	if command -v wget >/dev/null 2>&1; then
-		wget -q "$intel_url" -O "$intel_tmp/fw.zip"; ret=$?
-	elif command -v curl >/dev/null 2>&1; then
-		curl -sL "$intel_url" -o "$intel_tmp/fw.zip"; ret=$?
-	elif command -v fetch >/dev/null 2>&1; then
-		fetch -q "$intel_url" -o "$intel_tmp/fw.zip"; ret=$?
-	else
-		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
-		return 1
-	fi
-	if [ "$ret" != 0 ]; then
-		echo ERROR "error $ret while downloading Intel firmwares"
-		return $ret
-	fi
-	echo DONE
+	download_file "$intel_url" "$intel_tmp/fw.zip" || return $?
 
 	# now extract MCEdb contents using sqlite
 	_info_nol "Extracting MCEdb data... "
@@ -1004,23 +999,9 @@ update_fwdb()
 
 	# now parse the most recent linux-firmware amd-ucode README file
 	_info_nol "Fetching latest amd-ucode README from linux-firmware project... "
-	linuxfw_url="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/amd-ucode/README"
+	linuxfw_url="https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/amd-ucode/README"
 	linuxfw_tmp=$(mktemp -t smc-linuxfw-XXXXXX)
-	if command -v wget >/dev/null 2>&1; then
-		wget -q "$linuxfw_url" -O "$linuxfw_tmp"; ret=$?
-	elif command -v curl >/dev/null 2>&1; then
-		curl -sL "$linuxfw_url" -o "$linuxfw_tmp"; ret=$?
-	elif command -v fetch >/dev/null 2>&1; then
-		fetch -q "$linuxfw_url" -o "$linuxfw_tmp"; ret=$?
-	else
-		echo ERROR "please install one of \`wget\`, \`curl\` of \`fetch\` programs"
-		return 1
-	fi
-	if [ "$ret" != 0 ]; then
-		echo ERROR "error $ret while downloading linux-firmware README"
-		return $ret
-	fi
-	echo DONE
+	download_file "$linuxfw_url" "$linuxfw_tmp" || return $?
 
 	_info_nol "Parsing the README... "
 	nbfound=0
@@ -1045,6 +1026,10 @@ update_fwdb()
 	unset nbfound
 
 	dbversion="$mcedb_revision+i$_intel_latest_date"
+	linuxfw_hash=$(md5sum "$linuxfw_tmp" 2>/dev/null | cut -c1-4)
+	if [ -n "$linuxfw_hash" ]; then
+		dbversion="$dbversion+$linuxfw_hash"
+	fi
 
 	if [ "$1" != builtin ] && [ -n "$previous_dbversion" ] && [ "$previous_dbversion" = "v$dbversion" ]; then
 		echo "We already have this version locally, no update needed"
@@ -6138,10 +6123,15 @@ fi
 exit 0  # ok
 
 # We're using MCE.db from the excellent platomav's MCExtractor project
-# The builtin version follows, but the user can download an up-to-date copy (to be stored in his $HOME) by using --update-fwdb
+# The builtin version follows, but the user can download an up-to-date copy (to be stored in their $HOME) by using --update-fwdb
 # To update the builtin version itself (by *modifying* this very file), use --update-builtin-fwdb
+#
+# The format below is:
+# X,CPUID_HEX,MICROCODE_VERSION_HEX,YYYYMMDD
+# with X being either I for Intel, or A for AMD
+# When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v271+i20230614
+# %%% MCEDB v271+i20230614+b6bd
 # I,0x00000611,0x00000B27,19961218
 # I,0x00000612,0x000000C6,19961210
 # I,0x00000616,0x000000C6,19961210
