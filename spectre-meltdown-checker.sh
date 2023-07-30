@@ -1866,7 +1866,9 @@ parse_cpu_details()
 	if read_cpuid 0x1 0x0 $EAX 0 0xFFFFFFFF; then
 		cpu_cpuid="$read_cpuid_value"
 	else
-		cpu_cpuid=0
+		# try to build it by ourselves
+		_debug "parse_cpu_details: build the CPUID by ourselves"
+		cpu_cpuid=$(fms2cpuid "$cpu_family" "$cpu_model" "$cpu_stepping")
 	fi
 
 	# under BSD, linprocfs often doesn't export ucode information, so fetch it ourselves the good old way
