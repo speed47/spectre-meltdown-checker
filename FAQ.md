@@ -109,13 +109,14 @@ This tool only supports Linux, and [some flavors of BSD](#which-bsd-oses-are-sup
 
 ## The tool says there is an updated microcode for my CPU, but I don't have it!
 
-Even if your operating system is fully up to date, the tool might still tell you that there is a more recent microcode version for your CPU. Currently, it uses (and merges) information from three sources:
+Even if your operating system is fully up to date, the tool might still tell you that there is a more recent microcode version for your CPU. Currently, it uses (and merges) information from 4 sources:
 
 - The official [Intel microcode repository](https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files)
 - The awesome platomav's [MCExtractor database](https://github.com/platomav/MCExtractor) for non-Intel CPUs
 - The official [linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git) repository for AMD
+- Specific Linux kernel commits that sometimes hardcode microcode versions, such as for [Zenbleed](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=522b1d69219d8f083173819fde04f994aa051a98) or for the bad [Spectre](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/intel.c#n141) microcodes
 
-Generally, it means a more recent version of the microcode has been seen in the wild. However, your OS vendor might have chosen not to ship this new version (yet), maybe because it's currently being tested, or for other reasons. This tool can't tell you when or if this will be the case. You should ask your vendor about it. Technically, you can still go and upgrade your microcode yourself, and use this tool to confirm whether you did it successfully. Updating the microcode for you is out of the scope of this tool, as this would violate [rule 1b](#what-are-the-main-design-decisions-regarding-this-script).
+Generally, it means a more recent version of the microcode has been seen in the wild. However, fully public availability of this microcode might be limited yet, or your OS vendor might have chosen not to ship this new version (yet), maybe because it's currently being tested, or for other reasons. This tool can't tell you when or if this will be the case. You should ask your vendor about it. Technically, you can still go and upgrade your microcode yourself, and use this tool to confirm whether you did it successfully. Updating the microcode for you is out of the scope of this tool, as this would violate [rule 1b](#what-are-the-main-design-decisions-regarding-this-script).
 
 ## The tool says that I need a more up-to-date microcode, but I have the more recent version!
 
