@@ -20,6 +20,7 @@ CVE                                                                             
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX asynchronous abort                              | TAA, ZombieLoad V2
 [CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes        | MCEPSC, No eXcuses, iTLB Multihit
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543)   | Special Register Buffer Data Sampling               | SRBDS
+[CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling                                | GDS, Downfall
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak                      | Zenbleed
 
 Supported operating systems:
@@ -179,6 +180,12 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Impact: Kernel
    - Mitigation: microcode update + kernel update helping to protect various CPU internal buffers from unprivileged speculative access to data
    - Performance impact of the mitigation: low
+
+**CVE-2022-40982** Gather Data Sampling (GDS, Downfall)
+
+   - Impact: Kernel & all software
+   - Mitigation: either microcode update or disabling AVX feature
+   - Performance impact of the mitigation: TBD
 
 **CVE-2023-20593** Cross-Process Information Leak (Zenbleed)
 
