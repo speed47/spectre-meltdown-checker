@@ -6222,7 +6222,7 @@ check_CVE_2022_40982_linux() {
 			pstatus yellow NO
 		fi
 		_info_nol "* Kernel supports software mitigation by disabling AVX: "
-		if [ -n "$kernel_err" ]; then
+		if [ -n "$kernel_err" ]; then	
 			kernel_gds_err="$kernel_err"
 		elif grep -q 'gather_data_sampling' "$kernel"; then
 			kernel_gds="found gather_data_sampling in kernel image"
@@ -6234,6 +6234,22 @@ check_CVE_2022_40982_linux() {
 		else
 			pstatus yellow NO
 		fi
+
+		if [ -n "$kernel_gds" ]; then
+			_info_nol "* Is the kernel mitigation active: "
+
+			# Check dmesg message to see whether AVX has been disabled
+			dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'; ret=$?
+			if [ $ret -eq 2 ]; then
+				pstatus yellow UNKNOWN "dmesg truncated, AVX mitigation detection will be unreliable. Please reboot and relaunch this script"
+			elif [ $ret -eq 0 ]; then
+				kernel_avx_disabled="AVX disabled by the kernel"
+				pstatus green YES "$kernel_avx_disabled"
+			else
+				pstatus red NO "No trace of AVX mitigation in dmesg"
+			fi
+		fi
+
 	elif [ "$sys_interface_available" = 0 ]; then
 		# we have no sysfs but were asked to use it only!
 		msg="/sys vulnerability interface use forced, but it's not available!"
@@ -6251,8 +6267,10 @@ check_CVE_2022_40982_linux() {
 			pvulnstatus $cve VULN "Your microcode is up to date but mitigation is disabled"
 		elif [ -z "$kernel_gds" ]; then
 			pvulnstatus $cve VULN "Your microcode doesn't mitigate the vulnerability, and your kernel doesn't support mitigation"
+		elif [ -z "$kernel_avx_disabled" ]; then
+			pvulnstatus $cve VULN "Your microcode doesn't mitigate the vulnerability, your kernel support the mitigation but the script did not detect AVX as disabled by the kernel"
 		else
-			pvulnstatus $cve UNK "Your microcode doesn't mitigate the vulnerability, your kernel supports mitigation, but mitigation detection is not implemented yet so we don't know whether it's active"
+			pvulnstatus $cve OK "Your microcode doesn't mitigate the vulnerability, but your kernel has disabled AVX support"
 		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
