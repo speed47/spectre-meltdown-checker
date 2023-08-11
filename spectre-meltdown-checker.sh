@@ -2600,7 +2600,7 @@ else
 	kernel_version=$("${opt_arch_prefix}strings" "$kernel" 2>/dev/null | grep -E \
 		-e '^Linux version ' \
 		-e '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' \
-		-e '^FreeBSD [0-9]' | head -1)
+		-e '^FreeBSD [0-9]' | grep -v 'ABI compat' | head -1)
 	if [ -z "$kernel_version" ]; then
 		# try even harder with some kernels (such as ARM) that split the release (uname -r) and version (uname -v) in 2 adjacent strings
 		kernel_version=$("${opt_arch_prefix}strings" "$kernel" 2>/dev/null | grep -E -B1 '^#[0-9]+ .+ (19|20)[0-9][0-9]$' | tr "\n" " ")
