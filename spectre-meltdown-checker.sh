@@ -177,7 +177,7 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543 CVE-2023-20593 CVE-2022-40982'
+supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543 CVE-2023-20593 CVE-2022-40982 CVE-2023-20569'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -304,6 +304,7 @@ cve2name()
 		CVE-2020-0543) echo "Special Register Buffer Data Sampling (SRBDS)";;
 		CVE-2023-20593) echo "Zenbleed, cross-process information leak";;
 		CVE-2022-40982) echo "Downfall, gather data sampling (GDS)";;
+		CVE-2023-20569) echo "Inception, return address security (RAS)";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -330,6 +331,7 @@ _is_cpu_affected_cached()
 		CVE-2020-0543) return $variant_srbds;;
 		CVE-2023-20593) return $variant_zenbleed;;
 		CVE-2022-40982) return $variant_downfall;;
+		CVE-2023-20569) return $variant_inception;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
@@ -397,8 +399,9 @@ is_cpu_affected()
 	variant_taa=''
 	variant_itlbmh=''
 	variant_srbds=''
-	# Zenbleed is AMD specific, look for "is_amd" below:
+	# Zenbleed and Inception are both AMD specific, look for "is_amd" below:
 	variant_zenbleed=immune
+	variant_inception=immune
 	# Downfall is Intel specific, look for "is_intel" below:
 	variant_downfall=immune
 
@@ -560,6 +563,12 @@ is_cpu_affected()
 		amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && variant_zenbleed=vuln
 		amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && variant_zenbleed=vuln
 		amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && variant_zenbleed=vuln
+
+		# Inception (Zen3 & Zen4)
+		# TODO: Should Zend2 & Zen1 be added. No ucode update will be released but they are affected too.
+		amd_legacy_erratum "$(amd_model_range 0x19 0x40 0x0 0x7f 0xf)" && variant_inception=vuln
+		amd_legacy_erratum "$(amd_model_range 0x19 0x00 0x0 0x2f 0xf)" && variant_inception=vuln
+		
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		variant3=immune
 		variant3a=immune
@@ -702,21 +711,22 @@ is_cpu_affected()
 	fi
 
 	_debug "is_cpu_affected: temp results are <$variant1> <$variant2> <$variant3> <$variant3a> <$variant4> <$variantl1tf>"
-	[ "$variant1"         = "immune" ] && variant1=1       || variant1=0
-	[ "$variant2"         = "immune" ] && variant2=1       || variant2=0
-	[ "$variant3"         = "immune" ] && variant3=1       || variant3=0
-	[ "$variant3a"        = "immune" ] && variant3a=1      || variant3a=0
-	[ "$variant4"         = "immune" ] && variant4=1       || variant4=0
-	[ "$variantl1tf"      = "immune" ] && variantl1tf=1    || variantl1tf=0
-	[ "$variant_msbds"    = "immune" ] && variant_msbds=1  || variant_msbds=0
-	[ "$variant_mfbds"    = "immune" ] && variant_mfbds=1  || variant_mfbds=0
-	[ "$variant_mlpds"    = "immune" ] && variant_mlpds=1  || variant_mlpds=0
-	[ "$variant_mdsum"    = "immune" ] && variant_mdsum=1  || variant_mdsum=0
-	[ "$variant_taa"      = "immune" ] && variant_taa=1    || variant_taa=0
-	[ "$variant_itlbmh"   = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
-	[ "$variant_srbds"    = "immune" ] && variant_srbds=1 || variant_srbds=0
-	[ "$variant_zenbleed" = "immune" ] && variant_zenbleed=1 || variant_zenbleed=0
-	[ "$variant_downfall" = "immune" ] && variant_downfall=1 || variant_downfall=0
+	[ "$variant1"          = "immune" ] && variant1=1       || variant1=0
+	[ "$variant2"          = "immune" ] && variant2=1       || variant2=0
+	[ "$variant3"          = "immune" ] && variant3=1       || variant3=0
+	[ "$variant3a"         = "immune" ] && variant3a=1      || variant3a=0
+	[ "$variant4"          = "immune" ] && variant4=1       || variant4=0
+	[ "$variantl1tf"       = "immune" ] && variantl1tf=1    || variantl1tf=0
+	[ "$variant_msbds"     = "immune" ] && variant_msbds=1  || variant_msbds=0
+	[ "$variant_mfbds"     = "immune" ] && variant_mfbds=1  || variant_mfbds=0
+	[ "$variant_mlpds"     = "immune" ] && variant_mlpds=1  || variant_mlpds=0
+	[ "$variant_mdsum"     = "immune" ] && variant_mdsum=1  || variant_mdsum=0
+	[ "$variant_taa"       = "immune" ] && variant_taa=1    || variant_taa=0
+	[ "$variant_itlbmh"    = "immune" ] && variant_itlbmh=1 || variant_itlbmh=0
+	[ "$variant_srbds"     = "immune" ] && variant_srbds=1  || variant_srbds=0
+	[ "$variant_zenbleed"  = "immune" ] && variant_zenbleed=1  || variant_zenbleed=0
+	[ "$variant_downfall"  = "immune" ] && variant_downfall=1  || variant_downfall=0
+	[ "$variant_inception" = "immune" ] && variant_inception=1 || variant_inception=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
@@ -1291,7 +1301,7 @@ while [ -n "${1:-}" ]; do
 		fi
 		case "$2" in
 			help)	echo "The following parameters are supported for --variant (can be used multiple times):";
-					echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall";
+					echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, inception";
 					exit 0;;
 			1)			opt_cve_list="$opt_cve_list CVE-2017-5753"; opt_cve_all=0;;
 			2)			opt_cve_list="$opt_cve_list CVE-2017-5715"; opt_cve_all=0;;
@@ -1308,6 +1318,7 @@ while [ -n "${1:-}" ]; do
 			srbds)		opt_cve_list="$opt_cve_list CVE-2020-0543"; opt_cve_all=0;;
 			zenbleed)	opt_cve_list="$opt_cve_list CVE-2023-20593"; opt_cve_all=0;;
 			downfall)   opt_cve_list="$opt_cve_list CVE-2022-40982"; opt_cve_all=0;;
+			inception)  opt_cve_list="$opt_cve_list CVE-2023-20569"; opt_cve_all=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, see --variant help for a list" >&2;
 				exit 255
@@ -6280,6 +6291,29 @@ check_CVE_2022_40982_linux() {
 		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
+	fi
+}
+
+#######################
+# Inception section
+check_CVE_2023_20569() {
+	cve='CVE-2023-20569'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]
+	then
+		check_CVE_2023_20569_linux
+	else
+		_warn "Unsupported OS ($os)."
+	fi
+}
+
+check_CVE_2023_20569_linux() {
+
+	if ! is_cpu_affected "$cve" ; then
+		# override status & msg in case CPU is not vulnerable after all
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+	else
+		pvulnstatus "$cve" UNK "further checks are required"
 	fi
 }
 
