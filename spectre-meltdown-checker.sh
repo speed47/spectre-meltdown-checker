@@ -6229,17 +6229,30 @@ check_CVE_2022_40982_linux() {
 		fi
 
 		if [ -n "$kernel_gds" ]; then
-			_info_nol "* Is the kernel mitigation active: "
+			_info_nol "* Kernel has disabled AVX as a mitigation: "
 
 			# Check dmesg message to see whether AVX has been disabled
-			dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'; ret=$?
-			if [ $ret -eq 2 ]; then
-				pstatus yellow UNKNOWN "dmesg truncated, AVX mitigation detection will be unreliable. Please reboot and relaunch this script"
-			elif [ $ret -eq 0 ]; then
-				kernel_avx_disabled="AVX disabled by the kernel"
+			dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'; dmesgret=$?
+			if [ $dmesgret -eq 0 ]; then
+				kernel_avx_disabled="AVX disabled by the kernel (dmesg)"
 				pstatus green YES "$kernel_avx_disabled"
+			elif [ "$has_avx2" = 0 ]; then
+				# Find out by ourselves
+				# cpuinfo says we don't have AVX2, query
+				# the CPU directly about AVX2 support
+				read_cpuid 0x7 0x0 $EBX 5 1 1; ret=$?
+				if [ $ret -eq $READ_CPUID_RET_OK ]; then
+					kernel_avx_disabled="AVX disabled by the kernel (cpuid)"
+					pstatus green YES "$kernel_avx_disabled"
+				elif [ $ret -eq $READ_CPUID_RET_KO ]; then
+					pstatus yellow NO "CPU doesn't support AVX"
+				elif [ $dmesgret -eq 2 ]; then
+					pstatus yellow UNKNOWN "dmesg truncated, can't tell whether mitigation is active, please reboot and relaunch this script"
+				else
+					pstatus yellow UNKNOWN "No sign of mitigation in dmesg and couldn't read cpuid info"
+				fi
 			else
-				pstatus red NO "No trace of AVX mitigation in dmesg"
+					pstatus yellow NO "AVX support is enabled"
 			fi
 		fi
 
