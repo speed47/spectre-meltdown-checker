@@ -2441,13 +2441,6 @@ if [ "$opt_cpu" != all ] && [ "$opt_cpu" -gt "$max_core_id" ]; then
 fi
 
 if [ "$opt_live" = 1 ]; then
-	# root check (only for live mode, for offline mode, we already checked if we could read the files)
-	if [ "$(id -u)" -ne 0 ]; then
-		_warn "Note that you should launch this script with root privileges to get accurate information."
-		_warn "We'll proceed but you might see permission denied errors."
-		_warn "To run it as root, you can try the following command: sudo $0"
-		_warn
-	fi
 	_info "Checking for vulnerabilities on current system"
 	_info "Kernel is \033[35m$os $(uname -r) $(uname -v) $(uname -m)\033[0m"
 	_info "CPU is \033[35m$cpu_friendly_name\033[0m"
@@ -6324,6 +6317,13 @@ if [ -n "$mockme" ] && [ "$opt_mock" = 1 ]; then
 	_info ""
 	# shellcheck disable=SC2046
 	_warn "To mock this CPU, set those vars: "$(echo "$mockme" | sort -u)
+fi
+
+# root check
+if [ "$(id -u)" -ne 0 ]; then
+	_warn "Note that you should launch this script with root privileges to get completely accurate information."
+	_warn "To run it as root, you can try the following command: sudo $0"
+	_warn
 fi
 
 if [ "$opt_explain" = 0 ]; then
