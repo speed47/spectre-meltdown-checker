@@ -564,11 +564,11 @@ is_cpu_affected()
 		amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && variant_zenbleed=vuln
 		amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && variant_zenbleed=vuln
 
-		# Inception (Zen3 & Zen4)
-		# TODO: Should Zend2 & Zen1 be added. No ucode update will be released but they are affected too.
-		amd_legacy_erratum "$(amd_model_range 0x19 0x40 0x0 0x7f 0xf)" && variant_inception=vuln
-		amd_legacy_erratum "$(amd_model_range 0x19 0x00 0x0 0x2f 0xf)" && variant_inception=vuln
-		
+		# Inception (according to kernel, zen 1 to 4)
+		if [ "$cpu_family" = $(( 0x17 )) ] || [ "$cpu_family" = $(( 0x19 )) ]; then
+			variant_inception=vuln
+		fi
+
 	elif [ "$cpu_vendor" = CAVIUM ]; then
 		variant3=immune
 		variant3a=immune
@@ -1413,6 +1413,7 @@ pvulnstatus()
 			CVE-2020-0543) aka="SRBDS";;
 			CVE-2023-20593) aka="ZENBLEED";;
 			CVE-2022-40982) aka="DOWNFALL";;
+			CVE-2023-20569) aka="INCEPTION";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -6296,6 +6297,7 @@ check_CVE_2022_40982_linux() {
 
 #######################
 # Inception section
+
 check_CVE_2023_20569() {
 	cve='CVE-2023-20569'
 	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
@@ -6308,12 +6310,50 @@ check_CVE_2023_20569() {
 }
 
 check_CVE_2023_20569_linux() {
+	status=UNK
+	sys_interface_available=0
+	msg=''
+
+	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spec_rstack_overflow"; then
+		# this kernel has the /sys interface, trust it over everything
+		sys_interface_available=1
+	fi
+
+	if [ "$opt_sysfs_only" != 1 ]; then
+		_info_nol "* Kernel supports mitigation: "
+		if [ -n "$kernel_err" ]; then
+			kernel_sro_err="$kernel_err"
+		elif grep -q 'spec_rstack_overflow' "$kernel"; then
+			kernel_sro="found spec_rstack_overflow in kernel image"
+		fi
+		if [ -n "$kernel_sro" ]; then
+			pstatus green YES "$kernel_sro"
+		elif [ -n "$kernel_sro_err" ]; then
+			pstatus yellow UNKNOWN "$kernel_sro_err"
+		else
+			pstatus yellow NO
+		fi
+
+		if [ -n "$kernel_sro" ]; then
+			# TODO check mitigation
+			:
+		fi
+
+	elif [ "$sys_interface_available" = 0 ]; then
+		# we have no sysfs but were asked to use it only!
+		msg="/sys vulnerability interface use forced, but it's not available!"
+		status=UNK
+	fi
 
 	if ! is_cpu_affected "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+	elif [ -z "$msg" ]; then
+		# if msg is empty, sysfs check didn't fill it, rely on our own test
+		# TODO
+		pvulnstatus "$cve" UNK "further checks are required (WIP)"
 	else
-		pvulnstatus "$cve" UNK "further checks are required"
+		pvulnstatus $cve "$status" "$msg"
 	fi
 }
 
