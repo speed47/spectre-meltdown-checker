@@ -2704,7 +2704,8 @@ sys_interface_check()
 
 # write_msr
 # param1 (mandatory): MSR, can be in hex or decimal.
-# param2 (optional): CPU index, starting from 0. Default 0.
+# param2 (optional): value to write, can be in hex or decimal.
+# param3 (optional): CPU index, starting from 0. Default 0.
 WRITE_MSR_RET_OK=0
 WRITE_MSR_RET_KO=1
 WRITE_MSR_RET_ERR=2
@@ -2740,6 +2741,8 @@ write_msr_one_core()
 	_core="$1"
 	_msr_dec=$(( $2 ))
 	_msr=$(printf "0x%x" "$_msr_dec")
+	_value_dec=$(( $3 ))
+	_value=$(printf "0x%x" "$_value_dec")
 
 	write_msr_msg='unknown error'
 	: "${msr_locked_down:=0}"
@@ -2764,7 +2767,7 @@ write_msr_one_core()
 
 	_write_denied=0
 	if [ "$os" != Linux ]; then
-		cpucontrol -m "$_msr=0" "/dev/cpuctl$_core" >/dev/null 2>&1; ret=$?
+		cpucontrol -m "$_msr=$_value" "/dev/cpuctl$_core" >/dev/null 2>&1; ret=$?
 	else
 		# for Linux
 		# convert to decimal
@@ -2774,16 +2777,16 @@ write_msr_one_core()
 		# if wrmsr is available, use it
 		elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
 			_debug "write_msr: using wrmsr"
-			wrmsr $_msr_dec 0 2>/dev/null; ret=$?
+			wrmsr $_msr_dec $_value_dec 2>/dev/null; ret=$?
 			# ret=4: msr doesn't exist, ret=127: msr.allow_writes=off
 			[ "$ret" = 127 ] && _write_denied=1
 		# or fallback to dd if it supports seek_bytes, we prefer it over perl because we can tell the difference between EPERM and EIO
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null && [ "${SMC_NO_DD:-}" != 1 ]; then
 			_debug "write_msr: using dd"
-			dd if=/dev/zero of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
+			awk "BEGIN{printf \"\%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
 			# if it failed, inspect stderrto look for EPERM
 			if [ "$ret" != 0 ]; then
-				if dd if=/dev/zero of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
+				if aws "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
 					_write_denied=1
 				fi
 			fi
@@ -2791,7 +2794,7 @@ write_msr_one_core()
 		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
 			_debug "write_msr: using perl"
 			ret=1
-			perl -e "open(M,'>','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack('H16',0)))"; [ $? -eq 8 ] && ret=0
+			perl -e "open(M,'>','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack(v4,$_value_dec)))"; [ $? -eq 8 ] && ret=0
 		else
 			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
 			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_ERR")
@@ -2836,7 +2839,7 @@ write_msr_one_core()
 	else
 		ret=$WRITE_MSR_RET_KO
 	fi
-	_debug "write_msr: for cpu $_core on msr $_msr, ret=$ret"
+	_debug "write_msr: for cpu $_core on msr $_msr, value=$_value, ret=$ret"
 	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$ret")
 	return $ret
 }
@@ -3528,6 +3531,28 @@ check_cpu()
 			pstatus yellow NO
 		fi
 
+	fi
+
+	if is_amd || is_hygon; then
+		_info "  * Selective Branch Predictor Barrier (SBPB)"
+		_info_nol "    * PRED_CMD MSR is available: "
+
+		if [ "$opt_allow_msr_write" = 1 ]; then
+			# the MSR PRED_SBPB is at offset 0x49, BIT(7), write-only
+			write_msr 0x49 128; ret=$?
+			if [ $ret = $WRITE_MSR_RET_OK ]; then
+				pstatus green YES
+				cpuid_sbpb=1
+			elif [ $ret = $WRITE_MSR_RET_KO ]; then
+				pstatus yellow NO
+			else
+				pstatus yellow UNKNOWN "$write_msr_msg"
+				cpuid_sbpb=3
+			fi
+		else
+			pstatus yellow UNKNOWN "not allowed to write msr"
+			cpuid_sbpb=3
+		fi
 	fi
 
 	_info_nol "  * CPU supports Transactional Synchronization Extensions (TSX): "
@@ -6334,6 +6359,28 @@ check_CVE_2023_20569_linux() {
 			pstatus yellow NO
 		fi
 
+		_info_nol "* Kernel compiled with SRSO support "
+		if [ -r "$opt_config" ]; then
+			if grep -q '^CONFIG_CPU_SRSO=y' "$opt_config"; then
+				pstatus green YES
+			else
+				pstatus yellow NO "required for safe RET and ibpb_on_vmexit mitigations"
+			fi
+		else
+			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
+		fi
+
+		_info_nol "* Kernel compiled with IBPB support "
+		if [ -r "$opt_config" ]; then
+			if grep -q '^CONFIG_CPU_IBPB_ENTRY=y' "$opt_config"; then
+				pstatus green YES
+			else
+				pstatus yellow NO "required for ibpb mitigation"
+			fi
+		else
+			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
+		fi
+
 		if [ -n "$kernel_sro" ]; then	
 
 			# TODO check mitigation
@@ -6342,20 +6389,30 @@ check_CVE_2023_20569_linux() {
 
 		# Zen & Zen2 : if the right IBPB microcode applied + SMT off --> not vuln
 		if [ "$cpu_family" = $(( 0x17 )) ]; then
-			_info_nol "* IBPB support: "
+			_info_nol "  * IBPB support: "
 			if [ -n "$cpuid_ibpb" ]; then
 				pstatus green YES "$cpuid_ibpb"
 			else
 				pstatus red NO
 			fi
 
-			_info_nol "* SMT is enabled: "
+			_info_nol "  * SMT is enabled: "
 			is_cpu_smt_enabled; smt_enabled=$?
 			if [ "$smt_enabled" = 0 ]; then
 				pstatus red YES
 			else
 				pstatus green NO
-			fi		
+			fi
+		# Zen 3/4 microcode brings SBPB mitigation
+		elif [ "$cpu_family" = $(( 0x19 )) ]; then
+			_info_nol "* CPU supports SBPB: "
+			if [ "$cpuid_sbpb" = 1 ]; then
+				pstatus green YES
+			elif [ "$cpuid_sbpb" = 3 ]; then
+				pstatus yellow UNKNOWN "cannot write MSR"
+			else
+				pstatus yellow NO
+			fi
 		fi
 
 	elif [ "$sys_interface_available" = 0 ]; then
@@ -6367,13 +6424,20 @@ check_CVE_2023_20569_linux() {
 	if ! is_cpu_affected "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
-	elif [ "$cpu_family" = $(( 0x17 )) ] && [ "$smt_enabled" = 1 ] && [ -n "$cpuid_ibpb" ]; then
-		pvulnstatus "$cve" OK "IBPB supported and SMT is off"
+	elif [ "$cpu_family" = $(( 0x17 )) ]; then
+		if [ "$smt_enabled" = 1 ] && [ -n "$cpuid_ibpb" ]; then
+			pvulnstatus "$cve" OK "IBPB supported and SMT is off"
+		elif [ "$smt_enabled" != 1 ] && [ -n "$cpuid_ibpb" ]; then
+			pvulnstatus "$cve" VULN "SMT is enabled"
+		elif [ "$smt_enabled" = 1 ]; then
+			pvulnstatus "$cve" VULN "IBPB is not supported by your current microcode"
+		else
+			pvulnstatus "$cve" VULN "SMT is enabled and IBPB is not support by your current microcode"
+		fi
 		explain "Zen1/2 with SMT off aren't vulnerable after the right IBPB microcode has been applied. (https://github.com/torvalds/linux/commit/138bcddb86d8a4f842e4ed6f0585abc9b1a764ff#diff-17bd24a7a7850613cced545790ac30646097e8d6207348c2bd1845f397acb390R2272)"
 	elif [ -z "$msg" ]; then
-		# if msg is empty, sysfs check didn't fill it, rely on our own test
-		# TODO
-		pvulnstatus "$cve" UNK "further checks are required (WIP)"
+		# if msg is empty, sysfs check didn't fill it. If the kernel does not bring the mitigation, system vuln.
+		pvulnstatus $cve VULN "upgrade your kernel"
 	else
 		pvulnstatus $cve "$status" "$msg"
 	fi
