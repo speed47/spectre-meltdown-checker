@@ -21,6 +21,7 @@ CVE                                                                             
 [CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes        | MCEPSC, No eXcuses, iTLB Multihit
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543)   | Special Register Buffer Data Sampling               | SRBDS
 [CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling                                | GDS, Downfall
+[CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security                             | Inception, RAS, SRSO
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak                      | Zenbleed
 
 Supported operating systems:
@@ -186,6 +187,12 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Impact: Kernel & all software
    - Mitigation: either microcode update or disabling AVX feature
    - Performance impact of the mitigation: TBD
+
+**CVE-2023-20569** Return Address Security (Inception)
+
+   - Impact: Kernel & all software
+   - Mitigation: updated kernel & microcode
+   - Performance impact of the mitigation: low to significant depending on the mitigation
 
 **CVE-2023-20593** Cross-Process Information Leak (Zenbleed)
 
