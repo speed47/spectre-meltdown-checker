@@ -6334,9 +6334,28 @@ check_CVE_2023_20569_linux() {
 			pstatus yellow NO
 		fi
 
-		if [ -n "$kernel_sro" ]; then
+		if [ -n "$kernel_sro" ]; then	
+
 			# TODO check mitigation
 			:
+		fi
+
+		# Zen & Zen2 : if the right IBPB microcode applied + SMT off --> not vuln
+		if [ "$cpu_family" = $(( 0x17 )) ]; then
+			_info_nol "* IBPB support: "
+			if [ -n "$cpuid_ibpb" ]; then
+				pstatus green YES "$cpuid_ibpb"
+			else
+				pstatus red NO
+			fi
+
+			_info_nol "* SMT is enabled: "
+			is_cpu_smt_enabled; smt_enabled=$?
+			if [ "$smt_enabled" = 0 ]; then
+				pstatus red YES
+			else
+				pstatus green NO
+			fi		
 		fi
 
 	elif [ "$sys_interface_available" = 0 ]; then
@@ -6348,6 +6367,9 @@ check_CVE_2023_20569_linux() {
 	if ! is_cpu_affected "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+	elif [ "$cpu_family" = $(( 0x17 )) ] && [ "$smt_enabled" = 1 ] && [ -n "$cpuid_ibpb" ]; then
+		pvulnstatus "$cve" OK "IBPB supported and SMT is off"
+		explain "Zen1/2 with SMT off aren't vulnerable after the right IBPB microcode has been applied. (https://github.com/torvalds/linux/commit/138bcddb86d8a4f842e4ed6f0585abc9b1a764ff#diff-17bd24a7a7850613cced545790ac30646097e8d6207348c2bd1845f397acb390R2272)"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		# TODO
