@@ -2783,10 +2783,10 @@ write_msr_one_core()
 		# or fallback to dd if it supports seek_bytes, we prefer it over perl because we can tell the difference between EPERM and EIO
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null && [ "${SMC_NO_DD:-}" != 1 ]; then
 			_debug "write_msr: using dd"
-			awk "BEGIN{printf \"\%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
+			awk "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
 			# if it failed, inspect stderrto look for EPERM
 			if [ "$ret" != 0 ]; then
-				if aws "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
+				if awk "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
 					_write_denied=1
 				fi
 			fi
@@ -6389,17 +6389,17 @@ check_CVE_2023_20569_linux() {
 
 		# Zen & Zen2 : if the right IBPB microcode applied + SMT off --> not vuln
 		if [ "$cpu_family" = $(( 0x17 )) ]; then
-			_info_nol "  * IBPB support: "
+			_info_nol "* CPU supports IBPB : "
 			if [ -n "$cpuid_ibpb" ]; then
 				pstatus green YES "$cpuid_ibpb"
 			else
 				pstatus red NO
 			fi
 
-			_info_nol "  * SMT is enabled: "
+			_info_nol "* SMT is enabled: "
 			is_cpu_smt_enabled; smt_enabled=$?
 			if [ "$smt_enabled" = 0 ]; then
-				pstatus red YES
+				pstatus yellow YES
 			else
 				pstatus green NO
 			fi
@@ -6424,20 +6424,13 @@ check_CVE_2023_20569_linux() {
 	if ! is_cpu_affected "$cve" ; then
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
-	elif [ "$cpu_family" = $(( 0x17 )) ]; then
-		if [ "$smt_enabled" = 1 ] && [ -n "$cpuid_ibpb" ]; then
-			pvulnstatus "$cve" OK "IBPB supported and SMT is off"
-		elif [ "$smt_enabled" != 1 ] && [ -n "$cpuid_ibpb" ]; then
-			pvulnstatus "$cve" VULN "SMT is enabled"
-		elif [ "$smt_enabled" = 1 ]; then
-			pvulnstatus "$cve" VULN "IBPB is not supported by your current microcode"
-		else
-			pvulnstatus "$cve" VULN "SMT is enabled and IBPB is not support by your current microcode"
-		fi
-		explain "Zen1/2 with SMT off aren't vulnerable after the right IBPB microcode has been applied. (https://github.com/torvalds/linux/commit/138bcddb86d8a4f842e4ed6f0585abc9b1a764ff#diff-17bd24a7a7850613cced545790ac30646097e8d6207348c2bd1845f397acb390R2272)"
 	elif [ -z "$msg" ]; then
-		# if msg is empty, sysfs check didn't fill it. If the kernel does not bring the mitigation, system vuln.
-		pvulnstatus $cve VULN "upgrade your kernel"
+		# if msg is empty, sysfs check didn't fill it. If the kernel does not bring the mitigation.
+		if [ "$cpu_family" = $(( 0x17 )) ] && [ "$smt_enabled" = 1 ] && [ -n "$cpuid_ibpb" ]; then
+			pvulnstatus "$cve" OK "IBPB supported and SMT is off"
+		else
+			pvulnstatus $cve VULN "upgrade your kernel"
+		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
 	fi
