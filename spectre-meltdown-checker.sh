@@ -3535,7 +3535,7 @@ check_cpu()
 
 	if is_amd || is_hygon; then
 		_info "  * Selective Branch Predictor Barrier (SBPB)"
-		_info_nol "    * PRED_CMD MSR is available: "
+		_info_nol "    * PRED_CMD MSR supports SBPB bit write: "
 
 		if [ "$opt_allow_msr_write" = 1 ]; then
 			# the MSR PRED_SBPB is at offset 0x49, BIT(7), write-only
@@ -3545,6 +3545,7 @@ check_cpu()
 				cpuid_sbpb=1
 			elif [ $ret = $WRITE_MSR_RET_KO ]; then
 				pstatus yellow NO
+				cpuid_sbpb=2
 			else
 				pstatus yellow UNKNOWN "$write_msr_msg"
 				cpuid_sbpb=3
@@ -6359,44 +6360,72 @@ check_CVE_2023_20569_linux() {
 			pstatus yellow NO
 		fi
 
-		_info_nol "* Kernel compiled with SRSO support "
+		_info_nol "* Kernel compiled with SRSO support: "
 		if [ -r "$opt_config" ]; then
 			if grep -q '^CONFIG_CPU_SRSO=y' "$opt_config"; then
 				pstatus green YES
+				kernel_srso="CONFIG_CPU_SRSO=y found in kernel config"
 			else
 				pstatus yellow NO "required for safe RET and ibpb_on_vmexit mitigations"
 			fi
 		else
-			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
+			# https://github.com/torvalds/linux/commit/138bcddb86d8a4f842e4ed6f0585abc9b1a764ff#diff-17bd24a7a7850613cced545790ac30646097e8d6207348c2bd1845f397acb390R2313
+			if [ -n "$kernel_err" ]; then
+				pstatus yellow UNKNOWN "$kernel_err"
+			elif grep -q 'WARNING: kernel not compiled with CPU_SRSO' "$kernel"; then
+				# this msg is optimized out at compile time if the option is not enabled, see commit referenced above
+				# if it's present, then SRSO is NOT compiled in
+				pstatus yellow NO "kernel not compiled with CPU_SRSO"
+			else
+				# if it's not present, then SRSO is compiled in IF kernel_sro==1, otherwise we're just
+				# in front of an old kernel that doesn't have the mitigation logic at all
+				if [ "$kernel_sro" = 1 ]; then
+					kernel_srso="SRSO mitigation logic is compiled in the kernel"
+					pstatus green OK "$kernel_srso"
+				else
+					pstatus yellow NO "your kernel is too old and doesn't have the mitigation logic"
+				fi
+			fi
 		fi
 
-		_info_nol "* Kernel compiled with IBPB support "
+		_info_nol "* Kernel compiled with IBPB_ENTRY support: "
 		if [ -r "$opt_config" ]; then
 			if grep -q '^CONFIG_CPU_IBPB_ENTRY=y' "$opt_config"; then
 				pstatus green YES
+				kernel_ibpb_entry="CONFIG_CPU_IBPB_ENTRY=y found in kernel config"
 			else
-				pstatus yellow NO "required for ibpb mitigation"
+				pstatus yellow NO
 			fi
 		else
-			pstatus yellow UNKNOWN "couldn't read your kernel configuration"
-		fi
-
-		if [ -n "$kernel_sro" ]; then	
-
-			# TODO check mitigation
-			:
+			# https://github.com/torvalds/linux/commit/138bcddb86d8a4f842e4ed6f0585abc9b1a764ff#diff-17bd24a7a7850613cced545790ac30646097e8d6207348c2bd1845f397acb390R2325
+			if [ -n "$kernel_err" ]; then
+				pstatus yellow UNKNOWN "$kernel_err"
+			elif grep -q 'WARNING: kernel not compiled with CPU_IBPB_ENTRY' "$kernel"; then
+				# this msg is optimized out at compile time if the option is not enabled, see commit referenced above
+				# if it's present, then IBPB_ENTRY is NOT compiled in
+				pstatus yellow NO "kernel not compiled with CPU_IBPB_ENTRY"
+			else
+				# if it's not present, then IBPB_ENTRY is compiled in IF kernel_sro==1, otherwise we're just
+				# in front of an old kernel that doesn't have the mitigation logic at all
+				if [ "$kernel_sro" = 1 ]; then
+					kernel_ibpb_entry="IBPB_ENTRY mitigation logic is compiled in the kernel"
+					pstatus green OK "$kernel_ibpb_entry"
+				else
+					pstatus yellow NO "your kernel is too old and doesn't have the mitigation logic"
+				fi
+			fi
 		fi
 
 		# Zen & Zen2 : if the right IBPB microcode applied + SMT off --> not vuln
 		if [ "$cpu_family" = $(( 0x17 )) ]; then
-			_info_nol "* CPU supports IBPB : "
+			_info_nol "* CPU supports IBPB: "
 			if [ -n "$cpuid_ibpb" ]; then
 				pstatus green YES "$cpuid_ibpb"
 			else
-				pstatus red NO
+				pstatus yellow NO
 			fi
 
-			_info_nol "* SMT is enabled: "
+			_info_nol "* Hyper-Threading (SMT) is enabled: "
 			is_cpu_smt_enabled; smt_enabled=$?
 			if [ "$smt_enabled" = 0 ]; then
 				pstatus yellow YES
@@ -6409,7 +6438,7 @@ check_CVE_2023_20569_linux() {
 			if [ "$cpuid_sbpb" = 1 ]; then
 				pstatus green YES
 			elif [ "$cpuid_sbpb" = 3 ]; then
-				pstatus yellow UNKNOWN "cannot write MSR"
+				pstatus yellow UNKNOWN "cannot write MSR, rerun with --allow-msr-write"
 			else
 				pstatus yellow NO
 			fi
@@ -6425,11 +6454,35 @@ check_CVE_2023_20569_linux() {
 		# override status & msg in case CPU is not vulnerable after all
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
-		# if msg is empty, sysfs check didn't fill it. If the kernel does not bring the mitigation.
-		if [ "$cpu_family" = $(( 0x17 )) ] && [ "$smt_enabled" = 1 ] && [ -n "$cpuid_ibpb" ]; then
-			pvulnstatus "$cve" OK "IBPB supported and SMT is off"
+		# if msg is empty, sysfs check didn't fill it, so we rely on our own logic
+		# Zen/Zen2
+		if [ "$cpu_family" = $(( 0x17 )) ]; then
+			if [ "$smt_enabled" = 0 ]; then
+				pvulnstatus "$cve" VULN "SMT is enabled on your Zen/Zen2 CPU, which makes mitigation ineffective"
+				explain "For Zen/Zen2 CPUs, proper mitigation needs an up to date microcode, and SMT needs to be disabled (this can be done by adding \`nosmt\` to your kernel command line)"
+			elif [ -z "$kernel_sro" ]; then
+				pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
+			elif [ -n "$cpuid_ibpb" ]; then
+				pvulnstatus "$cve" OK "SMT is disabled and both your kernel and microcode support mitigation"
+			else
+				pvulnstatus "$cve" VULN "Your microcode is too old"
+			fi
+		# Zen3/Zen4
+		elif [ "$cpu_family" = $(( 0x19 )) ]; then
+			if [ -z "$kernel_sro" ]; then
+				pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
+			elif [ -z "$kernel_srso" ] && [ -z "$kernel_ibpb_entry" ]; then
+				pvulnstatus "$cve" VULN "Your kernel doesn't have either SRSO or IBPB_ENTRY compiled-in"
+			elif [ "$cpuid_sbpb" = 3 ]; then
+				pvulnstatus "$cve" UNK "Couldn't verify if your microcode supports IBPB (rerun with --allow-msr-write)"
+			elif [ "$cpuid_sbpb" = 2 ]; then
+				pvulnstatus "$cve" VULN "Your microcode doesn't support SBPB"
+			else
+				pvulnstatus "$cve" OK "Your kernel and microcode both support mitigation"
+			fi
 		else
-			pvulnstatus $cve VULN "upgrade your kernel"
+			# not supposed to happen, as normally this CPU should not be affected and not run this code
+			pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 		fi
 	else
 		pvulnstatus $cve "$status" "$msg"
