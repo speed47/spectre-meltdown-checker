@@ -23,6 +23,7 @@ CVE                                                                             
 [CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling                                | GDS, Downfall
 [CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security                             | Inception, RAS, SRSO
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak                      | Zenbleed
+[CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix issue                              | Reptar
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -199,3 +200,9 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Impact: Kernel & all software
    - Mitigation: either kernel mitigation by disabling a CPU optimization through an MSR bit, or CPU microcode mitigation
    - Performance impact of the mitigation: TBD
+
+**CVE-2023-23583** Redundant Prefix issue (Reptar)
+
+   - Impact: All software
+   - Mitigation: microcode update for the affected CPU
+   - Performance impact of the mitigation: low

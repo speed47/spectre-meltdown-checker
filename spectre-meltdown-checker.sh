@@ -12,7 +12,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='0.46'
+VERSION='0.46+'
 
 trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
@@ -177,7 +177,26 @@ global_critical=0
 global_unknown=0
 nrpe_vuln=''
 
-supported_cve_list='CVE-2017-5753 CVE-2017-5715 CVE-2017-5754 CVE-2018-3640 CVE-2018-3639 CVE-2018-3615 CVE-2018-3620 CVE-2018-3646 CVE-2018-12126 CVE-2018-12130 CVE-2018-12127 CVE-2019-11091 CVE-2019-11135 CVE-2018-12207 CVE-2020-0543 CVE-2023-20593 CVE-2022-40982 CVE-2023-20569'
+supported_cve_list='
+CVE-2017-5753
+CVE-2017-5715
+CVE-2017-5754
+CVE-2018-3640
+CVE-2018-3639
+CVE-2018-3615
+CVE-2018-3620
+CVE-2018-3646
+CVE-2018-12126
+CVE-2018-12130
+CVE-2018-12127
+CVE-2019-11091
+CVE-2019-11135
+CVE-2018-12207
+CVE-2020-0543
+CVE-2023-20593
+CVE-2022-40982
+CVE-2023-20569
+CVE-2023-23583'
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -305,6 +324,7 @@ cve2name()
 		CVE-2023-20593) echo "Zenbleed, cross-process information leak";;
 		CVE-2022-40982) echo "Downfall, gather data sampling (GDS)";;
 		CVE-2023-20569) echo "Inception, return address security (RAS)";;
+		CVE-2023-23583) echo "Reptar, redundant prefix issue";;
 		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
 	esac
 }
@@ -332,6 +352,7 @@ _is_cpu_affected_cached()
 		CVE-2023-20593) return $variant_zenbleed;;
 		CVE-2022-40982) return $variant_downfall;;
 		CVE-2023-20569) return $variant_inception;;
+		CVE-2023-23583) return $variant_reptar;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
@@ -402,8 +423,9 @@ is_cpu_affected()
 	# Zenbleed and Inception are both AMD specific, look for "is_amd" below:
 	variant_zenbleed=immune
 	variant_inception=immune
-	# Downfall is Intel specific, look for "is_intel" below:
+	# Downfall & Reptar are Intel specific, look for "is_intel" below:
 	variant_downfall=immune
+	variant_reptar=immune
 
 	if is_cpu_mds_free; then
 		[ -z "$variant_msbds" ] && variant_msbds=immune
@@ -542,6 +564,59 @@ is_cpu_affected()
 			fi
 			set +u
 		fi
+		# Reptar
+		# the only way to know whether a CPU is vuln, is to check whether there is a known ucode update for it,
+		# as the mitigation is only ucode-based and there's no flag exposed by the kernel or by an updated ucode.
+		# we have to hardcode the truthtable of affected CPUs vs updated ucodes...
+		# https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/redundant-prefix-issue.html
+		# list taken from:
+		# https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/commit/ece0d294a29a1375397941a4e6f2f7217910bc89#diff-e6fad0f2abbac6c9603b2e8f88fe1d151a83de708aeca1c1d93d881c958ecba4R26
+		# both pages have a lot of inconsistencies, I've tried to fix the errors the best I could, the logic being: if it's not in the
+		# blog page, then the microcode update in the commit is not related to reptar, if microcode versions differ, then the one in github is correct,
+		# if a stepping exists in the blog page but not in the commit, then the blog page is right
+		reptar_ucode_list='
+06-97-02/07,00000032
+06-97-05/07,00000032
+06-9a-03/80,00000430
+06-9a-04/80,00000430
+06-6c-01/10,01000268
+06-6a-06/87,0d0003b9
+06-7e-05/80,000000c2
+06-ba-02/e0,0000411c
+06-b7-01/32,0000011d
+06-a7-01/02,0000005d
+06-bf-05/07,00000032
+06-bf-02/07,00000032
+06-ba-03/e0,0000411c
+06-8f-08/87,2b0004d0
+06-8f-07/87,2b0004d0
+06-8f-06/87,2b0004d0
+06-8f-05/87,2b0004d0
+06-8f-04/87,2b0004d0
+06-8f-08/10,2c000290
+06-8c-01/80,000000b4
+06-8c-00/ff,000000b4
+06-8d-01/c2,0000004e
+06-8d-00/c2,0000004e
+06-8c-02/c2,00000034
+'
+		for tuple in $reptar_ucode_list; do
+			fixed_ucode_ver=$(( 0x$(echo "$tuple" | cut -d, -f2) ))
+			affected_fmspi=$(echo "$tuple" | cut -d, -f1)
+			affected_fms=$(echo "$affected_fmspi" | cut -d/ -f1)
+			ucode_platformid_mask=$(echo "$affected_fmspi" | cut -d/ -f2)
+			affected_cpuid=$(fms2cpuid \
+				0x"$(echo "$affected_fms" | cut -d- -f1)" \
+				0x"$(echo "$affected_fms" | cut -d- -f2)" \
+				0x"$(echo "$affected_fms" | cut -d- -f3)" \
+			)
+			if [ "$cpu_cpuid" = "$affected_cpuid" ] && [ $((cpu_platformid & ucode_platformid_mask)) -gt 0 ]; then
+				# this is not perfect as Intel never tells about their EOL CPUs, so more CPUs might be affected but there's no way to tell
+				variant_reptar=vuln
+				reptar_fixed_ucode_version=$fixed_ucode_ver
+				break
+			fi
+		done
 
 
 	elif is_amd || is_hygon; then
@@ -727,6 +802,7 @@ is_cpu_affected()
 	[ "$variant_zenbleed"  = "immune" ] && variant_zenbleed=1  || variant_zenbleed=0
 	[ "$variant_downfall"  = "immune" ] && variant_downfall=1  || variant_downfall=0
 	[ "$variant_inception" = "immune" ] && variant_inception=1 || variant_inception=0
+	[ "$variant_reptar"    = "immune" ] && variant_reptar=1    || variant_reptar=0
 	variantl1tf_sgx="$variantl1tf"
 	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
 	[ "$cpuid_sgx" = 0 ] && variantl1tf_sgx=1
@@ -1319,6 +1395,7 @@ while [ -n "${1:-}" ]; do
 			zenbleed)	opt_cve_list="$opt_cve_list CVE-2023-20593"; opt_cve_all=0;;
 			downfall)   opt_cve_list="$opt_cve_list CVE-2022-40982"; opt_cve_all=0;;
 			inception)  opt_cve_list="$opt_cve_list CVE-2023-20569"; opt_cve_all=0;;
+			reptar)     opt_cve_list="$opt_cve_list CVE-2023-23583"; opt_cve_all=0;;
 			*)
 				echo "$0: error: invalid parameter '$2' for --variant, see --variant help for a list" >&2;
 				exit 255
@@ -1414,6 +1491,7 @@ pvulnstatus()
 			CVE-2023-20593) aka="ZENBLEED";;
 			CVE-2022-40982) aka="DOWNFALL";;
 			CVE-2023-20569) aka="INCEPTION";;
+			CVE-2023-23583) aka="REPTAR";;
 			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
 		esac
 
@@ -1822,6 +1900,266 @@ is_coreos()
 	return 1
 }
 
+# write_msr
+# param1 (mandatory): MSR, can be in hex or decimal.
+# param2 (optional): value to write, can be in hex or decimal.
+# param3 (optional): CPU index, starting from 0. Default 0.
+WRITE_MSR_RET_OK=0
+WRITE_MSR_RET_KO=1
+WRITE_MSR_RET_ERR=2
+WRITE_MSR_RET_LOCKDOWN=3
+write_msr()
+{
+	if [ "$opt_cpu" != all ]; then
+		# we only have one core to write to, do it and return the result
+		write_msr_one_core $opt_cpu "$@"
+		return $?
+	fi
+
+	# otherwise we must write on all cores
+	for _core in $(seq 0 "$max_core_id"); do
+		write_msr_one_core "$_core" "$@"; ret=$?
+		if [ "$_core" = 0 ]; then
+			# save the result of the first core, for comparison with the others
+			_first_core_ret=$ret
+		else
+			# compare first core with the other ones
+			if [ $_first_core_ret != $ret ]; then
+				write_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
+				return $WRITE_MSR_RET_ERR
+			fi
+		fi
+	done
+	# if we're here, all cores agree, return the result
+	return $ret
+}
+
+write_msr_one_core()
+{
+	_core="$1"
+	_msr_dec=$(( $2 ))
+	_msr=$(printf "0x%x" "$_msr_dec")
+	_value_dec=$(( $3 ))
+	_value=$(printf "0x%x" "$_value_dec")
+
+	write_msr_msg='unknown error'
+	: "${msr_locked_down:=0}"
+
+	_mockvarname="SMC_MOCK_WRMSR_${_msr}_RET"
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
+		_debug "write_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
+		mocked=1
+		[ "$(eval echo \$$_mockvarname)" = $WRITE_MSR_RET_LOCKDOWN ] && msr_locked_down=1
+		return "$(eval echo \$$_mockvarname)"
+	fi
+
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+		load_msr
+	fi
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		read_msr_msg="is msr kernel module available?"
+		return $WRITE_MSR_RET_ERR
+	fi
+
+	_write_denied=0
+	if [ "$os" != Linux ]; then
+		cpucontrol -m "$_msr=$_value" "/dev/cpuctl$_core" >/dev/null 2>&1; ret=$?
+	else
+		# for Linux
+		# convert to decimal
+		if [ ! -w /dev/cpu/"$_core"/msr ]; then
+			write_msr_msg="No write permission on /dev/cpu/$_core/msr"
+			return $WRITE_MSR_RET_ERR
+		# if wrmsr is available, use it
+		elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
+			_debug "write_msr: using wrmsr"
+			wrmsr $_msr_dec $_value_dec 2>/dev/null; ret=$?
+			# ret=4: msr doesn't exist, ret=127: msr.allow_writes=off
+			[ "$ret" = 127 ] && _write_denied=1
+		# or fallback to dd if it supports seek_bytes, we prefer it over perl because we can tell the difference between EPERM and EIO
+		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null && [ "${SMC_NO_DD:-}" != 1 ]; then
+			_debug "write_msr: using dd"
+			awk "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
+			# if it failed, inspect stderrto look for EPERM
+			if [ "$ret" != 0 ]; then
+				if awk "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
+					_write_denied=1
+				fi
+			fi
+		# or if we have perl, use it, any 5.x version will work
+		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
+			_debug "write_msr: using perl"
+			ret=1
+			perl -e "open(M,'>','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack(v4,$_value_dec)))"; [ $? -eq 8 ] && ret=0
+		else
+			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_ERR")
+			write_msr_msg="missing tool, install either msr-tools or perl"
+			return $WRITE_MSR_RET_ERR
+		fi
+		if [ "$ret" != 0 ]; then
+			# * Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
+			# when this mode is enabled and EFI secure boot is enabled (see issue #303)
+			# https://src.fedoraproject.org/rpms/kernel/blob/master/f/efi-lockdown.patch
+			# when this happens, any write will fail and dmesg will have a msg printed "msr: Direct access to MSR"
+			# * A version of this patch also made it to vanilla in 5.4+, in that case the message is: 'raw MSR access is restricted'
+			# * we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
+			# yet more recent versions of the msr module can be set to msr.allow_writes=off, in which case no dmesg message is printed,
+			# but the write fails
+			if [ "$_write_denied" = 1 ]; then
+				_debug "write_msr: writing to msr has been denied"
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+				msr_locked_down=1
+				write_msr_msg="your kernel is configured to deny writes to MSRs from user space"
+				return $WRITE_MSR_RET_LOCKDOWN
+			elif dmesg | grep -qF "msr: Direct access to MSR"; then
+				_debug "write_msr: locked down kernel detected (Red Hat / Fedora)"
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+				msr_locked_down=1
+				write_msr_msg="your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
+				return $WRITE_MSR_RET_LOCKDOWN
+			elif dmesg | grep -qF "raw MSR access is restricted"; then
+				_debug "write_msr: locked down kernel detected (vanilla)"
+				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+				msr_locked_down=1
+				write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
+				return $WRITE_MSR_RET_LOCKDOWN
+			fi
+			unset _write_denied
+		fi
+	fi
+
+	# normalize ret
+	if [ "$ret" = 0 ]; then
+		ret=$WRITE_MSR_RET_OK
+	else
+		ret=$WRITE_MSR_RET_KO
+	fi
+	_debug "write_msr: for cpu $_core on msr $_msr, value=$_value, ret=$ret"
+	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$ret")
+	return $ret
+}
+
+# read_msr
+# param1 (mandatory): MSR, can be in hex or decimal.
+# param2 (optional): CPU index, starting from 0. Default 0.
+# returned data is available in $read_msr_value
+READ_MSR_RET_OK=0
+READ_MSR_RET_KO=1
+READ_MSR_RET_ERR=2
+read_msr()
+{
+	if [ "$opt_cpu" != all ]; then
+		# we only have one core to read, do it and return the result
+		read_msr_one_core $opt_cpu "$@"
+		return $?
+	fi
+
+	# otherwise we must read all cores
+	for _core in $(seq 0 "$max_core_id"); do
+		read_msr_one_core "$_core" "$@"; ret=$?
+		if [ "$_core" = 0 ]; then
+			# save the result of the first core, for comparison with the others
+			_first_core_ret=$ret
+			_first_core_value=$read_msr_value
+		else
+			# compare first core with the other ones
+			if [ $_first_core_ret != $ret ] || [ "$_first_core_value" != "$read_msr_value" ]; then
+				read_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
+				return $READ_MSR_RET_ERR
+			fi
+		fi
+	done
+	# if we're here, all cores agree, return the result
+	return $ret
+}
+
+read_msr_one_core()
+{
+	_core="$1"
+	_msr_dec=$(( $2 ))
+	_msr=$(printf "0x%x" "$_msr_dec")
+
+	read_msr_value=''
+	read_msr_msg='unknown error'
+
+	_mockvarname="SMC_MOCK_RDMSR_${_msr}"
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
+		read_msr_value="$(eval echo \$$_mockvarname)"
+		_debug "read_msr: MOCKING enabled for msr $_msr, returning $read_msr_value"
+		mocked=1
+		return $READ_MSR_RET_OK
+	fi
+
+	_mockvarname="SMC_MOCK_RDMSR_${_msr}_RET"
+	# shellcheck disable=SC2086,SC1083
+	if [ -n "$(eval echo \${$_mockvarname:-})" ] && [ "$(eval echo \$$_mockvarname)" -ne 0 ]; then
+		_debug "read_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
+		mocked=1
+		return "$(eval echo \$$_mockvarname)"
+	fi
+
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
+		load_msr
+	fi
+	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+		read_msr_msg="is msr kernel module available?"
+		return $READ_MSR_RET_ERR
+	fi
+
+	if [ "$os" != Linux ]; then
+		# for BSD
+		_msr=$(cpucontrol -m "$_msr" "/dev/cpuctl$_core" 2>/dev/null); ret=$?
+		if [ $ret -ne 0 ]; then
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_KO")
+			return $READ_MSR_RET_KO
+		fi
+		# MSR 0x10: 0x000003e1 0xb106dded
+		_msr_h=$(echo "$_msr" | awk '{print $3}');
+		_msr_l=$(echo "$_msr" | awk '{print $4}');
+		read_msr_value=$(( _msr_h << 32 | _msr_l ))
+	else
+		# for Linux
+		if [ ! -r /dev/cpu/"$_core"/msr ]; then
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_ERR")
+			read_msr_msg="No read permission for /dev/cpu/$_core/msr"
+			return $READ_MSR_RET_ERR
+		# if rdmsr is available, use it
+		elif command -v rdmsr >/dev/null 2>&1 && [ "${SMC_NO_RDMSR:-}" != 1 ]; then
+			_debug "read_msr: using rdmsr on $_msr"
+			read_msr_value=$(rdmsr -r $_msr_dec 2>/dev/null | od -t u8 -A n)
+		# or if we have perl, use it, any 5.x version will work
+		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
+			_debug "read_msr: using perl on $_msr"
+			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
+		# fallback to dd if it supports skip_bytes
+		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null; then
+			_debug "read_msr: using dd on $_msr"
+			read_msr_value=$(dd if=/dev/cpu/"$_core"/msr bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
+		else
+			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_ERR")
+			read_msr_msg='missing tool, install either msr-tools or perl'
+			return $READ_MSR_RET_ERR
+		fi
+		if [ -z "$read_msr_value" ]; then
+			# MSR doesn't exist, don't check for $? because some versions of dd still return 0!
+			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_KO")
+			return $READ_MSR_RET_KO
+		fi
+		# remove sparse spaces od might give us
+		read_msr_value=$(( read_msr_value ))
+	fi
+	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}='$read_msr_value'")
+	_debug "read_msr: MSR=$_msr value is $read_msr_value"
+	return $READ_MSR_RET_OK
+}
+
+
 parse_cpu_details()
 {
 	[ "${parse_cpu_details_done:-}" = 1 ] && return 0
@@ -1881,6 +2219,18 @@ parse_cpu_details()
 		cpu_stepping=$( dmesg | grep -i -m1 'Stepping=' | cut -f6 -w | cut -f2 -d= )
 		cpu_friendly_name=$(sysctl -n hw.model 2>/dev/null)
 	fi
+
+	# Intel processors have a 3bit Platform ID field in MSR(17H) that specifies the platform type for up to 8 types
+	# see https://elixir.bootlin.com/linux/v6.0/source/arch/x86/kernel/cpu/microcode/intel.c#L694
+	# Set it to 8 (impossible value as it is 3 bit long) by default
+	cpu_platformid=8
+	if [ "$cpu_vendor" = GenuineIntel ] && [ "$cpu_model" -ge 5 ]; then
+		read_msr 0x17; ret=$?
+		if [ $ret = $READ_MSR_RET_OK ]; then
+			cpu_platformid=$(( 1 << ( (read_msr_value >> 18) & 7) ))
+		fi
+	fi
+	# FIXME add MOCK
 
 	if [ -n "${SMC_MOCK_CPU_FRIENDLY_NAME:-}" ]; then
 		cpu_friendly_name="$SMC_MOCK_CPU_FRIENDLY_NAME"
@@ -1956,7 +2306,8 @@ parse_cpu_details()
 	fi
 
 	echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$(( cpu_ucode ))
-	ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x" "$cpu_family" "$cpu_model" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid")
+	ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x pfid 0x%x" \
+		"$cpu_family" "$cpu_model" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid" "$cpu_platformid")
 
 	# also define those that we will need in other funcs
 	# taken from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/include/asm/intel-family.h
@@ -2700,265 +3051,6 @@ sys_interface_check()
 	fi
 	_debug "sys_interface_check: $file=$msg (re=$regex)"
 	return 0
-}
-
-# write_msr
-# param1 (mandatory): MSR, can be in hex or decimal.
-# param2 (optional): value to write, can be in hex or decimal.
-# param3 (optional): CPU index, starting from 0. Default 0.
-WRITE_MSR_RET_OK=0
-WRITE_MSR_RET_KO=1
-WRITE_MSR_RET_ERR=2
-WRITE_MSR_RET_LOCKDOWN=3
-write_msr()
-{
-	if [ "$opt_cpu" != all ]; then
-		# we only have one core to write to, do it and return the result
-		write_msr_one_core $opt_cpu "$@"
-		return $?
-	fi
-
-	# otherwise we must write on all cores
-	for _core in $(seq 0 $max_core_id); do
-		write_msr_one_core "$_core" "$@"; ret=$?
-		if [ "$_core" = 0 ]; then
-			# save the result of the first core, for comparison with the others
-			_first_core_ret=$ret
-		else
-			# compare first core with the other ones
-			if [ $_first_core_ret != $ret ]; then
-				write_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
-				return $WRITE_MSR_RET_ERR
-			fi
-		fi
-	done
-	# if we're here, all cores agree, return the result
-	return $ret
-}
-
-write_msr_one_core()
-{
-	_core="$1"
-	_msr_dec=$(( $2 ))
-	_msr=$(printf "0x%x" "$_msr_dec")
-	_value_dec=$(( $3 ))
-	_value=$(printf "0x%x" "$_value_dec")
-
-	write_msr_msg='unknown error'
-	: "${msr_locked_down:=0}"
-
-	_mockvarname="SMC_MOCK_WRMSR_${_msr}_RET"
-	# shellcheck disable=SC2086,SC1083
-	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
-		_debug "write_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
-		mocked=1
-		[ "$(eval echo \$$_mockvarname)" = $WRITE_MSR_RET_LOCKDOWN ] && msr_locked_down=1
-		return "$(eval echo \$$_mockvarname)"
-	fi
-
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-		load_msr
-	fi
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		read_msr_msg="is msr kernel module available?"
-		return $WRITE_MSR_RET_ERR
-	fi
-
-	_write_denied=0
-	if [ "$os" != Linux ]; then
-		cpucontrol -m "$_msr=$_value" "/dev/cpuctl$_core" >/dev/null 2>&1; ret=$?
-	else
-		# for Linux
-		# convert to decimal
-		if [ ! -w /dev/cpu/"$_core"/msr ]; then
-			write_msr_msg="No write permission on /dev/cpu/$_core/msr"
-			return $WRITE_MSR_RET_ERR
-		# if wrmsr is available, use it
-		elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
-			_debug "write_msr: using wrmsr"
-			wrmsr $_msr_dec $_value_dec 2>/dev/null; ret=$?
-			# ret=4: msr doesn't exist, ret=127: msr.allow_writes=off
-			[ "$ret" = 127 ] && _write_denied=1
-		# or fallback to dd if it supports seek_bytes, we prefer it over perl because we can tell the difference between EPERM and EIO
-		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null && [ "${SMC_NO_DD:-}" != 1 ]; then
-			_debug "write_msr: using dd"
-			awk "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
-			# if it failed, inspect stderrto look for EPERM
-			if [ "$ret" != 0 ]; then
-				if awk "BEGIN{printf \"%c\", $_value_dec}" | dd of=/dev/cpu/"$_core"/msr bs=8 count=1 seek="$_msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
-					_write_denied=1
-				fi
-			fi
-		# or if we have perl, use it, any 5.x version will work
-		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
-			_debug "write_msr: using perl"
-			ret=1
-			perl -e "open(M,'>','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and exit(syswrite(M,pack(v4,$_value_dec)))"; [ $? -eq 8 ] && ret=0
-		else
-			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_ERR")
-			write_msr_msg="missing tool, install either msr-tools or perl"
-			return $WRITE_MSR_RET_ERR
-		fi
-		if [ "$ret" != 0 ]; then
-			# * Fedora (and probably Red Hat) have a "kernel lock down" feature that prevents us to write to MSRs
-			# when this mode is enabled and EFI secure boot is enabled (see issue #303)
-			# https://src.fedoraproject.org/rpms/kernel/blob/master/f/efi-lockdown.patch
-			# when this happens, any write will fail and dmesg will have a msg printed "msr: Direct access to MSR"
-			# * A version of this patch also made it to vanilla in 5.4+, in that case the message is: 'raw MSR access is restricted'
-			# * we don't use dmesg_grep() because we don't care if dmesg is truncated here, as the message has just been printed
-			# yet more recent versions of the msr module can be set to msr.allow_writes=off, in which case no dmesg message is printed,
-			# but the write fails
-			if [ "$_write_denied" = 1 ]; then
-				_debug "write_msr: writing to msr has been denied"
-				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
-				msr_locked_down=1
-				write_msr_msg="your kernel is configured to deny writes to MSRs from user space"
-				return $WRITE_MSR_RET_LOCKDOWN
-			elif dmesg | grep -qF "msr: Direct access to MSR"; then
-				_debug "write_msr: locked down kernel detected (Red Hat / Fedora)"
-				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
-				msr_locked_down=1
-				write_msr_msg="your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
-				return $WRITE_MSR_RET_LOCKDOWN
-			elif dmesg | grep -qF "raw MSR access is restricted"; then
-				_debug "write_msr: locked down kernel detected (vanilla)"
-				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
-				msr_locked_down=1
-				write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
-				return $WRITE_MSR_RET_LOCKDOWN
-			fi
-			unset _write_denied
-		fi
-	fi
-
-	# normalize ret
-	if [ "$ret" = 0 ]; then
-		ret=$WRITE_MSR_RET_OK
-	else
-		ret=$WRITE_MSR_RET_KO
-	fi
-	_debug "write_msr: for cpu $_core on msr $_msr, value=$_value, ret=$ret"
-	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$ret")
-	return $ret
-}
-
-# read_msr
-# param1 (mandatory): MSR, can be in hex or decimal.
-# param2 (optional): CPU index, starting from 0. Default 0.
-# returned data is available in $read_msr_value
-READ_MSR_RET_OK=0
-READ_MSR_RET_KO=1
-READ_MSR_RET_ERR=2
-read_msr()
-{
-	if [ "$opt_cpu" != all ]; then
-		# we only have one core to read, do it and return the result
-		read_msr_one_core $opt_cpu "$@"
-		return $?
-	fi
-
-	# otherwise we must read all cores
-	for _core in $(seq 0 $max_core_id); do
-		read_msr_one_core "$_core" "$@"; ret=$?
-		if [ "$_core" = 0 ]; then
-			# save the result of the first core, for comparison with the others
-			_first_core_ret=$ret
-			_first_core_value=$read_msr_value
-		else
-			# compare first core with the other ones
-			if [ $_first_core_ret != $ret ] || [ "$_first_core_value" != "$read_msr_value" ]; then
-				read_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
-				return $READ_MSR_RET_ERR
-			fi
-		fi
-	done
-	# if we're here, all cores agree, return the result
-	return $ret
-}
-
-read_msr_one_core()
-{
-	_core="$1"
-	_msr_dec=$(( $2 ))
-	_msr=$(printf "0x%x" "$_msr_dec")
-
-	read_msr_value=''
-	read_msr_msg='unknown error'
-
-	_mockvarname="SMC_MOCK_RDMSR_${_msr}"
-	# shellcheck disable=SC2086,SC1083
-	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
-		read_msr_value="$(eval echo \$$_mockvarname)"
-		_debug "read_msr: MOCKING enabled for msr $_msr, returning $read_msr_value"
-		mocked=1
-		return $READ_MSR_RET_OK
-	fi
-
-	_mockvarname="SMC_MOCK_RDMSR_${_msr}_RET"
-	# shellcheck disable=SC2086,SC1083
-	if [ -n "$(eval echo \${$_mockvarname:-})" ] && [ "$(eval echo \$$_mockvarname)" -ne 0 ]; then
-		_debug "read_msr: MOCKING enabled for msr $_msr func returns $(eval echo \$$_mockvarname)"
-		mocked=1
-		return "$(eval echo \$$_mockvarname)"
-	fi
-
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
-		load_msr
-	fi
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
-		read_msr_msg="is msr kernel module available?"
-		return $READ_MSR_RET_ERR
-	fi
-
-	if [ "$os" != Linux ]; then
-		# for BSD
-		_msr=$(cpucontrol -m "$_msr" "/dev/cpuctl$_core" 2>/dev/null); ret=$?
-		if [ $ret -ne 0 ]; then
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_KO")
-			return $READ_MSR_RET_KO
-		fi
-		# MSR 0x10: 0x000003e1 0xb106dded
-		_msr_h=$(echo "$_msr" | awk '{print $3}');
-		_msr_l=$(echo "$_msr" | awk '{print $4}');
-		read_msr_value=$(( _msr_h << 32 | _msr_l ))
-	else
-		# for Linux
-		if [ ! -r /dev/cpu/"$_core"/msr ]; then
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_ERR")
-			read_msr_msg="No read permission for /dev/cpu/$_core/msr"
-			return $READ_MSR_RET_ERR
-		# if rdmsr is available, use it
-		elif command -v rdmsr >/dev/null 2>&1 && [ "${SMC_NO_RDMSR:-}" != 1 ]; then
-			_debug "read_msr: using rdmsr on $_msr"
-			read_msr_value=$(rdmsr -r $_msr_dec 2>/dev/null | od -t u8 -A n)
-		# or if we have perl, use it, any 5.x version will work
-		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
-			_debug "read_msr: using perl on $_msr"
-			read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$_core/msr') and seek(M,$_msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
-		# fallback to dd if it supports skip_bytes
-		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null; then
-			_debug "read_msr: using dd on $_msr"
-			read_msr_value=$(dd if=/dev/cpu/"$_core"/msr bs=8 count=1 skip="$_msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
-		else
-			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_ERR")
-			read_msr_msg='missing tool, install either msr-tools or perl'
-			return $READ_MSR_RET_ERR
-		fi
-		if [ -z "$read_msr_value" ]; then
-			# MSR doesn't exist, don't check for $? because some versions of dd still return 0!
-			mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}_RET=$READ_MSR_RET_KO")
-			return $READ_MSR_RET_KO
-		fi
-		# remove sparse spaces od might give us
-		read_msr_value=$(( read_msr_value ))
-	fi
-	mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_RDMSR_${_msr}='$read_msr_value'")
-	_debug "read_msr: MSR=$_msr value is $read_msr_value"
-	return $READ_MSR_RET_OK
 }
 
 check_cpu()
@@ -6490,6 +6582,42 @@ check_CVE_2023_20569_linux() {
 }
 
 #######################
+# Reptar section
+
+check_CVE_2023_23583() {
+	cve='CVE-2023-23583'
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$os" = Linux ]
+	then
+		check_CVE_2023_23583_linux
+	else
+		_warn "Unsupported OS ($os)."
+	fi
+}
+
+check_CVE_2023_23583_linux() {
+	status=UNK
+	sys_interface_available=0
+	msg=''
+
+	# there is no sysfs file for this vuln, and no kernel patch,
+	# the mitigation is only ucode-based and there's no flag exposed,
+	# so most of the work has already been done by is_cpu_affected()
+	if ! is_cpu_affected "$cve" ; then
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+	else
+		_info_nol "* Reptar is mitigated by microcode: "
+		if [ "$cpu_ucode" -lt "$reptar_fixed_ucode_version" ]; then
+			pstatus yellow NO "You have ucode $(printf "0x%x" $cpu_ucode) and version $(printf "0x%x" $reptar_fixed_ucode_version) minimum is required"
+			pvulnstatus $cve VULN "Your microcode is too old to mitigate the vulnerability"
+		else
+			pstatus green YES "You have ucode $(printf "0x%x" $cpu_ucode) which is recent enough (>= $(printf "0x%x" $reptar_fixed_ucode_version))"
+			pvulnstatus $cve OK "Your microcode mitigates the vulnerability"
+		fi
+	fi
+}
+
+#######################
 # END OF VULNS SECTIONS
 
 if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
@@ -6711,7 +6839,7 @@ exit 0  # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v273+i20230808+b6bd
+# %%% MCEDB v282+i20231114+826c
 # I,0x00000611,0x00000B27,19961218
 # I,0x00000612,0x000000C6,19961210
 # I,0x00000616,0x000000C6,19961210
@@ -6978,11 +7106,12 @@ exit 0  # ok
 # I,0x000606A0,0x80000031,20200308
 # I,0x000606A4,0x0B000280,20200817
 # I,0x000606A5,0x0C0002F0,20210308
-# I,0x000606A6,0x0D0003A5,20230330
+# I,0x000606A6,0x0D0003B9,20230901
 # I,0x000606C0,0xFD000220,20210629
-# I,0x000606C1,0x01000230,20230127
+# I,0x000606C1,0x01000268,20230908
 # I,0x000606E0,0x0000000B,20161104
 # I,0x000606E1,0x00000108,20190423
+# I,0x000606E4,0x0000000C,20190124
 # I,0x000706A0,0x00000026,20170712
 # I,0x000706A1,0x0000003E,20220916
 # I,0x000706A8,0x00000022,20220920
@@ -6991,40 +7120,42 @@ exit 0  # ok
 # I,0x000706E2,0x00000042,20190420
 # I,0x000706E3,0x81000008,20181002
 # I,0x000706E4,0x00000046,20190905
-# I,0x000706E5,0x000000BC,20230226
+# I,0x000706E5,0x000000C2,20230903
 # I,0x00080650,0x00000018,20180108
-# I,0x00080664,0x4C000021,20220815
-# I,0x00080665,0x4C000021,20220815
-# I,0x00080667,0x4C000021,20220815
+# I,0x00080664,0x4C000023,20230222
+# I,0x00080665,0x4C000023,20230222
+# I,0x00080667,0x4C000023,20230222
 # I,0x000806A0,0x00000010,20190507
 # I,0x000806A1,0x00000033,20230113
 # I,0x000806C0,0x00000068,20200402
-# I,0x000806C1,0x000000AC,20230227
-# I,0x000806C2,0x0000002C,20230227
-# I,0x000806D0,0x00000050,20201217
-# I,0x000806D1,0x00000046,20230227
+# I,0x000806C1,0x000000B4,20230907
+# I,0x000806C2,0x00000034,20230907
+# I,0x000806D0,0x00000054,20210507
+# I,0x000806D1,0x0000004E,20230907
 # I,0x000806E9,0x000000F4,20230223
 # I,0x000806EA,0x000000F4,20230223
 # I,0x000806EB,0x000000F4,20230223
 # I,0x000806EC,0x000000F8,20230226
+# I,0x000806F1,0x800003C0,20220327
+# I,0x000806F2,0x8C0004E0,20211112
 # I,0x000806F3,0x8D000520,20220812
-# I,0x000806F4,0x2C000271,20230515
-# I,0x000806F5,0x2C000271,20230515
-# I,0x000806F6,0x2C000271,20230515
-# I,0x000806F7,0x2B0004B1,20230509
-# I,0x000806F8,0x2C000271,20230515
+# I,0x000806F4,0x2C000290,20230626
+# I,0x000806F5,0x2C000290,20230626
+# I,0x000806F6,0x2C000290,20230626
+# I,0x000806F7,0x2B0004D0,20230616
+# I,0x000806F8,0x2C000290,20230626
 # I,0x00090660,0x00000009,20200617
 # I,0x00090661,0x00000017,20220715
 # I,0x00090670,0x00000019,20201111
 # I,0x00090671,0x0000001C,20210614
-# I,0x00090672,0x0000002E,20230418
+# I,0x00090672,0x00000032,20230607
 # I,0x00090674,0x00000219,20210425
-# I,0x00090675,0x0000002E,20230418
+# I,0x00090675,0x00000032,20230607
 # I,0x000906A0,0x0000001C,20210614
 # I,0x000906A1,0x0000011F,20211104
 # I,0x000906A2,0x00000315,20220102
-# I,0x000906A3,0x0000042C,20230418
-# I,0x000906A4,0x0000042C,20230418
+# I,0x000906A3,0x00000430,20230607
+# I,0x000906A4,0x00000430,20230607
 # I,0x000906C0,0x24000024,20220902
 # I,0x000906E9,0x000000F4,20230223
 # I,0x000906EA,0x000000F4,20230223
@@ -7040,17 +7171,20 @@ exit 0  # ok
 # I,0x000A0660,0x000000F8,20230223
 # I,0x000A0661,0x000000F8,20230223
 # I,0x000A0670,0x0000002C,20201124
-# I,0x000A0671,0x00000059,20230226
+# I,0x000A0671,0x0000005D,20230903
 # I,0x000A0680,0x80000002,20200121
+# I,0x000A06A1,0x00000017,20230518
+# I,0x000A06A2,0x00000011,20230627
+# I,0x000A06A4,0x00000017,20231026
 # I,0x000B0670,0x0000000E,20220220
-# I,0x000B0671,0x00000119,20230606
-# I,0x000B06A2,0x00004119,20230606
-# I,0x000B06A3,0x00004119,20230606
-# I,0x000B06E0,0x00000011,20230412
-# I,0x000B06F2,0x0000002E,20230418
-# I,0x000B06F5,0x0000002E,20230418
-# I,0x000C06F1,0x21000030,20230410
-# I,0x000C06F2,0x21000030,20230410
+# I,0x000B0671,0x0000011D,20230829
+# I,0x000B06A2,0x0000411C,20230830
+# I,0x000B06A3,0x0000411C,20230830
+# I,0x000B06E0,0x00000012,20230626
+# I,0x000B06F2,0x00000032,20230607
+# I,0x000B06F5,0x00000032,20230607
+# I,0x000C06F1,0x21000200,20231120
+# I,0x000C06F2,0x21000200,20231120
 # A,0x00000F00,0x02000008,20070614
 # A,0x00000F01,0x0000001C,20021031
 # A,0x00000F10,0x00000003,20020325
@@ -7091,7 +7225,7 @@ exit 0  # ok
 # A,0x00200F31,0x02000057,20080502
 # A,0x00200F32,0x02000034,20080307
 # A,0x00300F01,0x0300000E,20101004
-# A,0x00300F10,0x03000027,20111309
+# A,0x00300F10,0x03000027,20111209
 # A,0x00500F00,0x0500000B,20100601
 # A,0x00500F01,0x0500001A,20100908
 # A,0x00500F10,0x05000029,20130121
@@ -7110,7 +7244,7 @@ exit 0  # ok
 # A,0x00610F01,0x0600111F,20180305
 # A,0x00630F00,0x0600301C,20130817
 # A,0x00630F01,0x06003109,20180227
-# A,0x00660F00,0x06006012,20141014
+# A,0x00660F00,0x06006108,20150302
 # A,0x00660F01,0x0600611A,20180126
 # A,0x00670F00,0x06006705,20180220
 # A,0x00680F00,0x06000017,20101029
@@ -7134,13 +7268,17 @@ exit 0  # ok
 # A,0x00820F00,0x08200002,20180214
 # A,0x00820F01,0x08200103,20190417
 # A,0x00830F00,0x08300027,20190401
-# A,0x00830F10,0x0830107A,20230517
+# A,0x00830F10,0x0830107B,20230816
 # A,0x00850F00,0x08500004,20180212
 # A,0x00860F00,0x0860000E,20200127
 # A,0x00860F01,0x08600109,20220328
 # A,0x00860F81,0x08608104,20220328
 # A,0x00870F00,0x08700004,20181206
 # A,0x00870F10,0x08701030,20220328
+# A,0x00890F00,0x08900007,20200921
+# A,0x00890F01,0x08900103,20201105
+# A,0x00890F02,0x08900201,20210114
+# A,0x00890F10,0x08901001,20220309
 # A,0x008A0F00,0x08A00008,20230615
 # A,0x00A00F00,0x0A000033,20200413
 # A,0x00A00F10,0x0A001079,20230609
@@ -7152,18 +7290,26 @@ exit 0  # ok
 # A,0x00A10F01,0x0A100104,20220207
 # A,0x00A10F0B,0x0A100B07,20220610
 # A,0x00A10F10,0x0A101020,20220913
-# A,0x00A10F11,0x0A10113E,20230620
-# A,0x00A10F12,0x0A10123E,20230620
+# A,0x00A10F11,0x0A101144,20230906
+# A,0x00A10F12,0x0A101244,20230911
+# A,0x00A10F80,0x0A108005,20230613
+# A,0x00A10F81,0x0A108105,20230711
 # A,0x00A20F00,0x0A200025,20200121
-# A,0x00A20F10,0x0A201025,20211014
-# A,0x00A20F12,0x0A20120A,20211014
+# A,0x00A20F10,0x0A20102B,20230707
+# A,0x00A20F12,0x0A20120E,20230707
 # A,0x00A40F00,0x0A400016,20210330
 # A,0x00A40F40,0x0A404002,20210408
 # A,0x00A40F41,0x0A404102,20211018
-# A,0x00A50F00,0x0A50000D,20211014
+# A,0x00A50F00,0x0A50000F,20230707
 # A,0x00A60F00,0x0A600005,20211220
-# A,0x00A60F11,0x0A601114,20220712
-# A,0x00A60F12,0x0A601203,20220715
+# A,0x00A60F11,0x0A601119,20230613
+# A,0x00A60F12,0x0A601206,20230613
+# A,0x00A70F00,0x0A700003,20220517
+# A,0x00A70F40,0x0A704001,20220721
+# A,0x00A70F41,0x0A704104,20230713
+# A,0x00A70F42,0x0A704202,20230713
+# A,0x00A70F52,0x0A705203,20230713
+# A,0x00A70F80,0x0A708004,20230713
 # A,0x00AA0F00,0x0AA00009,20221006
 # A,0x00AA0F01,0x0AA00116,20230619
-# A,0x00AA0F02,0x0AA00212,20230619
+# A,0x00AA0F02,0x0AA00213,20230911
