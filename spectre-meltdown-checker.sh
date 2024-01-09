@@ -2280,7 +2280,7 @@ parse_cpu_details()
 	fi
 
 	# get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
-	if read_cpuid 0x1 0x0 $EAX 0 0xFFFFFFFF; then
+	if [ "$mocked" != 1 ] && read_cpuid 0x1 0x0 $EAX 0 0xFFFFFFFF; then
 		cpu_cpuid="$read_cpuid_value"
 	else
 		# try to build it by ourselves
@@ -2476,6 +2476,22 @@ is_ucode_blacklisted()
 			fi
 		fi
 	done
+
+	# 2024-01-09 update: https://github.com/speed47/spectre-meltdown-checker/issues/475
+	# this time the tuple is cpuid,microcode
+	for tuple in \
+		0xB0671,0x119  \
+		0xB06A2,0x4119 \
+		0xB06A3,0x4119
+	do
+		cpuid=$(( $(echo "$tuple" | cut -d, -f1) ))
+		ucode=$(( $(echo "$tuple" | cut -d, -f2) ))
+		if [ "$cpu_cpuid" = "$cpuid" ] && [ "$cpu_ucode" = "$ucode" ]; then
+			_debug "is_ucode_blacklisted: we have a match! ($cpuid/$ucode)"
+			return 0
+		fi
+	done
+
 	_debug "is_ucode_blacklisted: no ($cpu_model/$cpu_stepping/$cpu_ucode)"
 	return 1
 }
@@ -3749,7 +3765,7 @@ check_cpu()
 		_warn "The microcode your CPU is running on is known to cause instability problems,"
 		_warn "such as intempestive reboots or random crashes."
 		_warn "You are advised to either revert to a previous microcode version (that might not have"
-		_warn "the mitigations for Spectre), or upgrade to a newer one if available."
+		_warn "the mitigations for recent vulnerabilities), or upgrade to a newer one if available."
 		_warn
 	else
 		pstatus blue NO "$ucode_found"
