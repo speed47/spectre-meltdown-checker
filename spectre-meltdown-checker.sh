@@ -604,7 +604,7 @@ is_cpu_affected()
 			fixed_ucode_ver=$(( 0x$(echo "$tuple" | cut -d, -f2) ))
 			affected_fmspi=$(echo "$tuple" | cut -d, -f1)
 			affected_fms=$(echo "$affected_fmspi" | cut -d/ -f1)
-			ucode_platformid_mask=$(echo "$affected_fmspi" | cut -d/ -f2)
+			ucode_platformid_mask=0x$(echo "$affected_fmspi" | cut -d/ -f2)
 			affected_cpuid=$(fms2cpuid \
 				0x"$(echo "$affected_fms" | cut -d- -f1)" \
 				0x"$(echo "$affected_fms" | cut -d- -f2)" \
