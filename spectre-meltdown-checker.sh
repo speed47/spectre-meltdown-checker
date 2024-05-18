@@ -1155,7 +1155,7 @@ update_fwdb()
 		_version=$(( _version ))
 		_version=$(printf "%08X" "$_version")
 		# ensure the official Intel DB always has precedence over mcedb, even if mcedb has seen a more recent fw
-		sqlite3 "$mcedb_tmp" "DELETE FROM \"Intel\" WHERE \"origin\" != \"intel\" AND \"cpuid\" = '$_cpuid';"
+		sqlite3 "$mcedb_tmp" "DELETE FROM \"Intel\" WHERE \"origin\" != 'intel' AND \"cpuid\" = '$_cpuid';"
 		# then insert our version
 		sqlite3 "$mcedb_tmp" "INSERT INTO \"Intel\" (\"origin\",\"cpuid\",\"pfmask\",\"version\",\"yyyymmdd\") VALUES ('intel','$_cpuid','$_pfmask','$_version','$_date');"
 	done
