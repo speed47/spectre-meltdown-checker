@@ -4394,11 +4394,11 @@ check_CVE_2017_5715_linux()
 		# We check the RETPOLINE kernel options
 		retpoline=0
 		if [ -r "$opt_config" ]; then
-			if grep -q '^CONFIG_RETPOLINE=y' "$opt_config"; then
+			if grep -q '^CONFIG_\(MITIGATION_\)\?RETPOLINE=y' "$opt_config"; then
 				pstatus green YES
 				retpoline=1
 				# shellcheck disable=SC2046
-				_debug 'retpoline: found '$(grep '^CONFIG_RETPOLINE' "$opt_config")" in $opt_config"
+				_debug 'retpoline: found '$(grep '^CONFIG_\(MITIGATION_\)\?RETPOLINE' "$opt_config")" in $opt_config"
 			else
 				pstatus yellow NO
 			fi
@@ -4410,8 +4410,9 @@ check_CVE_2017_5715_linux()
 			# Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
 			# For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
 			# See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
-			# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_RETPOLINE is set
-			# *AND* if the compiler is retpoline-compliant, so look for that symbol
+			# In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_MITIGATION_RETPOLINE is set
+			# *AND* if the compiler is retpoline-compliant, so look for that symbol. The name of this kernel config 
+			# option before version 6.9-rc1 is CONFIG_RETPOLINE.
 			#
 			# if there is "retpoline" in the file and NOT "minimal", then it's full retpoline
 			# (works for vanilla and Red Hat variants)
@@ -4637,7 +4638,7 @@ check_CVE_2017_5715_linux()
 			# RETPOLINE (amd & intel &hygon )
 			if is_amd || is_intel || is_hygon; then
 				if [ "$retpoline" = 0 ]; then
-					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_RETPOLINE option enabled. You also need to compile your kernel with a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
+					explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_MITIGATION_RETPOLINE option enabled (was named CONFIG_RETPOLINE before kernel 6.9-rc1). You also need to compile your kernel with a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 0 ]; then
 					explain "Your kernel is compiled with retpoline, but without a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
 				elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" = 0 ]; then
