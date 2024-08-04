@@ -4794,7 +4794,7 @@ check_CVE_2017_5754_linux()
 		kpti_can_tell=0
 		if [ -n "$opt_config" ]; then
 			kpti_can_tell=1
-			kpti_support=$(grep -w -e CONFIG_PAGE_TABLE_ISOLATION=y -e CONFIG_KAISER=y -e CONFIG_UNMAP_KERNEL_AT_EL0=y "$opt_config")
+			kpti_support=$(grep -E -w -e 'CONFIG_(MITIGATION_)?PAGE_TABLE_ISOLATION=y' -e CONFIG_KAISER=y -e CONFIG_UNMAP_KERNEL_AT_EL0=y "$opt_config")
 			if [ -n "$kpti_support" ]; then
 				_debug "kpti_support: found option '$kpti_support' in $opt_config"
 			fi
@@ -4938,7 +4938,7 @@ check_CVE_2017_5754_linux()
 						explain "Your kernel supports PTI but it has been disabled, check \`dmesg\` right after boot to find clues why the system disabled it"
 					fi
 				else
-					explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+					explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 				fi
 			fi
 		else
@@ -4946,7 +4946,7 @@ check_CVE_2017_5754_linux()
 				pvulnstatus $cve OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
 			elif [ "$kpti_can_tell" = 1 ]; then
 				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
-				explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+				explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 			else
 				pvulnstatus $cve UNK "offline mode: not enough information"
 				explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
@@ -4962,10 +4962,10 @@ check_CVE_2017_5754_linux()
 			_explain="Go to https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ for more information"
 		elif [ "$msg" = "Vulnerable" ]; then
 			msg="PTI is needed to mitigate the vulnerability"
-			_explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+			_explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 		fi
 		pvulnstatus $cve "$status" "$msg"
-		[ -z "${_explain:-}" ] && [ "$msg" = "Vulnerable" ] && _explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
+		[ -z "${_explain:-}" ] && [ "$msg" = "Vulnerable" ] && _explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 		[ -n "${_explain:-}" ] && explain "$_explain"
 		unset _explain
 	fi
@@ -6487,9 +6487,11 @@ check_CVE_2023_20569_linux() {
 
 		_info_nol "* Kernel compiled with SRSO support: "
 		if [ -r "$opt_config" ]; then
-			if grep -q '^CONFIG_CPU_SRSO=y' "$opt_config"; then
+			# CONFIG_CPU_SRSO: Linux < 6.9
+			# CONFIG_MITIGATION_SRSO: Linux >= 6.9
+			if grep -Eq '^CONFIG_(CPU|MITIGATION)_SRSO=y' "$opt_config"; then
 				pstatus green YES
-				kernel_srso="CONFIG_CPU_SRSO=y found in kernel config"
+				kernel_srso="CONFIG_(CPU|MITIGATION)_SRSO=y found in kernel config"
 			else
 				pstatus yellow NO "required for safe RET and ibpb_on_vmexit mitigations"
 			fi
@@ -6497,10 +6499,10 @@ check_CVE_2023_20569_linux() {
 			# https://github.com/torvalds/linux/commit/138bcddb86d8a4f842e4ed6f0585abc9b1a764ff#diff-17bd24a7a7850613cced545790ac30646097e8d6207348c2bd1845f397acb390R2313
 			if [ -n "$kernel_err" ]; then
 				pstatus yellow UNKNOWN "$kernel_err"
-			elif grep -q 'WARNING: kernel not compiled with CPU_SRSO' "$kernel"; then
+			elif grep -Eq 'WARNING: kernel not compiled with (CPU|MITIGATION)_SRSO' "$kernel"; then
 				# this msg is optimized out at compile time if the option is not enabled, see commit referenced above
 				# if it's present, then SRSO is NOT compiled in
-				pstatus yellow NO "kernel not compiled with CPU_SRSO"
+				pstatus yellow NO "kernel not compiled with (CPU|MITIGATION)_SRSO"
 			else
 				# if it's not present, then SRSO is compiled in IF kernel_sro==1, otherwise we're just
 				# in front of an old kernel that doesn't have the mitigation logic at all
@@ -6515,9 +6517,11 @@ check_CVE_2023_20569_linux() {
 
 		_info_nol "* Kernel compiled with IBPB_ENTRY support: "
 		if [ -r "$opt_config" ]; then
-			if grep -q '^CONFIG_CPU_IBPB_ENTRY=y' "$opt_config"; then
+			# CONFIG_CPU_IBPB_ENTRY: Linux < 6.9
+			# CONFIG_MITIGATION_IBPB_ENTRY: Linux >= 6.9
+			if grep -Eq '^CONFIG_(CPU|MITIGATION)_IBPB_ENTRY=y' "$opt_config"; then
 				pstatus green YES
-				kernel_ibpb_entry="CONFIG_CPU_IBPB_ENTRY=y found in kernel config"
+				kernel_ibpb_entry="CONFIG_(CPU|MITIGATION)_IBPB_ENTRY=y found in kernel config"
 			else
 				pstatus yellow NO
 			fi
@@ -6525,10 +6529,10 @@ check_CVE_2023_20569_linux() {
 			# https://github.com/torvalds/linux/commit/138bcddb86d8a4f842e4ed6f0585abc9b1a764ff#diff-17bd24a7a7850613cced545790ac30646097e8d6207348c2bd1845f397acb390R2325
 			if [ -n "$kernel_err" ]; then
 				pstatus yellow UNKNOWN "$kernel_err"
-			elif grep -q 'WARNING: kernel not compiled with CPU_IBPB_ENTRY' "$kernel"; then
+			elif grep -Eq 'WARNING: kernel not compiled with (CPU|MITIGATION)_IBPB_ENTRY' "$kernel"; then
 				# this msg is optimized out at compile time if the option is not enabled, see commit referenced above
 				# if it's present, then IBPB_ENTRY is NOT compiled in
-				pstatus yellow NO "kernel not compiled with CPU_IBPB_ENTRY"
+				pstatus yellow NO "kernel not compiled with (CPU|MITIGATION)_IBPB_ENTRY"
 			else
 				# if it's not present, then IBPB_ENTRY is compiled in IF kernel_sro==1, otherwise we're just
 				# in front of an old kernel that doesn't have the mitigation logic at all
