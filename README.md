@@ -76,9 +76,12 @@ sudo ./spectre-meltdown-checker.sh
 #### With docker-compose
 
 ```shell
-docker-compose build
-docker-compose run --rm spectre-meltdown-checker
+docker compose build
+docker compose run --rm spectre-meltdown-checker
 ```
+
+Note that on older versions of docker, `docker-compose` is a separate command, so you might
+need to replace the two `docker compose` occurences above by `docker-compose`.
 
 #### Without docker-compose
 
