@@ -1,5 +1,3 @@
-version: '2'
-
 services:
   spectre-meltdown-checker:
     build:

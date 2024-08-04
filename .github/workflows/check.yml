@@ -32,11 +32,11 @@ jobs:
         else
           echo "OK $nb CVEs reported"
         fi
-    - name: check docker-compose run execution
+    - name: check docker compose run execution
       run: |
         expected=19
-        docker-compose build
-        nb=$(docker-compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
+        docker compose build
+        nb=$(docker compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
           exit 1
