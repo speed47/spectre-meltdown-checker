@@ -1892,7 +1892,7 @@ dmesg_grep()
 		# dmesg truncated
 		return 2
 	fi
-	dmesg_grepped=$(dmesg | grep -E "$1" | head -1)
+	dmesg_grepped=$(dmesg | grep -E "$1" | head -n1)
 	# not found:
 	[ -z "$dmesg_grepped" ] && return 1
 	# found, output is in $dmesg_grepped
@@ -2186,8 +2186,8 @@ parse_cpu_details()
 	if [ -e "$procfs/cpuinfo" ]; then
 		if grep -qw avx2 "$procfs/cpuinfo" 2>/dev/null; then has_avx2=1; fi
 		if grep -qw avx512 "$procfs/cpuinfo" 2>/dev/null; then has_avx512=1; fi
-		cpu_vendor=$(  grep '^vendor_id'  "$procfs/cpuinfo" | awk '{print $3}' | head -1)
-		cpu_friendly_name=$(grep '^model name' "$procfs/cpuinfo" | cut -d: -f2- | head -1 | sed -e 's/^ *//')
+		cpu_vendor=$(grep '^vendor_id'  "$procfs/cpuinfo" | awk '{print $3}' | head -n1)
+		cpu_friendly_name=$(grep '^model name' "$procfs/cpuinfo" | cut -d: -f2- | head -n1 | sed -e 's/^ *//')
 		# special case for ARM follows
 		if grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' "$procfs/cpuinfo"; then
 			cpu_vendor='ARM'
@@ -2211,10 +2211,10 @@ parse_cpu_details()
 			cpu_vendor='PHYTIUM'
 		fi
 
-		cpu_family=$(  grep '^cpu family' "$procfs/cpuinfo" | awk '{print $4}' | grep -E '^[0-9]+$' | head -1)
-		cpu_model=$(   grep '^model'      "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
-		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -1)
-		cpu_ucode=$(   grep '^microcode'  "$procfs/cpuinfo" | awk '{print $3}' | head -1)
+		cpu_family=$(  grep '^cpu family' "$procfs/cpuinfo" | awk '{print $4}' | grep -E '^[0-9]+$' | head -n1)
+		cpu_model=$(   grep '^model'      "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -n1)
+		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -n1)
+		cpu_ucode=$(   grep '^microcode'  "$procfs/cpuinfo" | awk '{print $3}' | head -n1)
 	else
 		cpu_vendor=$( dmesg | grep -i -m1 'Origin=' | cut -f2 -w | cut -f2 -d= | cut -f2 -d\" )
 		cpu_family=$( dmesg | grep -i -m1 'Family=' | cut -f4 -w | cut -f2 -d= )
@@ -2995,7 +2995,7 @@ else
 	kernel_version=$("${opt_arch_prefix}strings" "$kernel" 2>/dev/null | grep -E \
 		-e '^Linux version ' \
 		-e '^[[:alnum:]][^[:space:]]+ \([^[:space:]]+\) #[0-9]+ .+ (19|20)[0-9][0-9]$' \
-		-e '^FreeBSD [0-9]' | grep -v 'ABI compat' | head -1)
+		-e '^FreeBSD [0-9]' | grep -v 'ABI compat' | head -n1)
 	if [ -z "$kernel_version" ]; then
 		# try even harder with some kernels (such as ARM) that split the release (uname -r) and version (uname -v) in 2 adjacent strings
 		kernel_version=$("${opt_arch_prefix}strings" "$kernel" 2>/dev/null | grep -E -B1 '^#[0-9]+ .+ (19|20)[0-9][0-9]$' | tr "\n" " ")
@@ -4245,7 +4245,7 @@ check_CVE_2017_5715_linux()
 				:
 			else
 				ibrs_can_tell=1
-				ibrs_supported=$("${opt_arch_prefix}strings" "$kernel" | grep -Fw -e ', IBRS_FW' | head -1)
+				ibrs_supported=$("${opt_arch_prefix}strings" "$kernel" | grep -Fw -e ', IBRS_FW' | head -n1)
 				if [ -n "$ibrs_supported" ]; then
 					_debug "ibrs: found ibrs evidence in kernel image ($ibrs_supported)"
 					ibrs_supported="found '$ibrs_supported' in kernel image"
@@ -4266,7 +4266,7 @@ check_CVE_2017_5715_linux()
 				:
 			else
 				ibpb_can_tell=1
-				ibpb_supported=$("${opt_arch_prefix}strings" "$kernel" | grep -Fw -e 'ibpb' -e ', IBPB' | head -1)
+				ibpb_supported=$("${opt_arch_prefix}strings" "$kernel" | grep -Fw -e 'ibpb' -e ', IBPB' | head -n1)
 				if [ -n "$ibpb_supported" ]; then
 					_debug "ibpb: found ibpb evidence in kernel image ($ibpb_supported)"
 					ibpb_supported="found '$ibpb_supported' in kernel image"
@@ -4857,7 +4857,7 @@ check_CVE_2017_5754_linux()
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
 				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
 			elif is_xen_dom0; then
-				pti_xen_pv_domU=$(xl dmesg | grep 'XPTI' | grep 'DomU enabled' | head -1)
+				pti_xen_pv_domU=$(xl dmesg | grep 'XPTI' | grep 'DomU enabled' | head -n1)
 
 				[ -n "$pti_xen_pv_domU" ] && kpti_enabled=1
 			fi
@@ -5475,9 +5475,9 @@ check_CVE_2018_3646_linux()
 					pstatus green YES "unconditional flushes"
 				else
 					if is_xen_dom0; then
-						l1d_xen_hardware=$(xl dmesg | grep 'Hardware features:' | grep 'L1D_FLUSH' | head -1)
-						l1d_xen_hypervisor=$(xl dmesg | grep 'Xen settings:' | grep 'L1D_FLUSH' | head -1)
-						l1d_xen_pv_domU=$(xl dmesg | grep 'PV L1TF shadowing:' | grep 'DomU enabled' | head -1)
+						l1d_xen_hardware=$(xl dmesg | grep 'Hardware features:' | grep 'L1D_FLUSH' | head -n1)
+						l1d_xen_hypervisor=$(xl dmesg | grep 'Xen settings:' | grep 'L1D_FLUSH' | head -n1)
+						l1d_xen_pv_domU=$(xl dmesg | grep 'PV L1TF shadowing:' | grep 'DomU enabled' | head -n1)
 
 						if [ -n "$l1d_xen_hardware" ] && [ -n "$l1d_xen_hypervisor" ] && [ -n "$l1d_xen_pv_domU" ]; then
 							l1d_mode=5
