@@ -1,0 +1,33 @@
+name: autoupdate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '42 9 * * *'
+
+jobs:
+  autoupdate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install prerequisites
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends iucode-tool sqlite3 unzip
+      - name: Update microcode versions
+        run: ./spectre-meltdown-checker.sh --update-builtin-fwdb
+      - name: Check git diff
+        id: diff
+        run: |
+          echo change="$(git diff | awk '/MCEDB/ { if(V) { print V" to "$4; exit } else { V=$4 } }')" >> "$GITHUB_OUTPUT"
+          echo nbdiff="$(git diff | grep ^+ | wc -l)" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Create Pull Request if needed
+        if: steps.diff.outputs.nbdiff != '0'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.SMC_PR_PAT }}
+          branch: autoupdate-fwdb
+          commit-message: "update: fwdb from ${{ steps.diff.outputs.change }}, ${{ steps.diff.outputs.nbdiff }} microcode changes"
+          title: "[Auto] Update fwdb from ${{ steps.diff.outputs.change }}"
+          body: |
+            Automated PR to update fwdb from ${{ steps.diff.outputs.change }}
+            Detected ${{ steps.diff.outputs.nbdiff }} microcode changes
