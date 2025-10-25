@@ -1,6 +1,7 @@
 #! /bin/sh
 # SPDX-License-Identifier: GPL-3.0-only
 # vim: set ts=4 sw=4 sts=4 noet:
+# shellcheck disable=SC2317,SC2329
 #
 # Spectre & Meltdown checker
 #
@@ -32,7 +33,7 @@ exit_cleanup()
 	[ "${insmod_msr:-}"      = 1 ] && rmmod msr 2>/dev/null
 	[ "${kldload_cpuctl:-}"  = 1 ] && kldunload cpuctl 2>/dev/null
 	[ "${kldload_vmm:-}"     = 1 ] && kldunload vmm    2>/dev/null
-	exit $saved_ret
+	exit "$saved_ret"
 }
 
 # if we were git clone'd, adjust VERSION
@@ -1750,7 +1751,7 @@ read_cpuid()
 {
 	if [ "$opt_cpu" != all ]; then
 		# we only have one core to read, do it and return the result
-		read_cpuid_one_core $opt_cpu "$@"
+		read_cpuid_one_core "$opt_cpu" "$@"
 		return $?
 	fi
 
@@ -1763,14 +1764,14 @@ read_cpuid()
 			_first_core_value=$read_cpuid_value
 		else
 			# compare first core with the other ones
-			if [ $_first_core_ret != $ret ] || [ "$_first_core_value" != "$read_cpuid_value" ]; then
+			if [ "$_first_core_ret" != "$ret" ] || [ "$_first_core_value" != "$read_cpuid_value" ]; then
 				read_cpuid_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
 				return $READ_CPUID_RET_ERR
 			fi
 		fi
 	done
 	# if we're here, all cores agree, return the result
-	return $ret
+	return "$ret"
 }
 
 read_cpuid_one_core()
@@ -1847,8 +1848,8 @@ read_cpuid_one_core()
 	_debug "cpuid: leaf$_leaf subleaf$_subleaf on cpu$_core, eax-ebx-ecx-edx: $_cpuid"
 	_mockvarname="SMC_MOCK_CPUID_${_leaf}_${_subleaf}"
 	# shellcheck disable=SC1083
-	if [ -n "$(eval echo \${$_mockvarname:-})" ]; then
-		_cpuid="$(eval echo \$$_mockvarname)"
+	if [ -n "$(eval echo \${"$_mockvarname":-})" ]; then
+		_cpuid="$(eval echo \$"$_mockvarname")"
 		_debug "read_cpuid: MOCKING enabled for leaf $_leaf subleaf $_subleaf, will return $_cpuid"
 		mocked=1
 	else
@@ -1917,7 +1918,7 @@ write_msr()
 {
 	if [ "$opt_cpu" != all ]; then
 		# we only have one core to write to, do it and return the result
-		write_msr_one_core $opt_cpu "$@"
+		write_msr_one_core "$opt_cpu" "$@"
 		return $?
 	fi
 
@@ -1929,7 +1930,7 @@ write_msr()
 			_first_core_ret=$ret
 		else
 			# compare first core with the other ones
-			if [ $_first_core_ret != $ret ]; then
+			if [ "$_first_core_ret" != "$ret" ]; then
 				write_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
 				return $WRITE_MSR_RET_ERR
 			fi
@@ -2058,7 +2059,7 @@ read_msr()
 {
 	if [ "$opt_cpu" != all ]; then
 		# we only have one core to read, do it and return the result
-		read_msr_one_core $opt_cpu "$@"
+		read_msr_one_core "$opt_cpu" "$@"
 		return $?
 	fi
 
@@ -2071,14 +2072,14 @@ read_msr()
 			_first_core_value=$read_msr_value
 		else
 			# compare first core with the other ones
-			if [ $_first_core_ret != $ret ] || [ "$_first_core_value" != "$read_msr_value" ]; then
+			if [ "$_first_core_ret" != "$ret" ] || [ "$_first_core_value" != "$read_msr_value" ]; then
 				read_msr_msg="result is not homogeneous between all cores, at least core 0 and $_core differ!"
 				return $READ_MSR_RET_ERR
 			fi
 		fi
 	done
 	# if we're here, all cores agree, return the result
-	return $ret
+	return "$ret"
 }
 
 read_msr_one_core()
@@ -2512,11 +2513,11 @@ is_skylake_cpu()
 	parse_cpu_details
 	is_intel || return 1
 	[ "$cpu_family" = 6 ] || return 1
-	if [ "$cpu_model" = $INTEL_FAM6_SKYLAKE_L       ] || \
-		[ "$cpu_model" = $INTEL_FAM6_SKYLAKE    ] || \
-		[ "$cpu_model" = $INTEL_FAM6_SKYLAKE_X  ] || \
-		[ "$cpu_model" = $INTEL_FAM6_KABYLAKE_L ] || \
-		[ "$cpu_model" = $INTEL_FAM6_KABYLAKE   ]; then
+	if [ "$cpu_model"  = "$INTEL_FAM6_SKYLAKE_L"  ] || \
+		[ "$cpu_model" = "$INTEL_FAM6_SKYLAKE"    ] || \
+		[ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X"  ] || \
+		[ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] || \
+		[ "$cpu_model" = "$INTEL_FAM6_KABYLAKE"   ]; then
 		return 0
 	fi
 	return 1
@@ -2620,10 +2621,10 @@ is_xen() {
 
 	# XXX do we have a better way that relying on dmesg?
 	dmesg_grep 'Booting paravirtualized kernel on Xen$'; ret=$?
-	if [ $ret -eq 2 ]; then
+	if [ "$ret" -eq 2 ]; then
 		_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
 		return 1
-	elif [ $ret -eq 0 ]; then
+	elif [ "$ret" -eq 0 ]; then
 		return 0
 	else
 		return 1
@@ -2651,7 +2652,7 @@ is_xen_domU()
 
 	# PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
 	dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'; ret=$?
-	if [ $ret -eq 0 ]; then
+	if [ "$ret" -eq 0 ]; then
 		return 1
 	fi
 
@@ -3726,7 +3727,7 @@ check_cpu()
 		cpuid_srbds=1
 		read_msr 0x123; ret=$?
 		if [ $ret = $READ_MSR_RET_OK ]; then
-			if [ $read_msr_value = 0 ]; then
+			if [ "$read_msr_value" = 0 ]; then
 				#SRBDS mitigation control exists and is enabled via microcode
 				srbds_on=1
 			else
@@ -3843,7 +3844,7 @@ check_has_vmm()
 			# for each binary we want to grep, get the pids
 			for _binary in qemu kvm xenstored xenconsoled
 			do
-				for _pid in $(pgrep -x $_binary)
+				for _pid in $(pgrep -x "$_binary")
 				do
 					# resolve the exe symlink, if it doesn't resolve with -m,
 					# which doesn't even need the dest to exist, it means the symlink
@@ -3947,16 +3948,16 @@ check_CVE_2017_5753_linux()
 			pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
 		else
 			perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
-			if [ $ret -gt 0 ]; then
+			if [ "$ret" -gt 0 ]; then
 				pstatus green YES "$ret occurrence(s) found of x86 64 bits array_index_mask_nospec()"
 				v1_mask_nospec="x86 64 bits array_index_mask_nospec"
 			else
 				perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$kernel"; ret=$?
-				if [ $ret -gt 0 ]; then
+				if [ "$ret" -gt 0 ]; then
 					pstatus green YES "$ret occurrence(s) found of x86 32 bits array_index_mask_nospec()"
 					v1_mask_nospec="x86 32 bits array_index_mask_nospec"
 				else
-					ret=$("${opt_arch_prefix}objdump" $objdump_options "$kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
+					ret=$("${opt_arch_prefix}objdump" "$objdump_options" "$kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
 					if [ "$ret" -gt 0 ]; then
 						pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
 						v1_mask_nospec="arm 32 bits array_index_mask_nospec"
@@ -4005,7 +4006,7 @@ check_CVE_2017_5753_linux()
 		elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
 			pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
 		else
-			"${opt_arch_prefix}objdump" $objdump_options "$kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'; ret=$?
+			"${opt_arch_prefix}objdump" "$objdump_options" "$kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'; ret=$?
 			if [ "$ret" -eq 9 ]; then
 				pstatus green YES "mask_nospec64 macro is present and used"
 				v1_mask_nospec="arm64 mask_nospec64"
@@ -4058,7 +4059,7 @@ check_CVE_2017_5753_linux()
 					# so let's push the threshold to 70.
 					# v0.33+: now only count lfence opcodes after a jump, way less error-prone
 					# non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
-					nb_lfence=$("${opt_arch_prefix}objdump" $objdump_options "$kernel" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
+					nb_lfence=$("${opt_arch_prefix}objdump" "$objdump_options" "$kernel" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
 					if [ "$nb_lfence" -lt 30 ]; then
 						pstatus yellow NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
 					else
@@ -4078,31 +4079,31 @@ check_CVE_2017_5753_linux()
 	# report status
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ -n "$v1_mask_nospec" ]; then
-			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability ($v1_mask_nospec)"
+			pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability ($v1_mask_nospec)"
 		elif [ "$redhat_canonical_spectre" = 1 ] || [ "$redhat_canonical_spectre" = 2 ]; then
-			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
+			pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
 		elif [ "$v1_lfence" = 1 ]; then
-			pvulnstatus $cve OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
+			pvulnstatus "$cve" OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
 		elif [ -n "$kernel_err" ]; then
-			pvulnstatus $cve UNK "Couldn't find kernel image or tools missing to execute the checks"
+			pvulnstatus "$cve" UNK "Couldn't find kernel image or tools missing to execute the checks"
 			explain "Re-run this script with root privileges, after installing the missing tools indicated above"
 		else
-			pvulnstatus $cve VULN "Kernel source needs to be patched to mitigate the vulnerability"
+			pvulnstatus "$cve" VULN "Kernel source needs to be patched to mitigate the vulnerability"
 			explain "Your kernel is too old to have the mitigation for Variant 1, you should upgrade to a newer kernel. If you're using a Linux distro and didn't compile the kernel yourself, you should upgrade your distro to get a newer kernel."
 		fi
 	else
 		if [ "$msg" = "Vulnerable" ] && [ -n "$v1_mask_nospec" ]; then
-			pvulnstatus $cve OK "Kernel source has been patched to mitigate the vulnerability (silent backport of array_index_mask_nospec)"
+			pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability (silent backport of array_index_mask_nospec)"
 		else
 			if [ "$msg" = "Vulnerable" ]; then
 				msg="Kernel source needs to be patched to mitigate the vulnerability"
 				_explain="Your kernel is too old to have the mitigation for Variant 1, you should upgrade to a newer kernel. If you're using a Linux distro and didn't compile the kernel yourself, you should upgrade your distro to get a newer kernel."
 			fi
-			pvulnstatus $cve "$status" "$msg"
+			pvulnstatus "$cve" "$status" "$msg"
 			[ -n "${_explain:-}" ] && explain "$_explain"
 			unset _explain
 		fi
@@ -4113,9 +4114,9 @@ check_CVE_2017_5753_bsd()
 {
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
-		pvulnstatus $cve VULN "no mitigation for BSD yet"
+		pvulnstatus "$cve" VULN "no mitigation for BSD yet"
 	fi
 }
 
@@ -4530,12 +4531,12 @@ check_CVE_2017_5715_linux()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$ibpb_enabled" ] && [ "$ibpb_enabled" -ge 1 ] && ( ! is_vulnerable_to_empty_rsb || [ "$rsb_filling" = 1 ] ); then
-			pvulnstatus $cve OK "Full retpoline + IBPB are mitigating the vulnerability"
+			pvulnstatus "$cve" OK "Full retpoline + IBPB are mitigating the vulnerability"
 		elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && ( ! is_vulnerable_to_empty_rsb || [ "$rsb_filling" = 1 ] ); then
-			pvulnstatus $cve OK "Full retpoline is mitigating the vulnerability"
+			pvulnstatus "$cve" OK "Full retpoline is mitigating the vulnerability"
 			if [ -n "$cpuid_ibpb" ]; then
 				_warn "You should enable IBPB to complete retpoline as a Variant 2 mitigation"
 			else
@@ -4543,24 +4544,24 @@ check_CVE_2017_5715_linux()
 			fi
 		elif [ -n "$ibrs_enabled" ] && [ -n "$ibpb_enabled" ] && [ "$ibrs_enabled" -ge 1 ] && [ "$ibpb_enabled" -ge 1 ]; then
 			if [ "$ibrs_enabled" = 4 ]; then
-				pvulnstatus $cve OK "Enhanced IBRS + IBPB are mitigating the vulnerability"
+				pvulnstatus "$cve" OK "Enhanced IBRS + IBPB are mitigating the vulnerability"
 			else
-				pvulnstatus $cve OK "IBRS + IBPB are mitigating the vulnerability"
+				pvulnstatus "$cve" OK "IBRS + IBPB are mitigating the vulnerability"
 			fi
 		elif [ "$ibpb_enabled" = 2 ] && ! is_cpu_smt_enabled; then
-			pvulnstatus $cve OK "Full IBPB is mitigating the vulnerability"
+			pvulnstatus "$cve" OK "Full IBPB is mitigating the vulnerability"
 		elif [ -n "$bp_harden" ]; then
-			pvulnstatus $cve OK "Branch predictor hardening mitigates the vulnerability"
+			pvulnstatus "$cve" OK "Branch predictor hardening mitigates the vulnerability"
 		elif [ -z "$bp_harden" ] && [ "$cpu_vendor" = ARM ]; then
-			pvulnstatus $cve VULN "Branch predictor hardening is needed to mitigate the vulnerability"
+			pvulnstatus "$cve" VULN "Branch predictor hardening is needed to mitigate the vulnerability"
 			explain "Your kernel has not been compiled with the CONFIG_UNMAP_KERNEL_AT_EL0 option, recompile it with this option enabled."
 		elif [ "$opt_live" != 1 ]; then
 			if [ "$retpoline" = 1 ] && [ -n "$ibpb_supported" ]; then
-				pvulnstatus $cve OK "offline mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
+				pvulnstatus "$cve" OK "offline mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
 			elif [ -n "$ibrs_supported" ] && [ -n "$ibpb_supported" ]; then
-				pvulnstatus $cve OK "offline mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
+				pvulnstatus "$cve" OK "offline mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
 			elif [ "$ibrs_can_tell" != 1 ]; then
-				pvulnstatus $cve UNK "offline mode: not enough information"
+				pvulnstatus "$cve" UNK "offline mode: not enough information"
 				explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
 			fi
 		fi
@@ -4569,21 +4570,21 @@ check_CVE_2017_5715_linux()
 		if [ "$pvulnstatus_last_cve" != "$cve" ]; then
 			# explain what's needed for this CPU
 			if is_vulnerable_to_empty_rsb; then
-				pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB+RSB filling, is needed to mitigate the vulnerability"
+				pvulnstatus "$cve" VULN "IBRS+IBPB or retpoline+IBPB+RSB filling, is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. You also need a recent-enough kernel that supports RSB filling if you plan to use retpoline. For Skylake+ CPUs, the IBRS + IBPB approach is generally preferred as it guarantees complete protection, and the performance impact is not as high as with older CPUs in comparison with retpoline. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
 			elif is_zen_cpu || is_moksha_cpu; then
-				pvulnstatus $cve VULN "retpoline+IBPB is needed to mitigate the vulnerability"
+				pvulnstatus "$cve" VULN "retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
 			elif is_intel || is_amd || is_hygon; then
-				pvulnstatus $cve VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
+				pvulnstatus "$cve" VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
 				explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. The retpoline + IBPB approach is generally preferred as the performance impact is lower. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
 			else
 				# in that case, we might want to trust sysfs if it's there
 				if [ -n "$msg" ]; then
 					[ "$msg" = Vulnerable ] && msg="no known mitigation exists for your CPU vendor ($cpu_vendor)"
-					pvulnstatus $cve $status "$msg"
+					pvulnstatus "$cve" "$status" "$msg"
 				else
-					pvulnstatus $cve VULN "no known mitigation exists for your CPU vendor ($cpu_vendor)"
+					pvulnstatus "$cve" VULN "no known mitigation exists for your CPU vendor ($cpu_vendor)"
 				fi
 			fi
 		fi
@@ -4709,19 +4710,19 @@ check_CVE_2017_5715_bsd()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$retpoline" = 1 ]; then
-		pvulnstatus $cve OK "Retpoline mitigates the vulnerability"
+		pvulnstatus "$cve" OK "Retpoline mitigates the vulnerability"
 	elif [ "$ibrs_active" = 1 ]; then
-		pvulnstatus $cve OK "IBRS mitigates the vulnerability"
+		pvulnstatus "$cve" OK "IBRS mitigates the vulnerability"
 	elif [ "$ibrs_disabled" = 0 ]; then
-		pvulnstatus $cve VULN "IBRS is supported by your kernel but your CPU microcode lacks support"
+		pvulnstatus "$cve" VULN "IBRS is supported by your kernel but your CPU microcode lacks support"
 		explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). To do a microcode update, you can search the ports for the \`cpupdate\` tool. Microcode updates done this way are not reboot-proof, so be sure to do it every time the system boots up."
 	elif [ "$ibrs_disabled" = 1 ]; then
-		pvulnstatus $cve VULN "IBRS is supported but administratively disabled on your system"
+		pvulnstatus "$cve" VULN "IBRS is supported but administratively disabled on your system"
 		explain "To enable IBRS, use \`sysctl hw.ibrs_disable=0\`"
 	else
-		pvulnstatus $cve VULN "IBRS is needed to mitigate the vulnerability but your kernel is missing support"
+		pvulnstatus "$cve" VULN "IBRS is needed to mitigate the vulnerability but your kernel is missing support"
 		explain "You need to either upgrade your kernel or recompile yourself a more recent version having IBRS support"
 	fi
 }
@@ -4741,8 +4742,8 @@ pti_performance_check()
 	if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw pcid; then
 		cpu_pcid=1
 	else
-		read_cpuid 0x1 0x0 $ECX 17 1 1; ret=$?
-		if [ $ret = $READ_CPUID_RET_OK ]; then
+		read_cpuid 0x1 0x0 "$ECX" 17 1 1; ret=$?
+		if [ "$ret" = "$READ_CPUID_RET_OK" ]; then
 			cpu_pcid=1
 		fi
 	fi
@@ -4750,8 +4751,8 @@ pti_performance_check()
 	if [ -e "$procfs/cpuinfo" ] && grep ^flags "$procfs/cpuinfo" | grep -qw invpcid; then
 		cpu_invpcid=1
 	else
-		read_cpuid 0x7 0x0 $EBX 10 1 1; ret=$?
-		if [ $ret = $READ_CPUID_RET_OK ]; then
+		read_cpuid 0x7 0x0 "$EBX" 10 1 1; ret=$?
+		if [ "$ret" = "$READ_CPUID_RET_OK" ]; then
 			cpu_invpcid=1
 		fi
 	fi
@@ -4863,10 +4864,10 @@ check_CVE_2017_5754_linux()
 			fi
 			if [ -z "$kpti_enabled" ]; then
 				dmesg_grep "$dmesg_grep"; ret=$?
-				if [ $ret -eq 0 ]; then
+				if [ "$ret" -eq 0 ]; then
 					_debug "kpti_enabled: found hint in dmesg: $dmesg_grepped"
 					kpti_enabled=1
-				elif [ $ret -eq 2 ]; then
+				elif [ "$ret" -eq 2 ]; then
 					_debug "kpti_enabled: dmesg truncated"
 					kpti_enabled=-1
 				fi
@@ -4914,21 +4915,21 @@ check_CVE_2017_5754_linux()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$opt_live" = 1 ]; then
 			if [ "$kpti_enabled" = 1 ]; then
-				pvulnstatus $cve OK "PTI mitigates the vulnerability"
+				pvulnstatus "$cve" OK "PTI mitigates the vulnerability"
 			elif [ "$xen_pv_domo" = 1 ]; then
-				pvulnstatus $cve OK "Xen Dom0s are safe and do not require PTI"
+				pvulnstatus "$cve" OK "Xen Dom0s are safe and do not require PTI"
 			elif [ "$xen_pv_domu" = 1 ]; then
-				pvulnstatus $cve VULN "Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM, PVH mode, or the Xen hypervisor must have the Xen's own PTI patch"
+				pvulnstatus "$cve" VULN "Xen PV DomUs are vulnerable and need to be run in HVM, PVHVM, PVH mode, or the Xen hypervisor must have the Xen's own PTI patch"
 				explain "Go to https://blog.xenproject.org/2018/01/22/xen-project-spectre-meltdown-faq-jan-22-update/ for more information"
 			elif [ "$kpti_enabled" = -1 ]; then
-				pvulnstatus $cve UNK "couldn't find any clue of PTI activation due to a truncated dmesg, please reboot and relaunch this script"
+				pvulnstatus "$cve" UNK "couldn't find any clue of PTI activation due to a truncated dmesg, please reboot and relaunch this script"
 			else
-				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+				pvulnstatus "$cve" VULN "PTI is needed to mitigate the vulnerability"
 				if [ -n "$kpti_support" ]; then
 					if [ -e "/sys/kernel/debug/x86/pti_enabled" ]; then
 						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > /sys/kernel/debug/x86/pti_enabled\`"
@@ -4943,12 +4944,12 @@ check_CVE_2017_5754_linux()
 			fi
 		else
 			if [ -n "$kpti_support" ]; then
-				pvulnstatus $cve OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
+				pvulnstatus "$cve" OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
 			elif [ "$kpti_can_tell" = 1 ]; then
-				pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+				pvulnstatus "$cve" VULN "PTI is needed to mitigate the vulnerability"
 				explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 			else
-				pvulnstatus $cve UNK "offline mode: not enough information"
+				pvulnstatus "$cve" UNK "offline mode: not enough information"
 				explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
 			fi
 		fi
@@ -4964,7 +4965,7 @@ check_CVE_2017_5754_linux()
 			msg="PTI is needed to mitigate the vulnerability"
 			_explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 		fi
-		pvulnstatus $cve "$status" "$msg"
+		pvulnstatus "$cve" "$status" "$msg"
 		[ -z "${_explain:-}" ] && [ "$msg" = "Vulnerable" ] && _explain="If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
 		[ -n "${_explain:-}" ] && explain "$_explain"
 		unset _explain
@@ -5001,13 +5002,13 @@ check_CVE_2017_5754_bsd()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$kpti_enabled" = 1 ]; then
-		pvulnstatus $cve OK "PTI mitigates the vulnerability"
+		pvulnstatus "$cve" OK "PTI mitigates the vulnerability"
 	elif [ -n "$kpti_enabled" ]; then
-		pvulnstatus $cve VULN "PTI is supported but disabled on your system"
+		pvulnstatus "$cve" VULN "PTI is supported but disabled on your system"
 	else
-		pvulnstatus $cve VULN "PTI is needed to mitigate the vulnerability"
+		pvulnstatus "$cve" VULN "PTI is needed to mitigate the vulnerability"
 	fi
 }
 
@@ -5035,11 +5036,11 @@ check_CVE_2018_3640()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -n "$cpuid_ssbd" ]; then
-		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
+		pvulnstatus "$cve" OK "your CPU microcode mitigates the vulnerability"
 	else
-		pvulnstatus $cve VULN "an up-to-date CPU microcode is needed to mitigate this vulnerability"
+		pvulnstatus "$cve" VULN "an up-to-date CPU microcode is needed to mitigate this vulnerability"
 		explain "The microcode of your CPU needs to be upgraded to mitigate this vulnerability. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). The microcode update is enough, there is no additional OS, kernel or software change needed."
 	fi
 }
@@ -5155,35 +5156,35 @@ check_CVE_2018_3639_linux()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ] || [ "$msg" = "Vulnerable" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ -n "$cpuid_ssbd" ]; then
 			if [ -n "$kernel_ssb" ]; then
 				if [ "$opt_live" = 1 ]; then
 					if [ "$kernel_ssbd_enabled" -gt 0 ]; then
-						pvulnstatus $cve OK "your CPU and kernel both support SSBD and mitigation is enabled"
+						pvulnstatus "$cve" OK "your CPU and kernel both support SSBD and mitigation is enabled"
 					else
-						pvulnstatus $cve VULN "your CPU and kernel both support SSBD but the mitigation is not active"
+						pvulnstatus "$cve" VULN "your CPU and kernel both support SSBD but the mitigation is not active"
 					fi
 				else
-					pvulnstatus $cve OK "your system provides the necessary tools for software mitigation"
+					pvulnstatus "$cve" OK "your system provides the necessary tools for software mitigation"
 				fi
 			else
-				pvulnstatus $cve VULN "your kernel needs to be updated"
+				pvulnstatus "$cve" VULN "your kernel needs to be updated"
 				explain "You have a recent-enough CPU microcode but your kernel is too old to use the new features exported by your CPU's microcode. If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel from recent-enough sources."
 			fi
 		else
 			if [ -n "$kernel_ssb" ]; then
-				pvulnstatus $cve VULN "Your CPU doesn't support SSBD"
+				pvulnstatus "$cve" VULN "Your CPU doesn't support SSBD"
 				explain "Your kernel is recent enough to use the CPU microcode features for mitigation, but your CPU microcode doesn't actually provide the necessary features for the kernel to use. The microcode of your CPU hence needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
 			else
-				pvulnstatus $cve VULN "Neither your CPU nor your kernel support SSBD"
+				pvulnstatus "$cve" VULN "Neither your CPU nor your kernel support SSBD"
 				explain "Both your CPU microcode and your kernel are lacking support for mitigation. If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel from recent-enough sources. The microcode of your CPU also needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
 			fi
 		fi
 	else
-		pvulnstatus $cve "$status" "$msg"
+		pvulnstatus "$cve" "$status" "$msg"
 	fi
 }
 
@@ -5217,22 +5218,22 @@ check_CVE_2018_3639_bsd()
 	esac
 
 	if ! is_cpu_affected "$cve"; then
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$ssb_active" = 1 ]; then
-				pvulnstatus $cve OK "SSBD mitigates the vulnerability"
+				pvulnstatus "$cve" OK "SSBD mitigates the vulnerability"
 		elif [ -n "$cpuid_ssbd" ]; then
 			if [ "$kernel_ssb" = 1 ]; then
-				pvulnstatus $cve VULN "you need to enable SSBD through sysctl to mitigate the vulnerability"
+				pvulnstatus "$cve" VULN "you need to enable SSBD through sysctl to mitigate the vulnerability"
 				explain "To enable SSBD right now, you can run \`sysctl hw.spec_store_bypass_disable=2'. To make this change persistent across reboots, you can add 'sysctl hw.spec_store_bypass_disable=2' to /etc/sysctl.conf."
 			else
-				pvulnstatus $cve VULN "your kernel needs to be updated"
+				pvulnstatus "$cve" VULN "your kernel needs to be updated"
 			fi
 		else
 			if [ "$kernel_ssb" = 1 ]; then
-				pvulnstatus $cve VULN "Your CPU doesn't support SSBD"
+				pvulnstatus "$cve" VULN "Your CPU doesn't support SSBD"
 			else
-				pvulnstatus $cve VULN "Neither your CPU nor your kernel support SSBD"
+				pvulnstatus "$cve" VULN "Neither your CPU nor your kernel support SSBD"
 			fi
 		fi
 	fi
@@ -5266,11 +5267,11 @@ check_CVE_2018_3615()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$cpu_flush_cmd" = 1 ] || { [ "$msr_locked_down" = 1 ] && [ "$cpuid_l1df" = 1 ]; } ; then
-		pvulnstatus $cve OK "your CPU microcode mitigates the vulnerability"
+		pvulnstatus "$cve" OK "your CPU microcode mitigates the vulnerability"
 	else
-		pvulnstatus $cve VULN "your CPU supports SGX and the microcode is not up to date"
+		pvulnstatus "$cve" VULN "your CPU supports SGX and the microcode is not up to date"
 	fi
 }
 
@@ -5341,20 +5342,20 @@ check_CVE_2018_3620_linux()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$pteinv_supported" = 1 ]; then
 			if [ "$pteinv_active" = 1 ] || [ "$opt_live" != 1 ]; then
-				pvulnstatus $cve OK "PTE inversion mitigates the vulnerability"
+				pvulnstatus "$cve" OK "PTE inversion mitigates the vulnerability"
 			else
-				pvulnstatus $cve VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
+				pvulnstatus "$cve" VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
 			fi
 		else
-			pvulnstatus $cve VULN "Your kernel doesn't support PTE inversion, update it"
+			pvulnstatus "$cve" VULN "Your kernel doesn't support PTE inversion, update it"
 		fi
 	else
-		pvulnstatus $cve "$status" "$msg"
+		pvulnstatus "$cve" "$status" "$msg"
 	fi
 }
 
@@ -5380,12 +5381,12 @@ check_CVE_2018_3620_bsd()
 	fi
 
 	if ! is_cpu_affected "$cve"; then
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$bsd_zero_reserved" = 1 ]; then
-			pvulnstatus $cve OK "kernel mitigates the vulnerability"
+			pvulnstatus "$cve" OK "kernel mitigates the vulnerability"
 		else
-			pvulnstatus $cve VULN "your kernel needs to be updated"
+			pvulnstatus "$cve" VULN "your kernel needs to be updated"
 		fi
 	fi
 }
@@ -5536,38 +5537,38 @@ check_CVE_2018_3646_linux()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ "$fullmsg" = "Not affected" ]; then
 		# just in case a very recent kernel knows better than we do
-		pvulnstatus $cve OK "your kernel reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your kernel reported your CPU model as not affected"
 	elif [ "$has_vmm" = 0 ]; then
-		pvulnstatus $cve OK "this system is not running a hypervisor"
+		pvulnstatus "$cve" OK "this system is not running a hypervisor"
 	else
 		if [ "$ept_disabled" = 1 ]; then
-			pvulnstatus $cve OK "EPT is disabled which mitigates the vulnerability"
+			pvulnstatus "$cve" OK "EPT is disabled which mitigates the vulnerability"
 		elif [ "$opt_paranoid" = 0 ]; then
 			if [ "$l1d_mode" -ge 1 ]; then
-				pvulnstatus $cve OK "L1D flushing is enabled and mitigates the vulnerability"
+				pvulnstatus "$cve" OK "L1D flushing is enabled and mitigates the vulnerability"
 			else
-				pvulnstatus $cve VULN "disable EPT or enable L1D flushing to mitigate the vulnerability"
+				pvulnstatus "$cve" VULN "disable EPT or enable L1D flushing to mitigate the vulnerability"
 			fi
 		else
 			if [ "$l1d_mode" -ge 2 ]; then
 				if [ "$smt_enabled" = 1 ]; then
-					pvulnstatus $cve OK "L1D unconditional flushing and Hyper-Threading disabled are mitigating the vulnerability"
+					pvulnstatus "$cve" OK "L1D unconditional flushing and Hyper-Threading disabled are mitigating the vulnerability"
 				else
-					pvulnstatus $cve VULN "Hyper-Threading must be disabled to fully mitigate the vulnerability"
+					pvulnstatus "$cve" VULN "Hyper-Threading must be disabled to fully mitigate the vulnerability"
 				fi
 			else
 				if [ "$smt_enabled" = 1 ]; then
-					pvulnstatus $cve VULN "L1D unconditional flushing should be enabled to fully mitigate the vulnerability"
+					pvulnstatus "$cve" VULN "L1D unconditional flushing should be enabled to fully mitigate the vulnerability"
 				else
-					pvulnstatus $cve VULN "enable L1D unconditional flushing and disable Hyper-Threading to fully mitigate the vulnerability"
+					pvulnstatus "$cve" VULN "enable L1D unconditional flushing and disable Hyper-Threading to fully mitigate the vulnerability"
 				fi
 			fi
 		fi
 
-		if [ $l1d_mode -gt 3 ]; then
+		if [ "$l1d_mode" -gt 3 ]; then
 			_warn
 			_warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
 			_warn "with a kernel which contains CVE-2018-3646 mitigations."
@@ -5598,14 +5599,14 @@ check_CVE_2018_3646_bsd()
 	esac
 
 	if ! is_cpu_affected "$cve"; then
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		if [ "$kernel_l1d_enabled" = 1 ]; then
-			pvulnstatus $cve OK "L1D flushing mitigates the vulnerability"
+			pvulnstatus "$cve" OK "L1D flushing mitigates the vulnerability"
 		elif [ "$kernel_l1d_supported" = 1 ]; then
-			pvulnstatus $cve VULN "L1D flushing is supported by your kernel but is disabled"
+			pvulnstatus "$cve" VULN "L1D flushing is supported by your kernel but is disabled"
 		else
-			pvulnstatus $cve VULN "your kernel needs to be updated"
+			pvulnstatus "$cve" VULN "your kernel needs to be updated"
 		fi
 	fi
 }
@@ -5617,7 +5618,7 @@ check_CVE_2018_3646_bsd()
 check_CVE_2018_12126()
 {
 	cve='CVE-2018-12126'
-	check_mds $cve
+	check_mds "$cve"
 }
 
 ###################
@@ -5627,7 +5628,7 @@ check_CVE_2018_12126()
 check_CVE_2018_12130()
 {
 	cve='CVE-2018-12130'
-	check_mds $cve
+	check_mds "$cve"
 }
 
 ###################
@@ -5637,7 +5638,7 @@ check_CVE_2018_12130()
 check_CVE_2018_12127()
 {
 	cve='CVE-2018-12127'
-	check_mds $cve
+	check_mds "$cve"
 }
 
 ###################
@@ -5647,7 +5648,7 @@ check_CVE_2018_12127()
 check_CVE_2019_11091()
 {
 	cve='CVE-2019-11091'
-	check_mds $cve
+	check_mds "$cve"
 }
 
 # Microarchitectural Data Sampling
@@ -5676,7 +5677,7 @@ check_mds_bsd()
 			kernel_md_clear=0
 		fi
 	else
-		if grep -Fq hw.mds_disable $opt_kernel; then
+		if grep -Fq hw.mds_disable "$opt_kernel"; then
 			pstatus green YES
 			kernel_md_clear=1
 		else
@@ -5949,26 +5950,26 @@ check_CVE_2019_11135_linux()
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$opt_live" = 1 ]; then
 			# if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
-			pvulnstatus $cve VULN "Your kernel doesn't support TAA mitigation, update it"
+			pvulnstatus "$cve" VULN "Your kernel doesn't support TAA mitigation, update it"
 		else
 			if [ -n "$kernel_taa" ]; then
-				pvulnstatus $cve OK "Your kernel supports TAA mitigation"
+				pvulnstatus "$cve" OK "Your kernel supports TAA mitigation"
 			else
-				pvulnstatus $cve VULN "Your kernel doesn't support TAA mitigation, update it"
+				pvulnstatus "$cve" VULN "Your kernel doesn't support TAA mitigation, update it"
 			fi
 		fi
 	else
 		if [ "$opt_paranoid" = 1 ]; then
 			# in paranoid mode, TSX or SMT enabled are not OK, even if TAA is mitigated
 			if ! echo "$fullmsg" | grep -qF 'TSX disabled'; then
-				pvulnstatus $cve VULN "TSX must be disabled for full mitigation"
+				pvulnstatus "$cve" VULN "TSX must be disabled for full mitigation"
 			elif echo "$fullmsg" | grep -qF 'SMT vulnerable'; then
-				pvulnstatus $cve VULN "SMT (HyperThreading) must be disabled for full mitigation"
+				pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
 			else
-				pvulnstatus $cve "$status" "$msg"
+				pvulnstatus "$cve" "$status" "$msg"
 			fi
 		else
-			pvulnstatus $cve "$status" "$msg"
+			pvulnstatus "$cve" "$status" "$msg"
 		fi
 	fi
 }
@@ -6056,16 +6057,16 @@ check_CVE_2018_12207_linux()
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$opt_live" = 1 ]; then
 			# if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
-			pvulnstatus $cve VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
+			pvulnstatus "$cve" VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
 		else
 			if [ -n "$kernel_itlbmh" ]; then
-				pvulnstatus $cve OK "Your kernel supports iTLB Multihit mitigation"
+				pvulnstatus "$cve" OK "Your kernel supports iTLB Multihit mitigation"
 			else
-				pvulnstatus $cve VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
+				pvulnstatus "$cve" VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
 			fi
 		fi
 	else
-		pvulnstatus $cve "$status" "$msg"
+		pvulnstatus "$cve" "$status" "$msg"
 	fi
 }
 
@@ -6088,14 +6089,14 @@ check_CVE_2018_12207_bsd()
 
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	elif [ -z "$kernel_2m_x_ept" ]; then
-		pvulnstatus $cve VULN "Your kernel doesn't support mitigating this CVE, you should update it"
+		pvulnstatus "$cve" VULN "Your kernel doesn't support mitigating this CVE, you should update it"
 	elif [ "$kernel_2m_x_ept" != 0 ]; then
-		pvulnstatus $cve VULN "Your kernel supports mitigating this CVE, but the mitigation is disabled"
+		pvulnstatus "$cve" VULN "Your kernel supports mitigating this CVE, but the mitigation is disabled"
 		explain "To enable the mitigation, use \`sysctl vm.pmap.allow_2m_x_ept=0\`"
 	else
-		pvulnstatus $cve OK "Your kernel has support for mitigation and the mitigation is enabled"
+		pvulnstatus "$cve" OK "Your kernel has support for mitigation and the mitigation is enabled"
 	fi
 }
 
@@ -6215,7 +6216,7 @@ check_CVE_2020_0543_bsd()
 {
 	if ! is_cpu_affected "$cve"; then
 		# override status & msg in case CPU is not vulnerable after all
-		pvulnstatus $cve OK "your CPU vendor reported your CPU model as not affected"
+		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 	else
 		pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
 	fi
@@ -6265,7 +6266,7 @@ check_CVE_2023_20593_linux()
 			# as the behavior could be unknown on others
 			if is_amd && [ "$cpu_family" -ge $((0x17)) ]; then
 				read_msr 0xc0011029; ret=$?
-				if [ $ret = $READ_MSR_RET_OK ]; then
+				if [ "$ret" = "$READ_MSR_RET_OK" ]; then
 					if [ $(( read_msr_value >> 9 & 1 )) -eq 1 ]; then
 						pstatus green YES "FP_BACKUP_FIX bit set in DE_CFG"
 						fp_backup_fix=1
@@ -6273,7 +6274,7 @@ check_CVE_2023_20593_linux()
 						pstatus yellow NO "FP_BACKUP_FIX is cleared in DE_CFG"
 						fp_backup_fix=0
 					fi
-				elif [ $ret = $READ_MSR_RET_KO ]; then
+				elif [ "$ret" = "$READ_MSR_RET_KO" ]; then
 					pstatus yellow UNKNOWN "Couldn't read the DE_CFG MSR"
 				else
 					pstatus yellow UNKNOWN "$read_msr_msg"
@@ -6288,10 +6289,10 @@ check_CVE_2023_20593_linux()
 
 		_info_nol "* Zenbleed mitigation is supported by CPU microcode: "
 		has_zenbleed_fixed_firmware; ret=$?
-		if [ $ret -eq 0 ]; then
+		if [ "$ret" -eq 0 ]; then
 			pstatus green YES
 			cpu_ucode_zenbleed=1
-		elif [ $ret -eq 1 ]; then
+		elif [ "$ret" -eq 1 ]; then
 			pstatus yellow NO
 			cpu_ucode_zenbleed=2
 		else
@@ -6314,25 +6315,25 @@ check_CVE_2023_20593_linux()
 		if [ "$opt_live" = 1 ]; then
 			if [ "$fp_backup_fix" = 1 ] && [ "$cpu_ucode_zenbleed" = 1 ]; then
 				# this should never happen, but if it does, it's interesting to know
-				pvulnstatus $cve OK "Both your CPU microcode and kernel are mitigating Zenbleed"
+				pvulnstatus "$cve" OK "Both your CPU microcode and kernel are mitigating Zenbleed"
 			elif [ "$cpu_ucode_zenbleed" = 1 ]; then
-				pvulnstatus $cve OK "Your CPU microcode mitigates Zenbleed"
+				pvulnstatus "$cve" OK "Your CPU microcode mitigates Zenbleed"
 			elif [ "$fp_backup_fix" = 1 ]; then
-				pvulnstatus $cve OK "Your kernel mitigates Zenbleed"
+				pvulnstatus "$cve" OK "Your kernel mitigates Zenbleed"
 			else
 				zenbleed_print_vuln=1
 			fi
 		else
 			if [ "$cpu_ucode_zenbleed" = 1 ]; then
-				pvulnstatus $cve OK "Your CPU microcode mitigates Zenbleed"
+				pvulnstatus "$cve" OK "Your CPU microcode mitigates Zenbleed"
 			elif [ -n "$kernel_zenbleed" ]; then
-				pvulnstatus $cve OK "Your kernel mitigates Zenbleed"
+				pvulnstatus "$cve" OK "Your kernel mitigates Zenbleed"
 			else
 				zenbleed_print_vuln=1
 			fi
 		fi
 		if [ "$zenbleed_print_vuln" = 1 ]; then
-			pvulnstatus $cve VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+			pvulnstatus "$cve" VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
 			explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
 "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
 "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
@@ -6342,7 +6343,7 @@ check_CVE_2023_20593_linux()
 		fi
 		unset zenbleed_print_vuln
 	else
-		pvulnstatus $cve "$status" "$msg"
+		pvulnstatus "$cve" "$status" "$msg"
 	fi
 }
 
@@ -6396,20 +6397,20 @@ check_CVE_2022_40982_linux() {
 
 			# Check dmesg message to see whether AVX has been disabled
 			dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'; dmesgret=$?
-			if [ $dmesgret -eq 0 ]; then
+			if [ "$dmesgret" -eq 0 ]; then
 				kernel_avx_disabled="AVX disabled by the kernel (dmesg)"
 				pstatus green YES "$kernel_avx_disabled"
 			elif [ "$has_avx2" = 0 ]; then
 				# Find out by ourselves
 				# cpuinfo says we don't have AVX2, query
 				# the CPU directly about AVX2 support
-				read_cpuid 0x7 0x0 $EBX 5 1 1; ret=$?
-				if [ $ret -eq $READ_CPUID_RET_OK ]; then
+				read_cpuid 0x7 0x0 "$EBX" 5 1 1; ret=$?
+				if [ "$ret" -eq "$READ_CPUID_RET_OK" ]; then
 					kernel_avx_disabled="AVX disabled by the kernel (cpuid)"
 					pstatus green YES "$kernel_avx_disabled"
-				elif [ $ret -eq $READ_CPUID_RET_KO ]; then
+				elif [ "$ret" -eq "$READ_CPUID_RET_KO" ]; then
 					pstatus yellow NO "CPU doesn't support AVX"
-				elif [ $dmesgret -eq 2 ]; then
+				elif [ "$dmesgret" -eq 2 ]; then
 					pstatus yellow UNKNOWN "dmesg truncated, can't tell whether mitigation is active, please reboot and relaunch this script"
 				else
 					pstatus yellow UNKNOWN "No sign of mitigation in dmesg and couldn't read cpuid info"
@@ -6431,18 +6432,18 @@ check_CVE_2022_40982_linux() {
 	elif [ -z "$msg" ]; then
 		# if msg is empty, sysfs check didn't fill it, rely on our own test
 		if [ "$capabilities_gds_ctrl" = 1 ] && [ "$mcu_opt_ctrl_gds_mitg_dis" = 0 ]; then
-			pvulnstatus $cve OK "Your microcode is up to date and mitigation is enabled"
+			pvulnstatus "$cve" OK "Your microcode is up to date and mitigation is enabled"
 		elif [ "$capabilities_gds_ctrl" = 1 ] && [ "$mcu_opt_ctrl_gds_mitg_dis" = 1 ]; then
-			pvulnstatus $cve VULN "Your microcode is up to date but mitigation is disabled"
+			pvulnstatus "$cve" VULN "Your microcode is up to date but mitigation is disabled"
 		elif [ -z "$kernel_gds" ]; then
-			pvulnstatus $cve VULN "Your microcode doesn't mitigate the vulnerability, and your kernel doesn't support mitigation"
+			pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, and your kernel doesn't support mitigation"
 		elif [ -z "$kernel_avx_disabled" ]; then
-			pvulnstatus $cve VULN "Your microcode doesn't mitigate the vulnerability, your kernel support the mitigation but the script did not detect AVX as disabled by the kernel"
+			pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, your kernel support the mitigation but the script did not detect AVX as disabled by the kernel"
 		else
-			pvulnstatus $cve OK "Your microcode doesn't mitigate the vulnerability, but your kernel has disabled AVX support"
+			pvulnstatus "$cve" OK "Your microcode doesn't mitigate the vulnerability, but your kernel has disabled AVX support"
 		fi
 	else
-		pvulnstatus $cve "$status" "$msg"
+		pvulnstatus "$cve" "$status" "$msg"
 	fi
 }
 
@@ -6614,7 +6615,7 @@ check_CVE_2023_20569_linux() {
 			pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 		fi
 	else
-		pvulnstatus $cve "$status" "$msg"
+		pvulnstatus "$cve" "$status" "$msg"
 	fi
 }
 
@@ -6645,11 +6646,11 @@ check_CVE_2023_23583_linux() {
 	else
 		_info_nol "* Reptar is mitigated by microcode: "
 		if [ "$cpu_ucode" -lt "$reptar_fixed_ucode_version" ]; then
-			pstatus yellow NO "You have ucode $(printf "0x%x" $cpu_ucode) and version $(printf "0x%x" $reptar_fixed_ucode_version) minimum is required"
-			pvulnstatus $cve VULN "Your microcode is too old to mitigate the vulnerability"
+			pstatus yellow NO "You have ucode $(printf "0x%x" "$cpu_ucode") and version $(printf "0x%x" "$reptar_fixed_ucode_version") minimum is required"
+			pvulnstatus "$cve" VULN "Your microcode is too old to mitigate the vulnerability"
 		else
-			pstatus green YES "You have ucode $(printf "0x%x" $cpu_ucode) which is recent enough (>= $(printf "0x%x" $reptar_fixed_ucode_version))"
-			pvulnstatus $cve OK "Your microcode mitigates the vulnerability"
+			pstatus green YES "You have ucode $(printf "0x%x" "$cpu_ucode") which is recent enough (>= $(printf "0x%x" "$reptar_fixed_ucode_version"))"
+			pvulnstatus "$cve" OK "Your microcode mitigates the vulnerability"
 		fi
 	fi
 }
