@@ -6877,7 +6877,7 @@ exit 0  # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v344+i20250811+1523
+# %%% MCEDB v344+i20250811+b85d
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
