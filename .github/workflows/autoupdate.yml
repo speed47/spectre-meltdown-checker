@@ -17,8 +17,9 @@ jobs:
       - name: Check git diff
         id: diff
         run: |
-          echo change="$(git diff | awk '/MCEDB/ { if(V) { print V" to "$4; exit } else { V=$4 } }')" >> "$GITHUB_OUTPUT"
-          echo nbdiff="$(git diff | grep ^+ | wc -l)" >> "$GITHUB_OUTPUT"
+          echo change="$(git diff spectre-meltdown-checker.sh | awk '/MCEDB/ { if(V) { print V" to "$4; exit } else { V=$4 } }')" >> "$GITHUB_OUTPUT"
+          echo nbdiff="$(git diff --numstat spectre-meltdown-checker.sh | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          git diff
           cat "$GITHUB_OUTPUT"
       - name: Create Pull Request if needed
         if: steps.diff.outputs.nbdiff != '0'
