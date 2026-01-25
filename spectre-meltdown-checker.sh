@@ -1889,11 +1889,11 @@ dmesg_grep()
 	# grep for something in dmesg, ensuring that the dmesg buffer
 	# has not been truncated
 	dmesg_grepped=''
-	if ! dmesg | grep -qE -e '(^|\] )Linux version [0-9]' -e '^FreeBSD is a registered' ; then
+	if ! dmesg 2>/dev/null | grep -qE -e '(^|\] )Linux version [0-9]' -e '^FreeBSD is a registered' ; then
 		# dmesg truncated
 		return 2
 	fi
-	dmesg_grepped=$(dmesg | grep -E "$1" | head -n1)
+	dmesg_grepped=$(dmesg 2>/dev/null | grep -E "$1" | head -n1)
 	# not found:
 	[ -z "$dmesg_grepped" ] && return 1
 	# found, output is in $dmesg_grepped
@@ -2020,13 +2020,13 @@ write_msr_one_core()
 				msr_locked_down=1
 				write_msr_msg="your kernel is configured to deny writes to MSRs from user space"
 				return $WRITE_MSR_RET_LOCKDOWN
-			elif dmesg | grep -qF "msr: Direct access to MSR"; then
+			elif dmesg 2>/dev/null | grep -qF "msr: Direct access to MSR"; then
 				_debug "write_msr: locked down kernel detected (Red Hat / Fedora)"
 				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
 				msr_locked_down=1
 				write_msr_msg="your kernel is locked down (Fedora/Red Hat), please reboot without secure boot and retry"
 				return $WRITE_MSR_RET_LOCKDOWN
-			elif dmesg | grep -qF "raw MSR access is restricted"; then
+			elif dmesg 2>/dev/null | grep -qF "raw MSR access is restricted"; then
 				_debug "write_msr: locked down kernel detected (vanilla)"
 				mockme=$(printf "%b\n%b" "$mockme" "SMC_MOCK_WRMSR_${_msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
 				msr_locked_down=1
@@ -2217,12 +2217,12 @@ parse_cpu_details()
 		cpu_stepping=$(grep '^stepping'   "$procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -n1)
 		cpu_ucode=$(   grep '^microcode'  "$procfs/cpuinfo" | awk '{print $3}' | head -n1)
 	else
-		cpu_vendor=$( dmesg | grep -i -m1 'Origin=' | cut -f2 -w | cut -f2 -d= | cut -f2 -d\" )
-		cpu_family=$( dmesg | grep -i -m1 'Family=' | cut -f4 -w | cut -f2 -d= )
+		cpu_vendor=$( dmesg 2>/dev/null | grep -i -m1 'Origin=' | cut -f2 -w | cut -f2 -d= | cut -f2 -d\" )
+		cpu_family=$( dmesg 2>/dev/null | grep -i -m1 'Family=' | cut -f4 -w | cut -f2 -d= )
 		cpu_family=$(( cpu_family ))
-		cpu_model=$( dmesg | grep -i -m1 'Model=' | cut -f5 -w | cut -f2 -d= )
+		cpu_model=$( dmesg 2>/dev/null | grep -i -m1 'Model=' | cut -f5 -w | cut -f2 -d= )
 		cpu_model=$(( cpu_model ))
-		cpu_stepping=$( dmesg | grep -i -m1 'Stepping=' | cut -f6 -w | cut -f2 -d= )
+		cpu_stepping=$( dmesg 2>/dev/null | grep -i -m1 'Stepping=' | cut -f6 -w | cut -f2 -d= )
 		cpu_friendly_name=$(sysctl -n hw.model 2>/dev/null)
 	fi
 
@@ -4863,7 +4863,7 @@ check_CVE_2017_5754_linux()
 				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
 				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
 			elif is_xen_dom0; then
-				pti_xen_pv_domU=$(xl dmesg | grep 'XPTI' | grep 'DomU enabled' | head -n1)
+				pti_xen_pv_domU=$(xl dmesg 2>/dev/null | grep 'XPTI' | grep 'DomU enabled' | head -n1)
 
 				[ -n "$pti_xen_pv_domU" ] && kpti_enabled=1
 			fi
@@ -5481,9 +5481,9 @@ check_CVE_2018_3646_linux()
 					pstatus green YES "unconditional flushes"
 				else
 					if is_xen_dom0; then
-						l1d_xen_hardware=$(xl dmesg | grep 'Hardware features:' | grep 'L1D_FLUSH' | head -n1)
-						l1d_xen_hypervisor=$(xl dmesg | grep 'Xen settings:' | grep 'L1D_FLUSH' | head -n1)
-						l1d_xen_pv_domU=$(xl dmesg | grep 'PV L1TF shadowing:' | grep 'DomU enabled' | head -n1)
+						l1d_xen_hardware=$(xl dmesg 2>/dev/null | grep 'Hardware features:' | grep 'L1D_FLUSH' | head -n1)
+						l1d_xen_hypervisor=$(xl dmesg 2>/dev/null | grep 'Xen settings:' | grep 'L1D_FLUSH' | head -n1)
+						l1d_xen_pv_domU=$(xl dmesg 2>/dev/null | grep 'PV L1TF shadowing:' | grep 'DomU enabled' | head -n1)
 
 						if [ -n "$l1d_xen_hardware" ] && [ -n "$l1d_xen_hypervisor" ] && [ -n "$l1d_xen_pv_domU" ]; then
 							l1d_mode=5
