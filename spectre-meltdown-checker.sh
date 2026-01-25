@@ -2309,6 +2309,11 @@ parse_cpu_details()
 	# if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
 	: "${cpu_ucode:=0x0}"
 
+	# on non-x86 systems (e.g. ARM), these fields may not exist in cpuinfo, fall back to 0
+	: "${cpu_family:=0}"
+	: "${cpu_model:=0}"
+	: "${cpu_stepping:=0}"
+
 	if [ -n "${SMC_MOCK_CPU_UCODE:-}" ]; then
 		cpu_ucode="$SMC_MOCK_CPU_UCODE"
 		_debug "parse_cpu_details: MOCKING cpu ucode to $cpu_ucode"
