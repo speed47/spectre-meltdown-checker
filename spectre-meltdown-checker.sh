@@ -668,6 +668,8 @@ is_cpu_affected()
 			_debug "checking cpu$i: <$cpupart> <$cpuarch>"
 			# some kernels report AArch64 instead of 8
 			[ "$cpuarch" = "AArch64" ] && cpuarch=8
+			# some kernels report architecture with suffix (e.g. "5TEJ" for ARMv5TEJ), extract numeric prefix
+			cpuarch=$(echo "$cpuarch" | grep -oE '^[0-9]+')
 			if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
 				# Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
 				# I can't find their CPU part number, but it's probably not that useful anyway
