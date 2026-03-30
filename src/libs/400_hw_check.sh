@@ -963,6 +963,51 @@ check_cpu() {
         fi
     fi
 
+    if is_amd || is_hygon; then
+        pr_info "  * Transient Scheduler Attacks"
+        pr_info_nol "    * CPU indicates TSA_SQ_NO: "
+        cap_tsa_sq_no=''
+        read_cpuid 0x80000021 0x0 $ECX 1 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            pstatus green YES
+            cap_tsa_sq_no=1
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            pstatus yellow NO
+            cap_tsa_sq_no=0
+        else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+
+        pr_info_nol "    * CPU indicates TSA_L1_NO: "
+        cap_tsa_l1_no=''
+        read_cpuid 0x80000021 0x0 $ECX 2 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            pstatus green YES
+            cap_tsa_l1_no=1
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            pstatus yellow NO
+            cap_tsa_l1_no=0
+        else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+
+        pr_info_nol "    * CPU indicates VERW clears CPU buffers: "
+        cap_verw_clear=''
+        read_cpuid 0x80000021 0x0 $EAX 5 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            pstatus green YES
+            cap_verw_clear=1
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            pstatus yellow NO
+            cap_verw_clear=0
+        else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+    fi
+
     pr_info_nol "  * CPU supports Transactional Synchronization Extensions (TSX): "
     ret=$READ_CPUID_RET_KO
     cap_rtm=0

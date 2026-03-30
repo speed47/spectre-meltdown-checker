@@ -157,6 +157,8 @@ CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
 CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
 CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)
 CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue
+CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
+CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
 '
 
 # Derive the supported CVE list from the registry

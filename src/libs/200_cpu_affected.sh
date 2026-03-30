@@ -74,6 +74,8 @@ is_cpu_affected() {
     # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
     affected_zenbleed=immune
     affected_inception=immune
+    # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
+    affected_tsa=immune
     # Downfall & Reptar are Intel specific, look for "is_intel" below:
     affected_downfall=immune
     affected_reptar=immune
@@ -295,6 +297,16 @@ is_cpu_affected() {
             affected_inception=vuln
         fi
 
+        # TSA (Zen 3/4 are affected, unless CPUID says otherwise)
+        if [ "$cap_tsa_sq_no" = 1 ] && [ "$cap_tsa_l1_no" = 1 ]; then
+            # capability bits for AMD processors that explicitly state
+            # they're not affected to TSA-SQ and TSA-L1
+            # these vars are set in check_cpu()
+            pr_debug "is_cpu_affected: TSA_SQ_NO and TSA_L1_NO are set so not vuln to TSA"
+        elif [ "$cpu_family" = $((0x19)) ]; then
+            affected_tsa=vuln
+        fi
+
     elif [ "$cpu_vendor" = CAVIUM ]; then
         affected_variant3=immune
         affected_variant3a=immune
@@ -455,6 +467,7 @@ is_cpu_affected() {
     [ "$affected_downfall" = "immune" ] && affected_downfall=1 || affected_downfall=0
     [ "$affected_inception" = "immune" ] && affected_inception=1 || affected_inception=0
     [ "$affected_reptar" = "immune" ] && affected_reptar=1 || affected_reptar=0
+    [ "$affected_tsa" = "immune" ] && affected_tsa=1 || affected_tsa=0
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
     [ "$cap_sgx" = 0 ] && affected_variantl1tf_sgx=1
