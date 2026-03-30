@@ -24,6 +24,8 @@ CVE                                                                             
 [CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security                             | Inception, RAS, SRSO
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak                      | Zenbleed
 [CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix issue                              | Reptar
+[CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack - Store Queue             | TSA-SQ
+[CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack - L1                      | TSA-L1
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
@@ -127,7 +129,7 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
 **CVE-2018-3640** rogue system register read (Variant 3a)
 
-   - Impact: TBC
+   - Impact: Kernel (privileged system register values can be read from unprivileged code)
    - Mitigation: microcode update only
    - Performance impact of the mitigation: negligible
 
@@ -137,13 +139,13 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
    - Mitigation: microcode update + kernel update making possible for affected software to protect itself
    - Performance impact of the mitigation: low to medium
 
-**CVE-2018-3615** l1 terminal fault (Foreshadow-NG SGX)
+**CVE-2018-3615** l1 terminal fault (Foreshadow SGX)
 
-   - Impact: Kernel & all software (any physical memory address in the system)
+   - Impact: SGX enclaves (enclave secrets can be extracted)
    - Mitigation: microcode update
    - Performance impact of the mitigation: negligible
 
-**CVE-2018-3620** l1 terminal fault (Foreshadow-NG SMM)
+**CVE-2018-3620** l1 terminal fault (Foreshadow-NG OS/SMM)
 
    - Impact: Kernel & System management mode
    - Mitigation: updated kernel (with PTE inversion)
@@ -182,7 +184,7 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
 **CVE-2020-0543** Special Register Buffer Data Sampling (SRBDS)
 
-   - Impact: Kernel
+   - Impact: All software using RDRAND/RDSEED/EGETKEY, including cross-core leakage
    - Mitigation: microcode update + kernel update helping to protect various CPU internal buffers from unprivileged speculative access to data
    - Performance impact of the mitigation: low
 
@@ -190,7 +192,7 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
    - Impact: Kernel & all software
    - Mitigation: either microcode update or disabling AVX feature
-   - Performance impact of the mitigation: TBD
+   - Performance impact of the mitigation: negligible for most workloads, up to significant for AVX-heavy workloads (HPC, AI)
 
 **CVE-2023-20569** Return Address Security (Inception)
 
@@ -202,10 +204,22 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
    - Impact: Kernel & all software
    - Mitigation: either kernel mitigation by disabling a CPU optimization through an MSR bit, or CPU microcode mitigation
-   - Performance impact of the mitigation: TBD
+   - Performance impact of the mitigation: negligible
 
 **CVE-2023-23583** Redundant Prefix issue (Reptar)
 
    - Impact: All software
    - Mitigation: microcode update for the affected CPU
    - Performance impact of the mitigation: low
+
+**CVE-2024-36350** Transient Scheduler Attack - Store Queue (TSA-SQ)
+
+   - Impact: Kernel & all software (AMD Zen 3/4 processors)
+   - Mitigation: microcode update (VERW_CLEAR) + kernel update (CONFIG_MITIGATION_TSA); SMT increases exposure
+   - Performance impact of the mitigation: low to medium
+
+**CVE-2024-36357** Transient Scheduler Attack - L1 (TSA-L1)
+
+   - Impact: Kernel & all software (AMD Zen 3/4 processors)
+   - Mitigation: microcode update (VERW_CLEAR) + kernel update (CONFIG_MITIGATION_TSA)
+   - Performance impact of the mitigation: low to medium
