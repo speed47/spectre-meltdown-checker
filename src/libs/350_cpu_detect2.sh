@@ -69,7 +69,8 @@ parse_cpu_details() {
         read_msr 0x17
         ret=$?
         if [ $ret = $READ_MSR_RET_OK ]; then
-            cpu_platformid=$((1 << ((ret_read_msr_value >> 18) & 7)))
+            # platform ID (bits 52:50) = bits 18:20 of the upper 32-bit word
+            cpu_platformid=$((1 << ((ret_read_msr_value_hi >> 18) & 7)))
         fi
     fi
 

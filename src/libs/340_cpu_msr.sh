@@ -155,7 +155,7 @@ readonly READ_MSR_RET_KO=1
 readonly READ_MSR_RET_ERR=2
 # Read an MSR register value across one or all cores
 # Args: $1=msr_address $2=cpu_index(optional, default 0)
-# Sets: ret_read_msr_value, ret_read_msr_msg
+# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
 # Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
 read_msr() {
     local ret core first_core_ret first_core_value
@@ -187,21 +187,31 @@ read_msr() {
 
 # Read an MSR register value from a single CPU core
 # Args: $1=core $2=msr_address
-# Sets: ret_read_msr_value, ret_read_msr_msg
+# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
 # Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
 read_msr_one_core() {
-    local ret core msr msr_dec mockvarname msr_h msr_l
+    local ret core msr msr_dec mockvarname msr_h msr_l mockval
     core="$1"
     msr_dec=$(($2))
     msr=$(printf "0x%x" "$msr_dec")
 
     ret_read_msr_value=''
+    ret_read_msr_value_hi=''
+    ret_read_msr_value_lo=''
     ret_read_msr_msg='unknown error'
 
     mockvarname="SMC_MOCK_RDMSR_${msr}"
     # shellcheck disable=SC2086,SC1083
     if [ -n "$(eval echo \${$mockvarname:-})" ]; then
-        ret_read_msr_value="$(eval echo \$$mockvarname)"
+        mockval="$(eval echo \$$mockvarname)"
+        # accept both legacy decimal (small values) and new 16-char hex format
+        if [ "${#mockval}" -eq 16 ]; then
+            ret_read_msr_value="$mockval"
+        else
+            ret_read_msr_value=$(printf '%016x' "$mockval")
+        fi
+        ret_read_msr_value_hi=$((0x${ret_read_msr_value%????????}))
+        ret_read_msr_value_lo=$((0x${ret_read_msr_value#????????}))
         pr_debug "read_msr: MOCKING enabled for msr $msr, returning $ret_read_msr_value"
         g_mocked=1
         return $READ_MSR_RET_OK
@@ -235,7 +245,7 @@ read_msr_one_core() {
         # MSR 0x10: 0x000003e1 0xb106dded
         msr_h=$(echo "$msr" | awk '{print $3}')
         msr_l=$(echo "$msr" | awk '{print $4}')
-        ret_read_msr_value=$((msr_h << 32 | msr_l))
+        ret_read_msr_value=$(printf '%08x%08x' "$((msr_h))" "$((msr_l))")
     else
         # for Linux
         if [ ! -r $CPU_DEV_BASE/"$core"/msr ]; then
@@ -245,15 +255,15 @@ read_msr_one_core() {
         # if rdmsr is available, use it
         elif command -v rdmsr >/dev/null 2>&1 && [ "${SMC_NO_RDMSR:-}" != 1 ]; then
             pr_debug "read_msr: using rdmsr on $msr"
-            ret_read_msr_value=$(rdmsr -r $msr_dec 2>/dev/null | od -t u8 -A n)
+            ret_read_msr_value=$(rdmsr -r $msr_dec 2>/dev/null | od -A n -t x8)
         # or if we have perl, use it, any 5.x version will work
         elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
             pr_debug "read_msr: using perl on $msr"
-            ret_read_msr_value=$(perl -e "open(M,'<','$CPU_DEV_BASE/$core/msr') and seek(M,$msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
+            ret_read_msr_value=$(perl -e "open(M,'<','$CPU_DEV_BASE/$core/msr') and seek(M,$msr_dec,0) and read(M,\$_,8) and print" | od -A n -t x8)
         # fallback to dd if it supports skip_bytes
         elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$msr_dec" iflag=skip_bytes 2>/dev/null; then
             pr_debug "read_msr: using dd on $msr"
-            ret_read_msr_value=$(dd if=$CPU_DEV_BASE/"$core"/msr bs=8 count=1 skip="$msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
+            ret_read_msr_value=$(dd if=$CPU_DEV_BASE/"$core"/msr bs=8 count=1 skip="$msr_dec" iflag=skip_bytes 2>/dev/null | od -A n -t x8)
         else
             pr_debug "read_msr: got no rdmsr, perl or recent enough dd!"
             g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}_RET=$READ_MSR_RET_ERR")
@@ -266,8 +276,10 @@ read_msr_one_core() {
             return $READ_MSR_RET_KO
         fi
         # remove sparse spaces od might give us
-        ret_read_msr_value=$((ret_read_msr_value))
+        ret_read_msr_value=$(printf '%s' "$ret_read_msr_value" | tr -d ' \t\n' | tr '[:upper:]' '[:lower:]')
     fi
+    ret_read_msr_value_hi=$((0x${ret_read_msr_value%????????}))
+    ret_read_msr_value_lo=$((0x${ret_read_msr_value#????????}))
     g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}='$ret_read_msr_value'")
     pr_debug "read_msr: MSR=$msr value is $ret_read_msr_value"
     return $READ_MSR_RET_OK
