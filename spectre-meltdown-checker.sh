@@ -3881,22 +3881,41 @@ check_has_vmm()
 	fi
 }
 
+# Generic CVE check dispatcher.
+# $1: CVE ID (e.g. CVE-2017-5753)
+# $2: (optional) function prefix override (default: check_CVE_YYYY_NNNNN derived from CVE ID)
+# Prints the CVE header, then dispatches to ${prefix}_linux or ${prefix}_bsd
+# depending on the detected OS. The called function inherits $cve via dynamic scoping.
+check_cve()
+{
+	local cve func_prefix
+	cve="$1"
+	func_prefix="${2:-check_$(echo "$cve" | tr - _)}"
+	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
+	if [ "$g_os" = Linux ]; then
+		if type "${func_prefix}_linux" >/dev/null 2>&1; then
+			"${func_prefix}_linux"
+		else
+			_warn "Unsupported OS ($g_os)"
+		fi
+	elif echo "$g_os" | grep -q BSD; then
+		if type "${func_prefix}_bsd" >/dev/null 2>&1; then
+			"${func_prefix}_bsd"
+		else
+			_warn "Unsupported OS ($g_os)"
+		fi
+	else
+		_warn "Unsupported OS ($g_os)"
+	fi
+}
+
 ###################
 # SPECTRE 1 SECTION
 
 # bounds check bypass aka 'Spectre Variant 1'
 check_CVE_2017_5753()
 {
-	local cve
-	cve='CVE-2017-5753'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2017_5753_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2017_5753_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2017-5753'
 }
 
 check_CVE_2017_5753_linux()
@@ -4128,16 +4147,7 @@ check_CVE_2017_5753_bsd()
 # branch target injection aka 'Spectre Variant 2'
 check_CVE_2017_5715()
 {
-	local cve
-	cve='CVE-2017-5715'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2017_5715_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2017_5715_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2017-5715'
 }
 
 check_CVE_2017_5715_linux()
@@ -4776,16 +4786,7 @@ pti_performance_check()
 # rogue data cache load aka 'Meltdown' aka 'Variant 3'
 check_CVE_2017_5754()
 {
-	local cve
-	cve='CVE-2017-5754'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2017_5754_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2017_5754_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2017-5754'
 }
 
 check_CVE_2017_5754_linux()
@@ -5063,16 +5064,7 @@ check_CVE_2018_3640()
 # speculative store bypass aka 'Variant 4'
 check_CVE_2018_3639()
 {
-	local cve
-	cve='CVE-2018-3639'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2018_3639_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2018_3639_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2018-3639'
 }
 
 check_CVE_2018_3639_linux()
@@ -5295,16 +5287,7 @@ check_CVE_2018_3615()
 # L1 terminal fault (OS) aka 'Foreshadow-NG (OS)'
 check_CVE_2018_3620()
 {
-	local cve
-	cve='CVE-2018-3620'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2018_3620_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2018_3620_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2018-3620'
 }
 
 check_CVE_2018_3620_linux()
@@ -5415,16 +5398,7 @@ check_CVE_2018_3620_bsd()
 # L1TF VMM
 check_CVE_2018_3646()
 {
-	local cve
-	cve='CVE-2018-3646'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2018_3646_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2018_3646_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2018-3646'
 }
 
 check_CVE_2018_3646_linux()
@@ -5641,9 +5615,7 @@ check_CVE_2018_3646_bsd()
 # Microarchitectural Store Buffer Data Sampling
 check_CVE_2018_12126()
 {
-	local cve
-	cve='CVE-2018-12126'
-	check_mds "$cve"
+	check_cve 'CVE-2018-12126' check_mds
 }
 
 ###################
@@ -5652,9 +5624,7 @@ check_CVE_2018_12126()
 # Microarchitectural Fill Buffer Data Sampling
 check_CVE_2018_12130()
 {
-	local cve
-	cve='CVE-2018-12130'
-	check_mds "$cve"
+	check_cve 'CVE-2018-12130' check_mds
 }
 
 ###################
@@ -5663,9 +5633,7 @@ check_CVE_2018_12130()
 # Microarchitectural Load Port Data Sampling
 check_CVE_2018_12127()
 {
-	local cve
-	cve='CVE-2018-12127'
-	check_mds "$cve"
+	check_cve 'CVE-2018-12127' check_mds
 }
 
 ###################
@@ -5674,25 +5642,10 @@ check_CVE_2018_12127()
 # Microarchitectural Data Sampling Uncacheable Memory 
 check_CVE_2019_11091()
 {
-	local cve
-	cve='CVE-2019-11091'
-	check_mds "$cve"
+	check_cve 'CVE-2019-11091' check_mds
 }
 
 # Microarchitectural Data Sampling
-check_mds()
-{
-	local cve
-	cve=$1
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_mds_linux "$cve"
-	elif echo "$g_os" | grep -q BSD; then
-		check_mds_bsd "$cve"
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
-}
 
 check_mds_bsd()
 {
@@ -5919,16 +5872,7 @@ check_mds_linux()
 # Transactional Synchronization Extension (TSX) Asynchronous Abort
 check_CVE_2019_11135()
 {
-	local cve
-	cve='CVE-2019-11135'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2019_11135_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2019_11135_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2019-11135'
 }
 
 check_CVE_2019_11135_linux()
@@ -6024,16 +5968,7 @@ check_CVE_2019_11135_bsd()
 
 check_CVE_2018_12207()
 {
-	local cve
-	cve='CVE-2018-12207'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2018_12207_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2018_12207_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2018-12207'
 }
 
 check_CVE_2018_12207_linux()
@@ -6145,16 +6080,7 @@ check_CVE_2018_12207_bsd()
 # Special Register Buffer Data Sampling (SRBDS)
 check_CVE_2020_0543()
 {
-	local cve
-	cve='CVE-2020-0543'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2020_0543_linux
-	elif echo "$g_os" | grep -q BSD; then
-		check_CVE_2020_0543_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2020-0543'
 }
 
 check_CVE_2020_0543_linux()
@@ -6269,16 +6195,7 @@ check_CVE_2020_0543_bsd()
 
 check_CVE_2023_20593()
 {
-	local cve
-	cve='CVE-2023-20593'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]; then
-		check_CVE_2023_20593_linux
-	#elif echo "$g_os" | grep -q BSD; then
-	#	check_CVE_2023_20593_bsd
-	else
-		_warn "Unsupported OS ($g_os)"
-	fi
+	check_cve 'CVE-2023-20593'
 }
 
 check_CVE_2023_20593_linux()
@@ -6395,15 +6312,7 @@ check_CVE_2023_20593_linux()
 # Downfall section
 
 check_CVE_2022_40982() {
-	local cve
-	cve='CVE-2022-40982'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]
-	then
-		check_CVE_2022_40982_linux
-	else
-		_warn "Unsupported OS ($g_os)."
-	fi
+	check_cve 'CVE-2022-40982'
 }
 
 check_CVE_2022_40982_linux() {
@@ -6498,15 +6407,7 @@ check_CVE_2022_40982_linux() {
 # Inception section
 
 check_CVE_2023_20569() {
-	local cve
-	cve='CVE-2023-20569'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]
-	then
-		check_CVE_2023_20569_linux
-	else
-		_warn "Unsupported OS ($g_os)."
-	fi
+	check_cve 'CVE-2023-20569'
 }
 
 check_CVE_2023_20569_linux() {
@@ -6673,15 +6574,7 @@ check_CVE_2023_20569_linux() {
 # Reptar section
 
 check_CVE_2023_23583() {
-	local cve
-	cve='CVE-2023-23583'
-	_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
-	if [ "$g_os" = Linux ]
-	then
-		check_CVE_2023_23583_linux
-	else
-		_warn "Unsupported OS ($g_os)."
-	fi
+	check_cve 'CVE-2023-23583'
 }
 
 check_CVE_2023_23583_linux() {
