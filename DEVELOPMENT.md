@@ -46,6 +46,26 @@ The entire tool is a single bash script with no external script dependencies. Ke
 - **Whitelist approach**: CPUs are assumed affected unless proven unaffected
 - **Offline mode**: Can analyze a non-running kernel via `--kernel`, `--config`, `--map` flags
 
+## POSIX Compliance
+
+The script must run on both Linux and BSD systems (FreeBSD, NetBSD, DragonFlyBSD). This means all external tool invocations must use only POSIX-specified options. Many tools have GNU extensions that are not available on BSD, or BSD extensions that are not available on GNU/Linux. When in doubt, test on both.
+
+Common traps to avoid:
+
+| Tool | Non-portable usage | Portable alternative |
+|------|--------------------|----------------------|
+| `sed` | `-r` (GNU extended regex flag) | `-E` (accepted by both GNU and BSD) |
+| `grep` | `-P` (Perl regex, GNU only) | Use `awk` or rework the pattern |
+| `sort` | `-V` (version sort, GNU only) | Extract numeric fields and compare with `awk` or shell arithmetic |
+| `cut` | `-w` (whitespace delimiter, BSD only) | `awk '{print $N}'` |
+| `stat` | `-c %Y` (GNU format) | Try GNU first, fall back to BSD: `stat -c %Y ... 2>/dev/null \|\| stat -f %m ...` |
+| `date` | `-d @timestamp` (GNU only) | Try GNU first, fall back to BSD: `date -d @ts ... 2>/dev/null \|\| date -r ts ...` |
+| `xargs` | `-r` (no-op if empty, GNU only) | Guard with a prior `[ -n "..." ]` check, or accept the harmless empty invocation |
+| `readlink` | `-f` (canonicalize, GNU only) | Use only in Linux-specific code paths, or reimplement with `cd`/`pwd` |
+| `dd` | `iflag=`, `oflag=` (GNU only) | Use only in Linux-specific code paths (e.g. `/dev/cpu/*/msr`) |
+
+When a tool genuinely has no portable equivalent, restrict the non-portable call to a platform-specific code path (i.e. inside a BSD-only or Linux-only branch) and document why.
+
 ## Return Codes
 
 0 = not vulnerable, 2 = vulnerable, 3 = unknown, 255 = error
