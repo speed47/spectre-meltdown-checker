@@ -412,6 +412,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 4. **Test batch JSON**: Run with `--batch json` and verify the CVE count incremented by one (currently 19 → 20).
 5. **Test offline**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the offline code path reports correctly.
 6. **Lint**: Run `shellcheck` on the monolithic script and fix any warnings.
+7. **Update `dist/README.md`**: Add details about the new CVE check (name, description, what it detects) so that the user-facing documentation stays in sync with the implementation.
 
 ### Key Rules to Remember
 
