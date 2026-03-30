@@ -54,7 +54,7 @@ The entire tool is a single bash script with no external script dependencies. Ke
 
 This script uses the following naming rules for variables:
 
-`UPPER_SNAKE_CASE`  : Constants and enums (e.g. READ_MSR_RET_OK, EAX), declared as `readonly`.
+`UPPER_SNAKE_CASE`  : Constants and enums (e.g. READ_MSR_RET_OK, EAX), declared with `readonly` on the assignment line (e.g. `readonly FOO="bar"`).
                       When they're used as values affected to "Out-parameters" of a function, they should follow the `<FUNC>_RET_*` pattern.
                       Such variables should be declared right above the definition of the function they're dedicated to.
                       Other general constants go at the top of the file, below the `VERSION` affectation.

@@ -15,6 +15,13 @@
 #
 VERSION='0.46+'
 
+# --- Common paths and basedirs ---
+readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
+readonly DEBUGFS_BASE="/sys/kernel/debug"
+readonly SYS_MODULE_BASE="/sys/module"
+readonly CPU_DEV_BASE="/dev/cpu"
+readonly BSD_CPUCTL_DEV_BASE="/dev/cpuctl"
+
 trap 'exit_cleanup' EXIT
 trap '_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
 exit_cleanup()
@@ -28,7 +35,7 @@ exit_cleanup()
 	[ -n "${g_mcedb_tmp:-}"     ] && [ -f "$g_mcedb_tmp"     ] && rm -f "$g_mcedb_tmp"
 	[ -n "${g_intel_tmp:-}"     ] && [ -d "$g_intel_tmp"     ] && rm -rf "$g_intel_tmp"
 	[ -n "${g_linuxfw_tmp:-}"   ] && [ -f "$g_linuxfw_tmp"   ] && rm -f "$g_linuxfw_tmp"
-	[ "${g_mounted_debugfs:-}" = 1 ] && umount /sys/kernel/debug 2>/dev/null
+	[ "${g_mounted_debugfs:-}" = 1 ] && umount "$DEBUGFS_BASE" 2>/dev/null
 	[ "${g_mounted_procfs:-}"  = 1 ] && umount "$g_procfs" 2>/dev/null
 	[ "${g_insmod_cpuid:-}"    = 1 ] && rmmod cpuid 2>/dev/null
 	[ "${g_insmod_msr:-}"      = 1 ] && rmmod msr 2>/dev/null
@@ -1663,9 +1670,9 @@ extract_kernel()
 
 mount_debugfs()
 {
-	if [ ! -e /sys/kernel/debug/sched_features ]; then
+	if [ ! -e "$DEBUGFS_BASE/sched_features" ]; then
 		# try to mount the debugfs hierarchy ourselves and remember it to umount afterwards
-		mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null && g_mounted_debugfs=1
+		mount -t debugfs debugfs "$DEBUGFS_BASE" 2>/dev/null && g_mounted_debugfs=1
 	fi
 }
 
@@ -1785,20 +1792,20 @@ read_cpuid_one_core()
 		return $READ_CPUID_RET_ERR
 	fi
 
-	if [ ! -e /dev/cpu/0/cpuid ] && [ ! -e /dev/cpuctl0 ]; then
+	if [ ! -e $CPU_DEV_BASE/0/cpuid ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
 		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 		load_cpuid
 	fi
 
-	if [ -e /dev/cpu/0/cpuid ]; then
+	if [ -e $CPU_DEV_BASE/0/cpuid ]; then
 		# Linux
-		if [ ! -r /dev/cpu/0/cpuid ]; then
+		if [ ! -r $CPU_DEV_BASE/0/cpuid ]; then
 			ret_read_cpuid_msg="Couldn't load cpuid module"
 			return $READ_CPUID_RET_ERR
 		fi
-		# on some kernel versions, /dev/cpu/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error,
+		# on some kernel versions, $CPU_DEV_BASE/0/cpuid doesn't imply that the cpuid module is loaded, in that case dd returns an error,
 		# we use that fact to load the module if dd returns an error
-		if ! dd if=/dev/cpu/0/cpuid bs=16 count=1 >/dev/null 2>&1; then
+		if ! dd if=$CPU_DEV_BASE/0/cpuid bs=16 count=1 >/dev/null 2>&1; then
 			load_cpuid
 		fi
 		# we need leaf to be converted to decimal for dd
@@ -1809,14 +1816,14 @@ read_cpuid_one_core()
 		ddskip=$(( position / 16 ))
 		odskip=$(( position - ddskip * 16 ))
 		# now read the value
-		cpuid=$(dd if="/dev/cpu/$core/cpuid" bs=16 skip=$ddskip count=$((odskip + 1)) 2>/dev/null | od -j $((odskip * 16)) -A n -t u4)
-	elif [ -e /dev/cpuctl0 ]; then
+		cpuid=$(dd if="$CPU_DEV_BASE/$core/cpuid" bs=16 skip=$ddskip count=$((odskip + 1)) 2>/dev/null | od -j $((odskip * 16)) -A n -t u4)
+	elif [ -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
 		# BSD
-		if [ ! -r /dev/cpuctl0 ]; then
+		if [ ! -r ${BSD_CPUCTL_DEV_BASE}0 ]; then
 			ret_read_cpuid_msg="Couldn't read cpuid info from cpuctl"
 			return $READ_CPUID_RET_ERR
 		fi
-		cpuid=$(cpucontrol -i "$leaf","$subleaf" "/dev/cpuctl$core" 2>/dev/null | cut -d: -f2-)
+		cpuid=$(cpucontrol -i "$leaf","$subleaf" "${BSD_CPUCTL_DEV_BASE}$core" 2>/dev/null | cut -d: -f2-)
 		# cpuid level 0x4, level_type 0x2: 0x1c004143 0x01c0003f 0x000001ff 0x00000000
 	else
 		ret_read_cpuid_msg="Found no way to read cpuid info"
@@ -1940,23 +1947,23 @@ write_msr_one_core()
 		return "$(eval echo \$$mockvarname)"
 	fi
 
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+	if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
 		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 		load_msr
 	fi
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+	if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
 		ret_read_msr_msg="is msr kernel module available?"
 		return $WRITE_MSR_RET_ERR
 	fi
 
 	write_denied=0
 	if [ "$g_os" != Linux ]; then
-		cpucontrol -m "$msr=$value" "/dev/cpuctl$core" >/dev/null 2>&1; ret=$?
+		cpucontrol -m "$msr=$value" "${BSD_CPUCTL_DEV_BASE}$core" >/dev/null 2>&1; ret=$?
 	else
 		# for Linux
 		# convert to decimal
-		if [ ! -w /dev/cpu/"$core"/msr ]; then
-			ret_write_msr_msg="No write permission on /dev/cpu/$core/msr"
+		if [ ! -w $CPU_DEV_BASE/"$core"/msr ]; then
+			ret_write_msr_msg="No write permission on $CPU_DEV_BASE/$core/msr"
 			return $WRITE_MSR_RET_ERR
 		# if wrmsr is available, use it
 		elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
@@ -1967,10 +1974,10 @@ write_msr_one_core()
 		# or fallback to dd if it supports seek_bytes, we prefer it over perl because we can tell the difference between EPERM and EIO
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 seek="$msr_dec" oflag=seek_bytes 2>/dev/null && [ "${SMC_NO_DD:-}" != 1 ]; then
 			_debug "write_msr: using dd"
-			awk "BEGIN{printf \"%c\", $value_dec}" | dd of=/dev/cpu/"$core"/msr bs=8 count=1 seek="$msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
+			awk "BEGIN{printf \"%c\", $value_dec}" | dd of=$CPU_DEV_BASE/"$core"/msr bs=8 count=1 seek="$msr_dec" oflag=seek_bytes 2>/dev/null; ret=$?
 			# if it failed, inspect stderrto look for EPERM
 			if [ "$ret" != 0 ]; then
-				if awk "BEGIN{printf \"%c\", $value_dec}" | dd of=/dev/cpu/"$core"/msr bs=8 count=1 seek="$msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
+				if awk "BEGIN{printf \"%c\", $value_dec}" | dd of=$CPU_DEV_BASE/"$core"/msr bs=8 count=1 seek="$msr_dec" oflag=seek_bytes 2>&1 | grep -qF 'Operation not permitted'; then
 					write_denied=1
 				fi
 			fi
@@ -1978,7 +1985,7 @@ write_msr_one_core()
 		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
 			_debug "write_msr: using perl"
 			ret=1
-			perl -e "open(M,'>','/dev/cpu/$core/msr') and seek(M,$msr_dec,0) and exit(syswrite(M,pack(v4,$value_dec)))"; [ $? -eq 8 ] && ret=0
+			perl -e "open(M,'>','$CPU_DEV_BASE/$core/msr') and seek(M,$msr_dec,0) and exit(syswrite(M,pack(v4,$value_dec)))"; [ $? -eq 8 ] && ret=0
 		else
 			_debug "write_msr: got no wrmsr, perl or recent enough dd!"
 			g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_WRMSR_${msr}_RET=$WRITE_MSR_RET_ERR")
@@ -2090,18 +2097,18 @@ read_msr_one_core()
 		return "$(eval echo \$$mockvarname)"
 	fi
 
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+	if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
 		# try to load the module ourselves (and remember it so we can rmmod it afterwards)
 		load_msr
 	fi
-	if [ ! -e /dev/cpu/0/msr ] && [ ! -e /dev/cpuctl0 ]; then
+	if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
 		ret_read_msr_msg="is msr kernel module available?"
 		return $READ_MSR_RET_ERR
 	fi
 
 	if [ "$g_os" != Linux ]; then
 		# for BSD
-		msr=$(cpucontrol -m "$msr" "/dev/cpuctl$core" 2>/dev/null); ret=$?
+		msr=$(cpucontrol -m "$msr" "${BSD_CPUCTL_DEV_BASE}$core" 2>/dev/null); ret=$?
 		if [ $ret -ne 0 ]; then
 			g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}_RET=$READ_MSR_RET_KO")
 			return $READ_MSR_RET_KO
@@ -2112,9 +2119,9 @@ read_msr_one_core()
 		ret_read_msr_value=$(( msr_h << 32 | msr_l ))
 	else
 		# for Linux
-		if [ ! -r /dev/cpu/"$core"/msr ]; then
+		if [ ! -r $CPU_DEV_BASE/"$core"/msr ]; then
 			g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}_RET=$READ_MSR_RET_ERR")
-			ret_read_msr_msg="No read permission for /dev/cpu/$core/msr"
+			ret_read_msr_msg="No read permission for $CPU_DEV_BASE/$core/msr"
 			return $READ_MSR_RET_ERR
 		# if rdmsr is available, use it
 		elif command -v rdmsr >/dev/null 2>&1 && [ "${SMC_NO_RDMSR:-}" != 1 ]; then
@@ -2123,11 +2130,11 @@ read_msr_one_core()
 		# or if we have perl, use it, any 5.x version will work
 		elif command -v perl >/dev/null 2>&1 && [ "${SMC_NO_PERL:-}" != 1 ]; then
 			_debug "read_msr: using perl on $msr"
-			ret_read_msr_value=$(perl -e "open(M,'<','/dev/cpu/$core/msr') and seek(M,$msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
+			ret_read_msr_value=$(perl -e "open(M,'<','$CPU_DEV_BASE/$core/msr') and seek(M,$msr_dec,0) and read(M,\$_,8) and print" | od -t u8 -A n)
 		# fallback to dd if it supports skip_bytes
 		elif dd if=/dev/null of=/dev/null bs=8 count=1 skip="$msr_dec" iflag=skip_bytes 2>/dev/null; then
 			_debug "read_msr: using dd on $msr"
-			ret_read_msr_value=$(dd if=/dev/cpu/"$core"/msr bs=8 count=1 skip="$msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
+			ret_read_msr_value=$(dd if=$CPU_DEV_BASE/"$core"/msr bs=8 count=1 skip="$msr_dec" iflag=skip_bytes 2>/dev/null | od -t u8 -A n)
 		else
 			_debug "read_msr: got no rdmsr, perl or recent enough dd!"
 			g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}_RET=$READ_MSR_RET_ERR")
@@ -2275,13 +2282,13 @@ parse_cpu_details()
 	# under BSD, linprocfs often doesn't export ucode information, so fetch it ourselves the good old way
 	if [ -z "$cpu_ucode" ] && [ "$g_os" != Linux ]; then
 		load_cpuid
-		if [ -e /dev/cpuctl0 ]; then
+		if [ -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
 			# init MSR with NULLs
-			cpucontrol -m 0x8b=0 /dev/cpuctl0
+			cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0
 			# call CPUID
-			cpucontrol -i 1 /dev/cpuctl0 >/dev/null
+			cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null
 			# read MSR
-			cpu_ucode=$(cpucontrol -m 0x8b /dev/cpuctl0 | awk '{print $3}')
+			cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 | awk '{print $3}')
 			# convert to decimal
 			cpu_ucode=$(( cpu_ucode ))
 			# convert back to hex
@@ -2781,7 +2788,7 @@ if [ "$opt_coreos" = 1 ]; then
 	load_msr
 	load_cpuid
 	mount_debugfs
-	toolbox --ephemeral --bind-ro /dev/cpu:/dev/cpu -- sh -c "dnf install -y binutils which && /media/root$PWD/$0 $* --coreos-within-toolbox"
+	toolbox --ephemeral --bind-ro "$CPU_DEV_BASE:$CPU_DEV_BASE" -- sh -c "dnf install -y binutils which && /media/root$PWD/$0 $* --coreos-within-toolbox"
 	g_exitcode=$?
 	exit $g_exitcode
 else
@@ -3924,7 +3931,7 @@ check_CVE_2017_5753_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spectre_v1"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/spectre_v1"; then
 		# this kernel has the /sys interface, trust it over everything
 		# v0.33+: don't. some kernels have backported the array_index_mask_nospec() workaround without
 		# modifying the vulnerabilities/spectre_v1 file. that's bad. we can't trust it when it says Vulnerable :(
@@ -4156,7 +4163,7 @@ check_CVE_2017_5715_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spectre_v2"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/spectre_v2"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -4177,13 +4184,13 @@ check_CVE_2017_5715_linux()
 			g_ibrs_can_tell=1
 			mount_debugfs
 			for dir in \
-				/sys/kernel/debug \
-				/sys/kernel/debug/x86 \
+				$DEBUGFS_BASE \
+				$DEBUGFS_BASE/x86 \
 				"$g_procfs/sys/kernel"; do
 				if [ -e "$dir/ibrs_enabled" ]; then
 					# if the file is there, we have IBRS compiled-in
-					# /sys/kernel/debug/ibrs_enabled: vanilla
-					# /sys/kernel/debug/x86/ibrs_enabled: Red Hat (see https://access.redhat.com/articles/3311301)
+					# $DEBUGFS_BASE/ibrs_enabled: vanilla
+					# $DEBUGFS_BASE/x86/ibrs_enabled: Red Hat (see https://access.redhat.com/articles/3311301)
 					# /proc/sys/kernel/ibrs_enabled: OpenSUSE tumbleweed
 					g_specex_knob_dir=$dir
 					g_ibrs_supported="$dir/ibrs_enabled exists"
@@ -4795,7 +4802,7 @@ check_CVE_2017_5754_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/meltdown"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/meltdown"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -4864,10 +4871,10 @@ check_CVE_2017_5754_linux()
 				# kernel line 4.9 sets the 'kaiser' flag in cpuinfo
 				_debug "kpti_enabled: found 'kaiser' flag in $g_procfs/cpuinfo"
 				kpti_enabled=1
-			elif [ -e /sys/kernel/debug/x86/pti_enabled ]; then
+			elif [ -e "$DEBUGFS_BASE/x86/pti_enabled" ]; then
 				# Red Hat Backport creates a dedicated file, see https://access.redhat.com/articles/3311301
-				kpti_enabled=$(cat /sys/kernel/debug/x86/pti_enabled 2>/dev/null)
-				_debug "kpti_enabled: file /sys/kernel/debug/x86/pti_enabled exists and says: $kpti_enabled"
+				kpti_enabled=$(cat "$DEBUGFS_BASE/x86/pti_enabled" 2>/dev/null)
+				_debug "kpti_enabled: file $DEBUGFS_BASE/x86/pti_enabled exists and says: $kpti_enabled"
 			elif is_xen_dom0; then
 				pti_xen_pv_domU=$(xl dmesg 2>/dev/null | grep 'XPTI' | grep 'DomU enabled' | head -n1)
 
@@ -4942,8 +4949,8 @@ check_CVE_2017_5754_linux()
 			else
 				pvulnstatus "$cve" VULN "PTI is needed to mitigate the vulnerability"
 				if [ -n "$kpti_support" ]; then
-					if [ -e "/sys/kernel/debug/x86/pti_enabled" ]; then
-						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > /sys/kernel/debug/x86/pti_enabled\`"
+					if [ -e "$DEBUGFS_BASE/x86/pti_enabled" ]; then
+						explain "Your kernel supports PTI but it's disabled, you can enable it with \`echo 1 > $DEBUGFS_BASE/x86/pti_enabled\`"
 					elif echo "$g_kernel_cmdline" | grep -q -w -e nopti -e pti=off; then
 						explain "Your kernel supports PTI but it has been disabled on command-line, remove the nopti or pti=off option from your bootloader configuration"
 					else
@@ -5073,7 +5080,7 @@ check_CVE_2018_3639_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spec_store_bypass"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/spec_store_bypass"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -5296,7 +5303,7 @@ check_CVE_2018_3620_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/l1tf"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -5407,7 +5414,7 @@ check_CVE_2018_3646_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/l1tf" '.*' quiet; then
+	if sys_interface_check "$VULN_SYSFS_BASE/l1tf" '.*' quiet; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 	fi
@@ -5419,9 +5426,9 @@ check_CVE_2018_3646_linux()
 		_info_nol "  * EPT is disabled: "
 		ept_disabled=-1
 		if [ "$opt_live" = 1 ]; then
-			if ! [ -r /sys/module/kvm_intel/parameters/ept ]; then
+			if ! [ -r "$SYS_MODULE_BASE/kvm_intel/parameters/ept" ]; then
 				pstatus blue N/A "the kvm_intel module is not loaded"
-			elif [ "$(cat /sys/module/kvm_intel/parameters/ept)" = N ]; then
+			elif [ "$(cat "$SYS_MODULE_BASE/kvm_intel/parameters/ept")" = N ]; then
 				pstatus green YES
 				ept_disabled=1
 			else
@@ -5497,7 +5504,7 @@ check_CVE_2018_3646_linux()
 				fi
 			else
 				l1d_mode=-1
-				pstatus yellow UNKNOWN "can't find or read /sys/devices/system/cpu/vulnerabilities/l1tf"
+				pstatus yellow UNKNOWN "can't find or read $VULN_SYSFS_BASE/l1tf"
 			fi
 		else
 			l1d_mode=-1
@@ -5748,7 +5755,7 @@ check_mds_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/mds" '^[^;]+'; then
+	if sys_interface_check "$VULN_SYSFS_BASE/mds" '^[^;]+'; then
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
 	fi
@@ -5881,7 +5888,7 @@ check_CVE_2019_11135_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/tsx_async_abort"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/tsx_async_abort"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -5977,7 +5984,7 @@ check_CVE_2018_12207_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/itlb_multihit"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/itlb_multihit"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -6089,7 +6096,7 @@ check_CVE_2020_0543_linux()
 	status=UNK
 	sys_interface_available=0
 	msg=''
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/srbds"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/srbds"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -6321,7 +6328,7 @@ check_CVE_2022_40982_linux() {
 	sys_interface_available=0
 	msg=''
 
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/gather_data_sampling"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/gather_data_sampling"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
@@ -6416,7 +6423,7 @@ check_CVE_2023_20569_linux() {
 	sys_interface_available=0
 	msg=''
 
-	if sys_interface_check "/sys/devices/system/cpu/vulnerabilities/spec_rstack_overflow"; then
+	if sys_interface_check "$VULN_SYSFS_BASE/spec_rstack_overflow"; then
 		# this kernel has the /sys interface, trust it over everything
 		sys_interface_available=1
 		status=$ret_sys_interface_check_status
