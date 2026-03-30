@@ -46,4 +46,15 @@ for pattern in $SECTIONS; do
 done >"$OUTPUT"
 
 chmod +x "$OUTPUT"
-echo "Assembled $OUTPUT ($(wc -l <"$OUTPUT") lines)"
+
+# Patch VERSION= with semantic version: X.Y.Z
+# X=YY, Y=number of CVE files in src/vulns/, Z=MMDDVAL
+# VAL is a 3-digit (000-999) value derived from seconds since midnight UTC
+cve_count=$(find "$SRCDIR/vulns" -maxdepth 1 -name '*.sh' -type f | wc -l | tr -d ' ')
+epoch=$(date -u +%s)
+secs_since_midnight=$((epoch % 86400))
+val=$(printf '%03d' $((secs_since_midnight * 1000 / 86400)))
+version="$(date -u +%y).${cve_count}.$(date -u +%m%d)${val}"
+sed -i "s/^VERSION=.*/VERSION='${version}'/" "$OUTPUT"
+
+echo "Assembled $OUTPUT ($(wc -l <"$OUTPUT") lines, version $version)"

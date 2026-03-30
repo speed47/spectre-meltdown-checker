@@ -53,6 +53,16 @@ Typical workflow:
 3. When ready for release, `dev` is merged into `source`.
 4. CI builds the script and pushes it to `master` for production.
 
+## Versioning
+
+The project follows semantic versioning in the format `X.Y.Z`:
+
+- **X** = the current year, in `YY` format.
+- **Y** = the number of CVEs supported by the script, which corresponds to the number of files under `src/vulns/`.
+- **Z** = `MMDDVAL`, where `MMDD` is the UTC build date and `VAL` is a 3-digit value (000–999) that increases monotonically throughout the day, computed as `seconds_since_midnight_UTC * 1000 / 86400`.
+
+The version is patched automatically by `build.sh` into the `VERSION=` variable of the assembled script. The source file (`src/libs/001_core_header.sh`) carries a placeholder value that is overwritten at build time.
+
 ## Linting and Testing
 
 ```bash
