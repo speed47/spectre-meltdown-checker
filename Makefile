@@ -9,13 +9,15 @@ SRC_FILES  := $(shell find src -name '*.sh' -type f) build.sh
 all: build shellcheck fmt-check
 
 build:
-	./build.sh $(OUTPUT)
+	@./build.sh $(OUTPUT)
 
 shellcheck: $(OUTPUT)
-	shellcheck $(OUTPUT)
+	@echo Running shellcheck...
+	@shellcheck $(OUTPUT)
 
 fmt:
 	$(SHFMT) -w $(SHFMT_OPTS) $(SRC_FILES)
 
 fmt-check:
-	$(SHFMT) -d $(SHFMT_OPTS) $(SRC_FILES)
+	@echo Checking formatting...
+	@$(SHFMT) -d $(SHFMT_OPTS) $(SRC_FILES)

@@ -1,30 +1,26 @@
-name: CI
+name: dev-build
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - dev
 
 jobs:
-  build:
+  dev-build:
 
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: true
     - name: install prerequisites
-      run: sudo apt-get update && sudo apt-get install -y shellcheck jq sqlite3 iucode-tool
-    - name: shellcheck
-      run: shellcheck -s sh spectre-meltdown-checker.sh
-    - name: check indentation
-      run: |
-        if [ $(grep -cPv "^\t*\S|^$" spectre-meltdown-checker.sh) != 0 ]; then
-          echo "Badly indented lines found:"
-          grep -nPv "^\t*\S|^$" spectre-meltdown-checker.sh
-          exit 1
-        else
-          echo "Indentation seems correct."
-        fi
+      run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt jq sqlite3 iucode-tool make
+    - name: build and check
+      run: make build fmt-check shellcheck
     - name: check direct execution
       run: |
-        expected=19
+        expected=$(cat .github/workflows/expected_cve_count)
         nb=$(sudo ./spectre-meltdown-checker.sh --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
@@ -34,7 +30,7 @@ jobs:
         fi
     - name: check docker compose run execution
       run: |
-        expected=19
+        expected=$(cat .github/workflows/expected_cve_count)
         docker compose build
         nb=$(docker compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
@@ -45,7 +41,7 @@ jobs:
         fi
     - name: check docker run execution
       run: |
-        expected=19
+        expected=$(cat .github/workflows/expected_cve_count)
         docker build -t spectre-meltdown-checker .
         nb=$(docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
@@ -54,7 +50,7 @@ jobs:
         else
           echo "OK $nb CVEs reported"
         fi
-    - name: check fwdb update
+    - name: check fwdb update (separated)
       run: |
         nbtmp1=$(find /tmp 2>/dev/null | wc -l)
         ./spectre-meltdown-checker.sh --update-fwdb; ret=$?
@@ -71,3 +67,28 @@ jobs:
           echo "No .mcedb file found after updating fwdb"
           exit 1
         fi
+    - name: check fwdb update (builtin)
+      run: |
+        nbtmp1=$(find /tmp 2>/dev/null | wc -l)
+        ./spectre-meltdown-checker.sh --update-builtin-fwdb; ret=$?
+        if [ "$ret" != 0 ]; then
+          echo "Non-zero return value: $ret"
+          exit 1
+        fi
+        nbtmp2=$(find /tmp 2>/dev/null | wc -l)
+        if [ "$nbtmp1" != "$nbtmp2" ]; then
+          echo "Left temporary files!"
+          exit 1
+        fi
+    - name: push artifact to the dev-build branch
+      run: |
+        tmpdir=$(mktemp -d)
+        cp ./spectre-meltdown-checker.sh $tmpdir/
+        cp -va ./dist/* $tmpdir/
+        if ! git checkout -f dev-build; then
+          git checkout -B dev-build;
+        fi
+        mv $tmpdir/* .
+        git add *
+        git status
+        git branch
