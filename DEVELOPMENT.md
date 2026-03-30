@@ -69,4 +69,5 @@ This script uses the following naming rules for variables:
 `<name>`            : Scratch/temporary variables inside functions (e.g. core, msg, col).
                         These must be declared as `local`. These must not match any naming pattern above.
                         Any variable that is only used in the scope of a given function falls in this category.
-                        These must start with a [a-z] character.
+
+Additionally, all vars must start with a [a-z] character, never by an underscore.
