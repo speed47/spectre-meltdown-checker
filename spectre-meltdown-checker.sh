@@ -337,25 +337,25 @@ _is_cpu_affected_cached()
 {
 	# shellcheck disable=SC2086
 	case "$1" in
-		CVE-2017-5753) return $status_variant1;;
-		CVE-2017-5715) return $status_variant2;;
-		CVE-2017-5754) return $status_variant3;;
-		CVE-2018-3640) return $status_variant3a;;
-		CVE-2018-3639) return $status_variant4;;
-		CVE-2018-3615) return $status_variantl1tf_sgx;;
-		CVE-2018-3620) return $status_variantl1tf;;
-		CVE-2018-3646) return $status_variantl1tf;;
-		CVE-2018-12126) return $status_msbds;;
-		CVE-2018-12130) return $status_mfbds;;
-		CVE-2018-12127) return $status_mlpds;;
-		CVE-2019-11091) return $status_mdsum;;
-		CVE-2019-11135) return $status_taa;;
-		CVE-2018-12207) return $status_itlbmh;;
-		CVE-2020-0543) return $status_srbds;;
-		CVE-2023-20593) return $status_zenbleed;;
-		CVE-2022-40982) return $status_downfall;;
-		CVE-2023-20569) return $status_inception;;
-		CVE-2023-23583) return $status_reptar;;
+		CVE-2017-5753) return $affected_variant1;;
+		CVE-2017-5715) return $affected_variant2;;
+		CVE-2017-5754) return $affected_variant3;;
+		CVE-2018-3640) return $affected_variant3a;;
+		CVE-2018-3639) return $affected_variant4;;
+		CVE-2018-3615) return $affected_variantl1tf_sgx;;
+		CVE-2018-3620) return $affected_variantl1tf;;
+		CVE-2018-3646) return $affected_variantl1tf;;
+		CVE-2018-12126) return $affected_msbds;;
+		CVE-2018-12130) return $affected_mfbds;;
+		CVE-2018-12127) return $affected_mlpds;;
+		CVE-2019-11091) return $affected_mdsum;;
+		CVE-2019-11135) return $affected_taa;;
+		CVE-2018-12207) return $affected_itlbmh;;
+		CVE-2020-0543) return $affected_srbds;;
+		CVE-2023-20593) return $affected_zenbleed;;
+		CVE-2022-40982) return $affected_downfall;;
+		CVE-2023-20569) return $affected_inception;;
+		CVE-2023-23583) return $affected_reptar;;
 		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
 	esac
 }
@@ -411,91 +411,91 @@ is_cpu_affected()
 		return $?
 	fi
 
-	status_variant1=''
-	status_variant2=''
-	status_variant3=''
-	status_variant3a=''
-	status_variant4=''
-	status_variantl1tf=''
-	status_msbds=''
-	status_mfbds=''
-	status_mlpds=''
-	status_mdsum=''
-	status_taa=''
-	status_itlbmh=''
-	status_srbds=''
+	affected_variant1=''
+	affected_variant2=''
+	affected_variant3=''
+	affected_variant3a=''
+	affected_variant4=''
+	affected_variantl1tf=''
+	affected_msbds=''
+	affected_mfbds=''
+	affected_mlpds=''
+	affected_mdsum=''
+	affected_taa=''
+	affected_itlbmh=''
+	affected_srbds=''
 	# Zenbleed and Inception are both AMD specific, look for "is_amd" below:
-	status_zenbleed=immune
-	status_inception=immune
+	affected_zenbleed=immune
+	affected_inception=immune
 	# Downfall & Reptar are Intel specific, look for "is_intel" below:
-	status_downfall=immune
-	status_reptar=immune
+	affected_downfall=immune
+	affected_reptar=immune
 
 	if is_cpu_mds_free; then
-		[ -z "$status_msbds" ] && status_msbds=immune
-		[ -z "$status_mfbds" ] && status_mfbds=immune
-		[ -z "$status_mlpds" ] && status_mlpds=immune
-		[ -z "$status_mdsum" ] && status_mdsum=immune
+		[ -z "$affected_msbds" ] && affected_msbds=immune
+		[ -z "$affected_mfbds" ] && affected_mfbds=immune
+		[ -z "$affected_mlpds" ] && affected_mlpds=immune
+		[ -z "$affected_mdsum" ] && affected_mdsum=immune
 		_debug "is_cpu_affected: cpu not affected by Microarchitectural Data Sampling"
 	fi
 
 	if is_cpu_taa_free; then
-		[ -z "$status_taa" ] && status_taa=immune
+		[ -z "$affected_taa" ] && affected_taa=immune
 		_debug "is_cpu_affected: cpu not affected by TSX Asynhronous Abort"
 	fi
 
 	if is_cpu_srbds_free; then
-		[ -z "$status_srbds" ] && status_srbds=immune
+		[ -z "$affected_srbds" ] && affected_srbds=immune
 		_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
 	fi
 
 	if is_cpu_specex_free; then
-		status_variant1=immune
-		status_variant2=immune
-		status_variant3=immune
-		status_variant3a=immune
-		status_variant4=immune
-		status_variantl1tf=immune
-		status_msbds=immune
-		status_mfbds=immune
-		status_mlpds=immune
-		status_mdsum=immune
-		status_taa=immune
-		status_srbds=immune
+		affected_variant1=immune
+		affected_variant2=immune
+		affected_variant3=immune
+		affected_variant3a=immune
+		affected_variant4=immune
+		affected_variantl1tf=immune
+		affected_msbds=immune
+		affected_mfbds=immune
+		affected_mlpds=immune
+		affected_mdsum=immune
+		affected_taa=immune
+		affected_srbds=immune
 	elif is_intel; then
 		# Intel
 		# https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
 		# https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown affected
 		# model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
 		if echo "$cpu_friendly_name" | grep -qE 'Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K?'; then
-			status_variant1=vuln
-			[ -z "$status_variant2" ] && status_variant2=immune
-			status_variant3=vuln
+			affected_variant1=vuln
+			[ -z "$affected_variant2" ] && affected_variant2=immune
+			affected_variant3=vuln
 		fi
 		if [ "$cap_rdcl_no" = 1 ]; then
 			# capability bit for future Intel processor that will explicitly state
 			# that they're not affected to Meltdown
 			# this var is set in check_cpu()
-			[ -z "$status_variant3" ]    && status_variant3=immune
-			[ -z "$status_variantl1tf" ] && status_variantl1tf=immune
+			[ -z "$affected_variant3" ]    && affected_variant3=immune
+			[ -z "$affected_variantl1tf" ] && affected_variantl1tf=immune
 			_debug "is_cpu_affected: RDCL_NO is set so not vuln to meltdown nor l1tf"
 		fi
 		if [ "$cap_ssb_no" = 1 ]; then
 			# capability bit for future Intel processor that will explicitly state
 			# that they're not affected to Variant 4
 			# this var is set in check_cpu()
-			[ -z "$status_variant4" ] && status_variant4=immune
-			_debug "is_cpu_affected: SSB_NO is set so not vuln to status_variant4"
+			[ -z "$affected_variant4" ] && affected_variant4=immune
+			_debug "is_cpu_affected: SSB_NO is set so not vuln to affected_variant4"
 		fi
 		if is_cpu_ssb_free; then
-			[ -z "$status_variant4" ] && status_variant4=immune
-			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to status_variant4"
+			[ -z "$affected_variant4" ] && affected_variant4=immune
+			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to affected_variant4"
 		fi
 		# variant 3a
 		if [ "$cpu_family" = 6 ]; then
 			if [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] || [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
 				_debug "is_cpu_affected: xeon phi immune to variant 3a"
-				[ -z "$status_variant3a" ] && status_variant3a=immune
+				[ -z "$affected_variant3a" ] && affected_variant3a=immune
 			elif [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ]; then
@@ -504,7 +504,7 @@ is_cpu_affected()
 					# => silvermont CPUs (aka cherry lake for tablets and brawsell for mobile/desktop) don't seem to be affected
 					# => goldmont ARE affected
 					_debug "is_cpu_affected: silvermont immune to variant 3a"
-					[ -z "$status_variant3a" ] && status_variant3a=immune
+					[ -z "$affected_variant3a" ] && affected_variant3a=immune
 			fi
 		fi
 		# L1TF (RDCL_NO already checked above)
@@ -528,14 +528,14 @@ is_cpu_affected()
 				[ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
 
 				_debug "is_cpu_affected: intel family 6 but model known to be immune to l1tf"
-				[ -z "$status_variantl1tf" ] && status_variantl1tf=immune
+				[ -z "$affected_variantl1tf" ] && affected_variantl1tf=immune
 			else
 				_debug "is_cpu_affected: intel family 6 is vuln to l1tf"
-				status_variantl1tf=vuln
+				affected_variantl1tf=vuln
 			fi
 		elif [ "$cpu_family" -lt 6 ]; then
 			_debug "is_cpu_affected: intel family < 6 is immune to l1tf"
-			[ -z "$status_variantl1tf" ] && status_variantl1tf=immune
+			[ -z "$affected_variantl1tf" ] && affected_variantl1tf=immune
 		fi
 		# Downfall
 		if [ "$cap_gds_no" = 1 ]; then
@@ -558,7 +558,7 @@ is_cpu_affected()
 				[ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ]; then
 				_debug "is_cpu_affected: downfall: affected"
-				status_downfall=vuln
+				affected_downfall=vuln
 			elif [ "$cap_avx2" = 0 ] && [ "$cap_avx512" = 0 ]; then
 				_debug "is_cpu_affected: downfall: no avx; immune"
 			else
@@ -616,7 +616,7 @@ is_cpu_affected()
 			)
 			if [ "$cpu_cpuid" = "$affected_cpuid" ] && [ $((cpu_platformid & ucode_platformid_mask)) -gt 0 ]; then
 				# this is not perfect as Intel never tells about their EOL CPUs, so more CPUs might be affected but there's no way to tell
-				status_reptar=vuln
+				affected_reptar=vuln
 				g_reptar_fixed_ucode_version=$fixed_ucode_ver
 				break
 			fi
@@ -624,38 +624,38 @@ is_cpu_affected()
 
 
 	elif is_amd || is_hygon; then
-		# AMD revised their statement about status_variant2 => affected
+		# AMD revised their statement about affected_variant2 => affected
 		# https://www.amd.com/en/corporate/speculative-execution
-		status_variant1=vuln
-		status_variant2=vuln
-		[ -z "$status_variant3"  ] && status_variant3=immune
+		affected_variant1=vuln
+		affected_variant2=vuln
+		[ -z "$affected_variant3"  ] && affected_variant3=immune
 		# https://www.amd.com/en/corporate/security-updates
 		# "We have not identified any AMD x86 products susceptible to the Variant 3a vulnerability in our analysis to-date."
-		[ -z "$status_variant3a" ] && status_variant3a=immune
+		[ -z "$affected_variant3a" ] && affected_variant3a=immune
 		if is_cpu_ssb_free; then
-			[ -z "$status_variant4" ] && status_variant4=immune
-			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to status_variant4"
+			[ -z "$affected_variant4" ] && affected_variant4=immune
+			_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to affected_variant4"
 		fi
-		status_variantl1tf=immune
+		affected_variantl1tf=immune
 
 		# Zenbleed
-		amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && status_zenbleed=vuln
-		amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && status_zenbleed=vuln
-		amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && status_zenbleed=vuln
+		amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && affected_zenbleed=vuln
+		amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && affected_zenbleed=vuln
+		amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && affected_zenbleed=vuln
 
 		# Inception (according to kernel, zen 1 to 4)
 		if [ "$cpu_family" = $(( 0x17 )) ] || [ "$cpu_family" = $(( 0x19 )) ]; then
-			status_inception=vuln
+			affected_inception=vuln
 		fi
 
 	elif [ "$cpu_vendor" = CAVIUM ]; then
-		status_variant3=immune
-		status_variant3a=immune
-		status_variantl1tf=immune
+		affected_variant3=immune
+		affected_variant3a=immune
+		affected_variantl1tf=immune
 	elif [ "$cpu_vendor" = PHYTIUM ]; then
-		status_variant3=immune
-		status_variant3a=immune
-		status_variantl1tf=immune
+		affected_variant3=immune
+		affected_variant3a=immune
+		affected_variantl1tf=immune
 	elif [ "$cpu_vendor" = ARM ]; then
 		# ARM
 		# reference: https://developer.arm.com/support/security-update
@@ -688,73 +688,73 @@ is_cpu_affected()
 				# Maintain cumulative check of vulnerabilities -
 				# if at least one of the cpu is affected, then the system is affected
 				if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc08 -e 0xc09 -e 0xc0d -e 0xc0e; then
-					status_variant1=vuln
-					status_variant2=vuln
-					[ -z "$status_variant3" ] && status_variant3=immune
-					[ -z "$status_variant3a" ] && status_variant3a=immune
-					[ -z "$status_variant4" ] && status_variant4=immune
+					affected_variant1=vuln
+					affected_variant2=vuln
+					[ -z "$affected_variant3" ] && affected_variant3=immune
+					[ -z "$affected_variant3a" ] && affected_variant3a=immune
+					[ -z "$affected_variant4" ] && affected_variant4=immune
 					_debug "checking cpu$i: armv7 A8/A9/A12/A17 non affected to variants 3, 3a & 4"
 				elif [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc0f; then
-					status_variant1=vuln
-					status_variant2=vuln
-					[ -z "$status_variant3" ] && status_variant3=immune
-					status_variant3a=vuln
-					[ -z "$status_variant4" ] && status_variant4=immune
+					affected_variant1=vuln
+					affected_variant2=vuln
+					[ -z "$affected_variant3" ] && affected_variant3=immune
+					affected_variant3a=vuln
+					[ -z "$affected_variant4" ] && affected_variant4=immune
 					_debug "checking cpu$i: armv7 A15 non affected to variants 3 & 4"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd07 -e 0xd08; then
-					status_variant1=vuln
-					status_variant2=vuln
-					[ -z "$status_variant3" ] && status_variant3=immune
-					status_variant3a=vuln
-					status_variant4=vuln
+					affected_variant1=vuln
+					affected_variant2=vuln
+					[ -z "$affected_variant3" ] && affected_variant3=immune
+					affected_variant3a=vuln
+					affected_variant4=vuln
 					_debug "checking cpu$i: armv8 A57/A72 non affected to variants 3"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd09; then
-					status_variant1=vuln
-					status_variant2=vuln
-					[ -z "$status_variant3" ] && status_variant3=immune
-					[ -z "$status_variant3a" ] && status_variant3a=immune
-					status_variant4=vuln
+					affected_variant1=vuln
+					affected_variant2=vuln
+					[ -z "$affected_variant3" ] && affected_variant3=immune
+					[ -z "$affected_variant3a" ] && affected_variant3a=immune
+					affected_variant4=vuln
 					_debug "checking cpu$i: armv8 A73 non affected to variants 3 & 3a"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0a; then
-					status_variant1=vuln
-					status_variant2=vuln
-					status_variant3=vuln
-					[ -z "$status_variant3a" ] && status_variant3a=immune
-					status_variant4=vuln
+					affected_variant1=vuln
+					affected_variant2=vuln
+					affected_variant3=vuln
+					[ -z "$affected_variant3a" ] && affected_variant3a=immune
+					affected_variant4=vuln
 					_debug "checking cpu$i: armv8 A75 non affected to variant 3a"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0b -e 0xd0c -e 0xd0d; then
-					status_variant1=vuln
-					[ -z "$status_variant2" ] && status_variant2=immune
-					[ -z "$status_variant3" ] && status_variant3=immune
-					[ -z "$status_variant3a" ] && status_variant3a=immune
-					status_variant4=vuln
+					affected_variant1=vuln
+					[ -z "$affected_variant2" ] && affected_variant2=immune
+					[ -z "$affected_variant3" ] && affected_variant3=immune
+					[ -z "$affected_variant3a" ] && affected_variant3a=immune
+					affected_variant4=vuln
 					_debug "checking cpu$i: armv8 A76/A77/NeoverseN1 non affected to variant 2, 3 & 3a"
 				elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd40 -e 0xd49 -e 0xd4f; then
-					status_variant1=vuln
-					[ -z "$status_variant2" ] && status_variant2=immune
-					[ -z "$status_variant3" ] && status_variant3=immune
-					[ -z "$status_variant3a" ] && status_variant3a=immune
-					[ -z "$status_variant4" ] && status_variant4=immune
+					affected_variant1=vuln
+					[ -z "$affected_variant2" ] && affected_variant2=immune
+					[ -z "$affected_variant3" ] && affected_variant3=immune
+					[ -z "$affected_variant3a" ] && affected_variant3a=immune
+					[ -z "$affected_variant4" ] && affected_variant4=immune
 					_debug "checking cpu$i: armv8 NeoverseN2/V1/V2 non affected to variant 2, 3, 3a & 4"
 				elif [ "$cpuarch" -le 7 ] || { [ "$cpuarch" = 8 ] && [ $(( cpupart )) -lt $(( 0xd07 )) ]; } ; then
-					[ -z "$status_variant1" ] && status_variant1=immune
-					[ -z "$status_variant2" ] && status_variant2=immune
-					[ -z "$status_variant3" ] && status_variant3=immune
-					[ -z "$status_variant3a" ] && status_variant3a=immune
-					[ -z "$status_variant4" ] && status_variant4=immune
+					[ -z "$affected_variant1" ] && affected_variant1=immune
+					[ -z "$affected_variant2" ] && affected_variant2=immune
+					[ -z "$affected_variant3" ] && affected_variant3=immune
+					[ -z "$affected_variant3a" ] && affected_variant3a=immune
+					[ -z "$affected_variant4" ] && affected_variant4=immune
 					_debug "checking cpu$i: arm arch$cpuarch, all immune (v7 or v8 and model < 0xd07)"
 				else
-					status_variant1=vuln
-					status_variant2=vuln
-					status_variant3=vuln
-					status_variant3a=vuln
-					status_variant4=vuln
+					affected_variant1=vuln
+					affected_variant2=vuln
+					affected_variant3=vuln
+					affected_variant3a=vuln
+					affected_variant4=vuln
 					_debug "checking cpu$i: arm unknown arch$cpuarch part$cpupart, considering vuln"
 				fi
 			fi
-			_debug "is_cpu_affected: for cpu$i and so far, we have <$status_variant1> <$status_variant2> <$status_variant3> <$status_variant3a> <$status_variant4>"
+			_debug "is_cpu_affected: for cpu$i and so far, we have <$affected_variant1> <$affected_variant2> <$affected_variant3> <$affected_variant3a> <$affected_variant4>"
 		done
-		status_variantl1tf=immune
+		affected_variantl1tf=immune
 	fi
 
 	# we handle iTLB Multihit here (not linked to is_specex_free)
@@ -777,42 +777,42 @@ is_cpu_affected()
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] || \
 				[ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
 				_debug "is_cpu_affected: intel family 6 but model known to be immune to itlbmh"
-				[ -z "$status_itlbmh" ] && status_itlbmh=immune
+				[ -z "$affected_itlbmh" ] && affected_itlbmh=immune
 			else
 				_debug "is_cpu_affected: intel family 6 is vuln to itlbmh"
-				status_itlbmh=vuln
+				affected_itlbmh=vuln
 			fi
 		elif [ "$cpu_family" -lt 6 ]; then
 			_debug "is_cpu_affected: intel family < 6 is immune to itlbmh"
-			[ -z "$status_itlbmh" ] && status_itlbmh=immune
+			[ -z "$affected_itlbmh" ] && affected_itlbmh=immune
 		fi
 	else
 		_debug "is_cpu_affected: non-intel not affected to itlbmh"
-		[ -z "$status_itlbmh" ] && status_itlbmh=immune
+		[ -z "$affected_itlbmh" ] && affected_itlbmh=immune
 	fi
 
-	_debug "is_cpu_affected: temp results are <$status_variant1> <$status_variant2> <$status_variant3> <$status_variant3a> <$status_variant4> <$status_variantl1tf>"
-	[ "$status_variant1"          = "immune" ] && status_variant1=1       || status_variant1=0
-	[ "$status_variant2"          = "immune" ] && status_variant2=1       || status_variant2=0
-	[ "$status_variant3"          = "immune" ] && status_variant3=1       || status_variant3=0
-	[ "$status_variant3a"         = "immune" ] && status_variant3a=1      || status_variant3a=0
-	[ "$status_variant4"          = "immune" ] && status_variant4=1       || status_variant4=0
-	[ "$status_variantl1tf"       = "immune" ] && status_variantl1tf=1    || status_variantl1tf=0
-	[ "$status_msbds"     = "immune" ] && status_msbds=1  || status_msbds=0
-	[ "$status_mfbds"     = "immune" ] && status_mfbds=1  || status_mfbds=0
-	[ "$status_mlpds"     = "immune" ] && status_mlpds=1  || status_mlpds=0
-	[ "$status_mdsum"     = "immune" ] && status_mdsum=1  || status_mdsum=0
-	[ "$status_taa"       = "immune" ] && status_taa=1    || status_taa=0
-	[ "$status_itlbmh"    = "immune" ] && status_itlbmh=1 || status_itlbmh=0
-	[ "$status_srbds"     = "immune" ] && status_srbds=1  || status_srbds=0
-	[ "$status_zenbleed"  = "immune" ] && status_zenbleed=1  || status_zenbleed=0
-	[ "$status_downfall"  = "immune" ] && status_downfall=1  || status_downfall=0
-	[ "$status_inception" = "immune" ] && status_inception=1 || status_inception=0
-	[ "$status_reptar"    = "immune" ] && status_reptar=1    || status_reptar=0
-	status_variantl1tf_sgx="$status_variantl1tf"
+	_debug "is_cpu_affected: temp results are <$affected_variant1> <$affected_variant2> <$affected_variant3> <$affected_variant3a> <$affected_variant4> <$affected_variantl1tf>"
+	[ "$affected_variant1"          = "immune" ] && affected_variant1=1       || affected_variant1=0
+	[ "$affected_variant2"          = "immune" ] && affected_variant2=1       || affected_variant2=0
+	[ "$affected_variant3"          = "immune" ] && affected_variant3=1       || affected_variant3=0
+	[ "$affected_variant3a"         = "immune" ] && affected_variant3a=1      || affected_variant3a=0
+	[ "$affected_variant4"          = "immune" ] && affected_variant4=1       || affected_variant4=0
+	[ "$affected_variantl1tf"       = "immune" ] && affected_variantl1tf=1    || affected_variantl1tf=0
+	[ "$affected_msbds"     = "immune" ] && affected_msbds=1  || affected_msbds=0
+	[ "$affected_mfbds"     = "immune" ] && affected_mfbds=1  || affected_mfbds=0
+	[ "$affected_mlpds"     = "immune" ] && affected_mlpds=1  || affected_mlpds=0
+	[ "$affected_mdsum"     = "immune" ] && affected_mdsum=1  || affected_mdsum=0
+	[ "$affected_taa"       = "immune" ] && affected_taa=1    || affected_taa=0
+	[ "$affected_itlbmh"    = "immune" ] && affected_itlbmh=1 || affected_itlbmh=0
+	[ "$affected_srbds"     = "immune" ] && affected_srbds=1  || affected_srbds=0
+	[ "$affected_zenbleed"  = "immune" ] && affected_zenbleed=1  || affected_zenbleed=0
+	[ "$affected_downfall"  = "immune" ] && affected_downfall=1  || affected_downfall=0
+	[ "$affected_inception" = "immune" ] && affected_inception=1 || affected_inception=0
+	[ "$affected_reptar"    = "immune" ] && affected_reptar=1    || affected_reptar=0
+	affected_variantl1tf_sgx="$affected_variantl1tf"
 	# even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
-	[ "$cap_sgx" = 0 ] && status_variantl1tf_sgx=1
-	_debug "is_cpu_affected: final results are <$status_variant1> <$status_variant2> <$status_variant3> <$status_variant3a> <$status_variant4> <$status_variantl1tf> <$status_variantl1tf_sgx>"
+	[ "$cap_sgx" = 0 ] && affected_variantl1tf_sgx=1
+	_debug "is_cpu_affected: final results are <$affected_variant1> <$affected_variant2> <$affected_variant3> <$affected_variant3a> <$affected_variant4> <$affected_variantl1tf> <$affected_variantl1tf_sgx>"
 	g_is_cpu_affected_cached=1
 	_is_cpu_affected_cached "$1"
 	return $?
@@ -3842,17 +3842,17 @@ check_redhat_canonical_spectre()
 	elif [ -n "$g_kernel_err" ]; then
 		g_redhat_canonical_spectre=-2
 	else
-		# Red Hat / Ubuntu specific status_variant1 patch is difficult to detect,
+		# Red Hat / Ubuntu specific affected_variant1 patch is difficult to detect,
 		# let's use the two same tricks than the official Red Hat detection script uses:
 		if "${opt_arch_prefix}strings" "$g_kernel" | grep -qw noibrs && "${opt_arch_prefix}strings" "$g_kernel" | grep -qw noibpb; then
-			# 1) detect their specific status_variant2 patch. If it's present, it means
-			# that the status_variant1 patch is also present (both were merged at the same time)
-			_debug "found redhat/canonical version of the status_variant2 patch (implies status_variant1)"
+			# 1) detect their specific affected_variant2 patch. If it's present, it means
+			# that the affected_variant1 patch is also present (both were merged at the same time)
+			_debug "found redhat/canonical version of the affected_variant2 patch (implies affected_variant1)"
 			g_redhat_canonical_spectre=1
 		elif "${opt_arch_prefix}strings" "$g_kernel" | grep -q 'x86/pti:'; then
-			# 2) detect their specific status_variant3 patch. If it's present, but the status_variant2
-			# is not, it means that only status_variant1 is present in addition to status_variant3
-			_debug "found redhat/canonical version of the status_variant3 patch (implies status_variant1 but not status_variant2)"
+			# 2) detect their specific affected_variant3 patch. If it's present, but the affected_variant2
+			# is not, it means that only affected_variant1 is present in addition to affected_variant3
+			_debug "found redhat/canonical version of the affected_variant3 patch (implies affected_variant1 but not affected_variant2)"
 			g_redhat_canonical_spectre=2
 		else
 			g_redhat_canonical_spectre=0
@@ -4948,7 +4948,7 @@ check_CVE_2017_5754_linux()
 	is_xen_domU && xen_pv_domu=1
 
 	if [ "$opt_live" = 1 ]; then
-		# checking whether we're running under Xen PV 64 bits. If yes, we are affected by status_variant3
+		# checking whether we're running under Xen PV 64 bits. If yes, we are affected by affected_variant3
 		# (unless we are a Dom0)
 		_info_nol "* Running as a Xen PV DomU: "
 		if [ "$xen_pv_domu" = 1 ]; then
@@ -5074,7 +5074,7 @@ check_CVE_2018_3640()
 
 	_info_nol "* CPU microcode mitigates the vulnerability: "
 	if [ -n "$cap_ssbd" ]; then
-		# microcodes that ship with SSBD are known to also fix status_variant3a
+		# microcodes that ship with SSBD are known to also fix affected_variant3a
 		# there is no specific cpuid bit as far as we know
 		pstatus green YES
 	else
