@@ -3,9 +3,13 @@ g_builtin_dbversion=$(awk '/^# %%% MCEDB / { print $4 }' "$0")
 if [ -r "$g_mcedb_cache" ]; then
     # we have a local cache file, but it might be older than the builtin version we have
     g_local_dbversion=$(awk '/^# %%% MCEDB / { print $4 }' "$g_mcedb_cache")
-    # sort -V sorts by version number
-    g_older_dbversion=$(printf "%b\n%b" "$g_local_dbversion" "$g_builtin_dbversion" | sort -V | head -n1)
-    if [ "$g_older_dbversion" = "$g_builtin_dbversion" ]; then
+    # compare version strings of the form vN+iYYYYMMDD+hash
+    local_v=$(echo "$g_local_dbversion" | sed 's/^v\([0-9]*\).*/\1/')
+    builtin_v=$(echo "$g_builtin_dbversion" | sed 's/^v\([0-9]*\).*/\1/')
+    local_i=$(echo "$g_local_dbversion" | sed 's/.*+i\([0-9]*\).*/\1/')
+    builtin_i=$(echo "$g_builtin_dbversion" | sed 's/.*+i\([0-9]*\).*/\1/')
+    if [ "$local_v" -gt "$builtin_v" ] || \
+       { [ "$local_v" -eq "$builtin_v" ] && [ "$local_i" -gt "$builtin_i" ]; }; then
         g_mcedb_source="$g_mcedb_cache"
         g_mcedb_info="local firmwares DB $g_local_dbversion"
     fi
