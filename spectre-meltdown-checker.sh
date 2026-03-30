@@ -179,26 +179,45 @@ g_critical=0
 g_unknown=0
 g_nrpe_vuln=''
 
-g_supported_cve_list='
-CVE-2017-5753
-CVE-2017-5715
-CVE-2017-5754
-CVE-2018-3640
-CVE-2018-3639
-CVE-2018-3615
-CVE-2018-3620
-CVE-2018-3646
-CVE-2018-12126
-CVE-2018-12130
-CVE-2018-12127
-CVE-2019-11091
-CVE-2019-11135
-CVE-2018-12207
-CVE-2020-0543
-CVE-2023-20593
-CVE-2022-40982
-CVE-2023-20569
-CVE-2023-23583'
+# CVE Registry: single source of truth for all CVE metadata.
+# Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases
+readonly CVE_REGISTRY='
+CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass
+CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection
+CVE-2017-5754|MELTDOWN|variant3|Variant 3, Meltdown, rogue data cache load
+CVE-2018-3640|VARIANT 3A|variant3a|Variant 3a, rogue system register read
+CVE-2018-3639|VARIANT 4|variant4|Variant 4, speculative store bypass
+CVE-2018-3615|L1TF SGX|variantl1tf_sgx|Foreshadow (SGX), L1 terminal fault
+CVE-2018-3620|L1TF OS|variantl1tf|Foreshadow-NG (OS), L1 terminal fault
+CVE-2018-3646|L1TF VMM|variantl1tf|Foreshadow-NG (VMM), L1 terminal fault
+CVE-2018-12126|MSBDS|msbds|Fallout, microarchitectural store buffer data sampling (MSBDS)
+CVE-2018-12130|MFBDS|mfbds|ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)
+CVE-2018-12127|MLPDS|mlpds|RIDL, microarchitectural load port data sampling (MLPDS)
+CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable memory (MDSUM)
+CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)
+CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)
+CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)
+CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
+CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
+CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)
+CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue
+'
+
+# Derive the supported CVE list from the registry
+g_supported_cve_list=$(echo "$CVE_REGISTRY" | grep '^CVE-' | cut -d'|' -f1)
+
+# Look up a field from the CVE registry.
+# $1: CVE ID, $2: field number (see above for the field list)
+_cve_registry_field()
+{
+	local line
+	line=$(echo "$CVE_REGISTRY" | grep -E "^$1\|")
+	if [ -z "$line" ]; then
+		echo "$0: error: invalid CVE '$1' passed to _cve_registry_field()" >&2
+		exit 255
+	fi
+	echo "$line" | cut -d'|' -f"$2"
+}
 
 # find a sane command to print colored messages, we prefer `printf` over `echo`
 # because `printf` behavior is more standard across Linux/BSD
@@ -308,56 +327,16 @@ explain()
 
 cve2name()
 {
-	case "$1" in
-		CVE-2017-5753)	echo "Spectre Variant 1, bounds check bypass";;
-		CVE-2017-5715)	echo "Spectre Variant 2, branch target injection";;
-		CVE-2017-5754)	echo "Variant 3, Meltdown, rogue data cache load";;
-		CVE-2018-3640)	echo "Variant 3a, rogue system register read";;
-		CVE-2018-3639)	echo "Variant 4, speculative store bypass";;
-		CVE-2018-3615)	echo "Foreshadow (SGX), L1 terminal fault";;
-		CVE-2018-3620)	echo "Foreshadow-NG (OS), L1 terminal fault";;
-		CVE-2018-3646)	echo "Foreshadow-NG (VMM), L1 terminal fault";;
-		CVE-2018-12126) echo "Fallout, microarchitectural store buffer data sampling (MSBDS)";;
-		CVE-2018-12130) echo "ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)";;
-		CVE-2018-12127) echo "RIDL, microarchitectural load port data sampling (MLPDS)";;
-		CVE-2019-11091) echo "RIDL, microarchitectural data sampling uncacheable memory (MDSUM)";;
-		CVE-2019-11135) echo "ZombieLoad V2, TSX Asynchronous Abort (TAA)";;
-		CVE-2018-12207) echo "No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)";;
-		CVE-2020-0543) echo "Special Register Buffer Data Sampling (SRBDS)";;
-		CVE-2023-20593) echo "Zenbleed, cross-process information leak";;
-		CVE-2022-40982) echo "Downfall, gather data sampling (GDS)";;
-		CVE-2023-20569) echo "Inception, return address security (RAS)";;
-		CVE-2023-23583) echo "Reptar, redundant prefix issue";;
-		*) echo "$0: error: invalid CVE '$1' passed to cve2name()" >&2; exit 255;;
-	esac
+	_cve_registry_field "$1" 4
 }
 
 g_is_cpu_affected_cached=0
 _is_cpu_affected_cached()
 {
+	local suffix
+	suffix=$(_cve_registry_field "$1" 3)
 	# shellcheck disable=SC2086
-	case "$1" in
-		CVE-2017-5753) return $affected_variant1;;
-		CVE-2017-5715) return $affected_variant2;;
-		CVE-2017-5754) return $affected_variant3;;
-		CVE-2018-3640) return $affected_variant3a;;
-		CVE-2018-3639) return $affected_variant4;;
-		CVE-2018-3615) return $affected_variantl1tf_sgx;;
-		CVE-2018-3620) return $affected_variantl1tf;;
-		CVE-2018-3646) return $affected_variantl1tf;;
-		CVE-2018-12126) return $affected_msbds;;
-		CVE-2018-12130) return $affected_mfbds;;
-		CVE-2018-12127) return $affected_mlpds;;
-		CVE-2019-11091) return $affected_mdsum;;
-		CVE-2019-11135) return $affected_taa;;
-		CVE-2018-12207) return $affected_itlbmh;;
-		CVE-2020-0543) return $affected_srbds;;
-		CVE-2023-20593) return $affected_zenbleed;;
-		CVE-2022-40982) return $affected_downfall;;
-		CVE-2023-20569) return $affected_inception;;
-		CVE-2023-23583) return $affected_reptar;;
-		*) echo "$0: error: invalid variant '$1' passed to is_cpu_affected()" >&2; exit 255;;
-	esac
+	eval "return \$affected_${suffix}"
 }
 
 is_cpu_affected()
@@ -1490,28 +1469,7 @@ pvulnstatus()
 	local aka is_vuln vulnstatus
 	g_pvulnstatus_last_cve="$1"
 	if [ "$opt_batch" = 1 ]; then
-		case "$1" in
-			CVE-2017-5753) aka="SPECTRE VARIANT 1";;
-			CVE-2017-5715) aka="SPECTRE VARIANT 2";;
-			CVE-2017-5754) aka="MELTDOWN";;
-			CVE-2018-3640) aka="VARIANT 3A";;
-			CVE-2018-3639) aka="VARIANT 4";;
-			CVE-2018-3615) aka="L1TF SGX";;
-			CVE-2018-3620) aka="L1TF OS";;
-			CVE-2018-3646) aka="L1TF VMM";;
-			CVE-2018-12126) aka="MSBDS";;
-			CVE-2018-12130) aka="MFBDS";;
-			CVE-2018-12127) aka="MLPDS";;
-			CVE-2019-11091) aka="MDSUM";;
-			CVE-2019-11135) aka="TAA";;
-			CVE-2018-12207) aka="ITLBMH";;
-			CVE-2020-0543) aka="SRBDS";;
-			CVE-2023-20593) aka="ZENBLEED";;
-			CVE-2022-40982) aka="DOWNFALL";;
-			CVE-2023-20569) aka="INCEPTION";;
-			CVE-2023-23583) aka="REPTAR";;
-			*) echo "$0: error: invalid CVE '$1' passed to pvulnstatus()" >&2; exit 255;;
-		esac
+		aka=$(_cve_registry_field "$1" 2)
 
 		case "$opt_batch_format" in
 			text) _echo 0 "$1: $2 ($3)";;
