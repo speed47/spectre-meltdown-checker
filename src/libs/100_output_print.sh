@@ -18,7 +18,7 @@ _pr_echo_raw() {
             interpret_chars='-e'
         fi
         ctrlchar=$($g_echo_cmd $interpret_chars "\033")
-        msg=$($g_echo_cmd $interpret_chars "$msg" | sed -r "s/$ctrlchar\[([0-9][0-9]?(;[0-9][0-9]?)?)?m//g")
+        msg=$($g_echo_cmd $interpret_chars "$msg" | sed -E "s/$ctrlchar\[([0-9][0-9]?(;[0-9][0-9]?)?)?m//g")
     fi
     if [ "$g_echo_cmd_type" = printf ]; then
         if [ "$opt" = "-n" ]; then

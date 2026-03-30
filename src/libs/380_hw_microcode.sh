@@ -53,7 +53,7 @@ is_latest_known_ucode() {
             continue
         fi
         ucode=$(($(echo "$tuple" | cut -d, -f4)))
-        ucode_date=$(echo "$tuple" | cut -d, -f5 | sed -r 's=(....)(..)(..)=\1/\2/\3=')
+        ucode_date=$(echo "$tuple" | cut -d, -f5 | sed -E 's=(....)(..)(..)=\1/\2/\3=')
         pr_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $ucode from $ucode_date"
         ret_is_latest_known_ucode_latest=$(printf "latest version is 0x%x dated $ucode_date according to $g_mcedb_info" "$ucode")
         if [ "$cpu_ucode" -ge "$ucode" ]; then
