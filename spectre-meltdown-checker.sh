@@ -1469,44 +1469,85 @@ pstatus()
 	unset col
 }
 
+# --- Format-specific batch emitters ---
+# Each function handles one output format for pvulnstatus().
+# Arguments are: cve aka status description
+
+# Plain text batch emitter
+_emit_text()
+{
+	_echo 0 "$1: $3 ($4)"
+}
+
+# Short (space-separated CVE list) batch emitter
+_emit_short()
+{
+	g_short_output="${g_short_output}$1 "
+}
+
+# JSON batch emitter
+_emit_json()
+{
+	local is_vuln esc_name esc_infos
+	case "$3" in
+		UNK)  is_vuln="null";;
+		VULN) is_vuln="true";;
+		OK)   is_vuln="false";;
+		*)    echo "$0: error: unknown status '$3' passed to _emit_json()" >&2; exit 255;;
+	esac
+	# escape backslashes and double quotes for valid JSON strings
+	esc_name=$(printf '%s' "$2" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+	esc_infos=$(printf '%s' "$4" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+	[ -z "$g_json_output" ] && g_json_output='['
+	g_json_output="${g_json_output}{\"NAME\":\"$esc_name\",\"CVE\":\"$1\",\"VULNERABLE\":$is_vuln,\"INFOS\":\"$esc_infos\"},"
+}
+
+# NRPE batch emitter
+_emit_nrpe()
+{
+	[ "$3" = VULN ] && g_nrpe_vuln="$g_nrpe_vuln $1"
+}
+
+# Prometheus batch emitter
+_emit_prometheus()
+{
+	local esc_info
+	# escape backslashes and double quotes for Prometheus label values
+	esc_info=$(printf '%s' "$4" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+	g_prometheus_output="${g_prometheus_output:+$g_prometheus_output\n}specex_vuln_status{name=\"$2\",cve=\"$1\",status=\"$3\",info=\"$esc_info\"} 1"
+}
+
+# Update global state used to determine the program exit code
+_record_result()
+{
+	case "$2" in
+		UNK)  g_unknown="1";;
+		VULN) g_critical="1";;
+		OK)   ;;
+		*)    echo "$0: error: unknown status '$2' passed to _record_result()" >&2; exit 255;;
+	esac
+}
+
 # Print the final status of a vulnerability (incl. batch mode)
 # Arguments are: CVE UNK/OK/VULN description
 pvulnstatus()
 {
-	local aka is_vuln vulnstatus
+	local aka vulnstatus
 	g_pvulnstatus_last_cve="$1"
 	if [ "$opt_batch" = 1 ]; then
 		aka=$(_cve_registry_field "$1" 2)
 
 		case "$opt_batch_format" in
-			text) _echo 0 "$1: $2 ($3)";;
-			short) g_short_output="${g_short_output}$1 ";;
-			json)
-				case "$2" in
-					UNK)  is_vuln="null";;
-					VULN) is_vuln="true";;
-					OK)   is_vuln="false";;
-					*)    echo "$0: error: unknown status '$2' passed to pvulnstatus()" >&2; exit 255;;
-				esac
-				[ -z "$g_json_output" ] && g_json_output='['
-				g_json_output="${g_json_output}{\"NAME\":\"$aka\",\"CVE\":\"$1\",\"VULNERABLE\":$is_vuln,\"INFOS\":\"$3\"},"
-				;;
-
-			nrpe)	[ "$2" = VULN ] && g_nrpe_vuln="$g_nrpe_vuln $1";;
-			prometheus)
-				g_prometheus_output="${g_prometheus_output:+$g_prometheus_output\n}specex_vuln_status{name=\"$aka\",cve=\"$1\",status=\"$2\",info=\"$3\"} 1"
-				;;
+			text)       _emit_text       "$1" "$aka" "$2" "$3";;
+			short)      _emit_short      "$1" "$aka" "$2" "$3";;
+			json)       _emit_json       "$1" "$aka" "$2" "$3";;
+			nrpe)       _emit_nrpe       "$1" "$aka" "$2" "$3";;
+			prometheus) _emit_prometheus "$1" "$aka" "$2" "$3";;
 			*) echo "$0: error: invalid batch format '$opt_batch_format' specified" >&2; exit 255;;
 		esac
 	fi
 
-	# always fill global_* vars because we use that do decide the program exit code
-	case "$2" in
-		UNK)  g_unknown="1";;
-		VULN) g_critical="1";;
-		OK)   ;;
-		*)    echo "$0: error: unknown status '$2' passed to pvulnstatus()" >&2; exit 255;;
-	esac
+	_record_result "$1" "$2"
 
 	# display info if we're not in quiet/batch mode
 	vulnstatus="$2"
