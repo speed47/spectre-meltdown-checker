@@ -17,10 +17,13 @@ jobs:
     - name: install prerequisites
       run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt jq sqlite3 iucode-tool make
     - name: build and check
-      run: make build fmt-check shellcheck
+      run: |
+        make build fmt-check shellcheck
+        mv spectre-meltdown-checker.sh dist/
     - name: check direct execution
       run: |
         expected=$(cat .github/workflows/expected_cve_count)
+        cd dist
         nb=$(sudo ./spectre-meltdown-checker.sh --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
@@ -31,6 +34,7 @@ jobs:
     - name: check docker compose run execution
       run: |
         expected=$(cat .github/workflows/expected_cve_count)
+        cd dist
         docker compose build
         nb=$(docker compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
@@ -42,6 +46,7 @@ jobs:
     - name: check docker run execution
       run: |
         expected=$(cat .github/workflows/expected_cve_count)
+        cd dist
         docker build -t spectre-meltdown-checker .
         nb=$(docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
@@ -52,6 +57,7 @@ jobs:
         fi
     - name: check fwdb update (separated)
       run: |
+        cd dist
         nbtmp1=$(find /tmp 2>/dev/null | wc -l)
         ./spectre-meltdown-checker.sh --update-fwdb; ret=$?
         if [ "$ret" != 0 ]; then
@@ -69,6 +75,7 @@ jobs:
         fi
     - name: check fwdb update (builtin)
       run: |
+        cd dist
         nbtmp1=$(find /tmp 2>/dev/null | wc -l)
         ./spectre-meltdown-checker.sh --update-builtin-fwdb; ret=$?
         if [ "$ret" != 0 ]; then
@@ -83,12 +90,19 @@ jobs:
     - name: push artifact to the dev-build branch
       run: |
         tmpdir=$(mktemp -d)
-        cp ./spectre-meltdown-checker.sh $tmpdir/
-        cp -va ./dist/* $tmpdir/
-        if ! git checkout -f dev-build; then
-          git checkout -B dev-build;
-        fi
+        mv ./dist/* $tmpdir/
+        rm -rf ./dist
+        git fetch origin dev-build
+        git checkout -f dev-build
         mv $tmpdir/* .
         git add *
+        echo =#=#= DIFF CACHED
+        git diff --cached
+        echo =#=#= STATUS
         git status
-        git branch
+        echo =#=#= COMMIT
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git log ${{ github.ref }} -1 --format=format:'%s%n%n built from commit %H%n dated %ai%n by %an (%ae)%n%n %b'
+        git log ${{ github.ref }} -1 --format=format:'%s%n%n built from commit %H%n dated %ai%n by %an (%ae)%n%n %b' | git commit -F -
+        git push
