@@ -52,12 +52,12 @@ parse_cpu_details() {
         cpu_stepping=$(grep '^stepping' "$g_procfs/cpuinfo" | awk '{print $3}' | grep -E '^[0-9]+$' | head -n1)
         cpu_ucode=$(grep '^microcode' "$g_procfs/cpuinfo" | awk '{print $3}' | head -n1)
     else
-        cpu_vendor=$(dmesg 2>/dev/null | grep -i -m1 'Origin=' | cut -f2 -w | cut -f2 -d= | cut -f2 -d\")
-        cpu_family=$(dmesg 2>/dev/null | grep -i -m1 'Family=' | cut -f4 -w | cut -f2 -d=)
+        cpu_vendor=$(dmesg 2>/dev/null | grep -i -m1 'Origin=' | awk '{print $2}' | cut -f2 -d= | cut -f2 -d\")
+        cpu_family=$(dmesg 2>/dev/null | grep -i -m1 'Family=' | awk '{print $4}' | cut -f2 -d=)
         cpu_family=$((cpu_family))
-        cpu_model=$(dmesg 2>/dev/null | grep -i -m1 'Model=' | cut -f5 -w | cut -f2 -d=)
+        cpu_model=$(dmesg 2>/dev/null | grep -i -m1 'Model=' | awk '{print $5}' | cut -f2 -d=)
         cpu_model=$((cpu_model))
-        cpu_stepping=$(dmesg 2>/dev/null | grep -i -m1 'Stepping=' | cut -f6 -w | cut -f2 -d=)
+        cpu_stepping=$(dmesg 2>/dev/null | grep -i -m1 'Stepping=' | awk '{print $6}' | cut -f2 -d=)
         cpu_friendly_name=$(sysctl -n hw.model 2>/dev/null)
     fi
 
