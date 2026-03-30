@@ -8,8 +8,8 @@ if [ -r "$g_mcedb_cache" ]; then
     builtin_v=$(echo "$g_builtin_dbversion" | sed 's/^v\([0-9]*\).*/\1/')
     local_i=$(echo "$g_local_dbversion" | sed 's/.*+i\([0-9]*\).*/\1/')
     builtin_i=$(echo "$g_builtin_dbversion" | sed 's/.*+i\([0-9]*\).*/\1/')
-    if [ "$local_v" -gt "$builtin_v" ] || \
-       { [ "$local_v" -eq "$builtin_v" ] && [ "$local_i" -gt "$builtin_i" ]; }; then
+    if [ "$local_v" -gt "$builtin_v" ] ||
+        { [ "$local_v" -eq "$builtin_v" ] && [ "$local_i" -gt "$builtin_i" ]; }; then
         g_mcedb_source="$g_mcedb_cache"
         g_mcedb_info="local firmwares DB $g_local_dbversion"
     fi

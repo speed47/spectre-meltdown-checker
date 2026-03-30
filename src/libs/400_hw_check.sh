@@ -767,17 +767,17 @@ check_cpu() {
                 capabilities=$ret_read_msr_value
                 # https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/msr-index.h#n82
                 pr_debug "capabilities MSR is $capabilities (hex)"
-                [ $(( ret_read_msr_value_lo >> 0 & 1 )) -eq 1 ] && cap_rdcl_no=1
-                [ $(( ret_read_msr_value_lo >> 1 & 1 )) -eq 1 ] && cap_ibrs_all=1
-                [ $(( ret_read_msr_value_lo >> 2 & 1 )) -eq 1 ] && cap_rsba=1
-                [ $(( ret_read_msr_value_lo >> 3 & 1 )) -eq 1 ] && cap_l1dflush_no=1
-                [ $(( ret_read_msr_value_lo >> 4 & 1 )) -eq 1 ] && cap_ssb_no=1
-                [ $(( ret_read_msr_value_lo >> 5 & 1 )) -eq 1 ] && cap_mds_no=1
-                [ $(( ret_read_msr_value_lo >> 6 & 1 )) -eq 1 ] && cap_pschange_msc_no=1
-                [ $(( ret_read_msr_value_lo >> 7 & 1 )) -eq 1 ] && cap_tsx_ctrl_msr=1
-                [ $(( ret_read_msr_value_lo >> 8 & 1 )) -eq 1 ] && cap_taa_no=1
-                [ $(( ret_read_msr_value_lo >> 25 & 1 )) -eq 1 ] && cap_gds_ctrl=1
-                [ $(( ret_read_msr_value_lo >> 26 & 1 )) -eq 1 ] && cap_gds_no=1
+                [ $((ret_read_msr_value_lo >> 0 & 1)) -eq 1 ] && cap_rdcl_no=1
+                [ $((ret_read_msr_value_lo >> 1 & 1)) -eq 1 ] && cap_ibrs_all=1
+                [ $((ret_read_msr_value_lo >> 2 & 1)) -eq 1 ] && cap_rsba=1
+                [ $((ret_read_msr_value_lo >> 3 & 1)) -eq 1 ] && cap_l1dflush_no=1
+                [ $((ret_read_msr_value_lo >> 4 & 1)) -eq 1 ] && cap_ssb_no=1
+                [ $((ret_read_msr_value_lo >> 5 & 1)) -eq 1 ] && cap_mds_no=1
+                [ $((ret_read_msr_value_lo >> 6 & 1)) -eq 1 ] && cap_pschange_msc_no=1
+                [ $((ret_read_msr_value_lo >> 7 & 1)) -eq 1 ] && cap_tsx_ctrl_msr=1
+                [ $((ret_read_msr_value_lo >> 8 & 1)) -eq 1 ] && cap_taa_no=1
+                [ $((ret_read_msr_value_lo >> 25 & 1)) -eq 1 ] && cap_gds_ctrl=1
+                [ $((ret_read_msr_value_lo >> 26 & 1)) -eq 1 ] && cap_gds_no=1
                 pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no"
                 if [ "$cap_ibrs_all" = 1 ]; then
                     pstatus green YES
@@ -867,8 +867,8 @@ check_cpu() {
             read_msr $MSR_IA32_TSX_CTRL
             ret=$?
             if [ "$ret" = $READ_MSR_RET_OK ]; then
-                cap_tsx_ctrl_rtm_disable=$(( ret_read_msr_value_lo >> 0 & 1 ))
-                cap_tsx_ctrl_cpuid_clear=$(( ret_read_msr_value_lo >> 1 & 1 ))
+                cap_tsx_ctrl_rtm_disable=$((ret_read_msr_value_lo >> 0 & 1))
+                cap_tsx_ctrl_cpuid_clear=$((ret_read_msr_value_lo >> 1 & 1))
             fi
 
             pr_info_nol "    * TSX_CTRL MSR indicates TSX RTM is disabled: "
@@ -905,8 +905,8 @@ check_cpu() {
             read_msr $MSR_IA32_MCU_OPT_CTRL
             ret=$?
             if [ "$ret" = $READ_MSR_RET_OK ]; then
-                cap_gds_mitg_dis=$(( ret_read_msr_value_lo >> 4 & 1 ))
-                cap_gds_mitg_lock=$(( ret_read_msr_value_lo >> 5 & 1 ))
+                cap_gds_mitg_dis=$((ret_read_msr_value_lo >> 4 & 1))
+                cap_gds_mitg_lock=$((ret_read_msr_value_lo >> 5 & 1))
             fi
 
             pr_info_nol "    * GDS microcode mitigation is disabled (GDS_MITG_DIS): "
