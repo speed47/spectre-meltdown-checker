@@ -66,7 +66,7 @@ parse_cpu_details() {
     # Set it to 8 (impossible value as it is 3 bit long) by default
     cpu_platformid=8
     if [ "$cpu_vendor" = GenuineIntel ] && [ "$cpu_model" -ge 5 ]; then
-        read_msr 0x17
+        read_msr $MSR_IA32_PLATFORM_ID
         ret=$?
         if [ $ret = $READ_MSR_RET_OK ]; then
             # platform ID (bits 52:50) = bits 18:20 of the upper 32-bit word

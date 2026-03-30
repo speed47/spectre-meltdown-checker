@@ -355,8 +355,7 @@ check_cpu() {
     pr_info "* Hardware support (CPU microcode) for mitigation techniques"
     pr_info "  * Indirect Branch Restricted Speculation (IBRS)"
     pr_info_nol "    * SPEC_CTRL MSR is available: "
-    # the new MSR 'SPEC_CTRL' is at offset 0x48
-    read_msr 0x48
+    read_msr $MSR_IA32_SPEC_CTRL
     ret=$?
     if [ $ret = $READ_MSR_RET_OK ]; then
         spec_ctrl_msr=1
@@ -751,8 +750,7 @@ check_cpu() {
             cap_gds_no=0
             pstatus yellow NO
         else
-            # the new MSR 'ARCH_CAPABILITIES' is at offset 0x10a
-            read_msr 0x10a
+            read_msr $MSR_IA32_ARCH_CAPABILITIES
             ret=$?
             cap_rdcl_no=0
             cap_taa_no=0
@@ -866,7 +864,7 @@ check_cpu() {
         fi
 
         if [ "$cap_tsx_ctrl_msr" = 1 ]; then
-            read_msr 0x122
+            read_msr $MSR_IA32_TSX_CTRL
             ret=$?
             if [ "$ret" = $READ_MSR_RET_OK ]; then
                 cap_tsx_ctrl_rtm_disable=$(( ret_read_msr_value_lo >> 0 & 1 ))
@@ -904,8 +902,7 @@ check_cpu() {
         cap_gds_mitg_dis=-1
         cap_gds_mitg_lock=-1
         if [ "$cap_gds_ctrl" = 1 ]; then
-            # read the IA32_MCU_OPT_CTRL MSR
-            read_msr 0x123
+            read_msr $MSR_IA32_MCU_OPT_CTRL
             ret=$?
             if [ "$ret" = $READ_MSR_RET_OK ]; then
                 cap_gds_mitg_dis=$(( ret_read_msr_value_lo >> 4 & 1 ))
@@ -1013,7 +1010,7 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus blue YES
         cap_srbds=1
-        read_msr 0x123
+        read_msr $MSR_IA32_MCU_OPT_CTRL
         ret=$?
         if [ $ret = $READ_MSR_RET_OK ]; then
             if [ "$ret_read_msr_value" = "0000000000000000" ]; then

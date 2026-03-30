@@ -150,6 +150,11 @@ write_msr_one_core() {
     return $ret
 }
 
+readonly MSR_IA32_PLATFORM_ID=0x17
+readonly MSR_IA32_SPEC_CTRL=0x48
+readonly MSR_IA32_ARCH_CAPABILITIES=0x10a
+readonly MSR_IA32_TSX_CTRL=0x122
+readonly MSR_IA32_MCU_OPT_CTRL=0x123
 readonly READ_MSR_RET_OK=0
 readonly READ_MSR_RET_KO=1
 readonly READ_MSR_RET_ERR=2
