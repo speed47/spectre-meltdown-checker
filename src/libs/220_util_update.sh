@@ -146,10 +146,10 @@ update_fwdb() {
         # then insert our version
         sqlite3 "$g_mcedb_tmp" "INSERT INTO \"Intel\" (\"origin\",\"cpuid\",\"pfmask\",\"version\",\"yyyymmdd\") VALUES ('intel','$cpuid','$pfmask','$version','$date');"
     done
-    intel_timestamp=$(stat -c %Y "$g_intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-main/license" 2>/dev/null)
+    intel_timestamp=$(stat -c %Y "$g_intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-main/license" 2>/dev/null || stat -f %m "$g_intel_tmp/Intel-Linux-Processor-Microcode-Data-Files-main/license" 2>/dev/null)
     if [ -n "$intel_timestamp" ]; then
         # use this date, it matches the last commit date
-        intel_latest_date=$(date +%Y%m%d -d @"$intel_timestamp")
+        intel_latest_date=$(date -d @"$intel_timestamp" +%Y%m%d 2>/dev/null || date -r "$intel_timestamp" +%Y%m%d)
     else
         echo "Falling back to the latest microcode date"
         intel_latest_date=$(sqlite3 "$g_mcedb_tmp" "SELECT \"yyyymmdd\" FROM \"Intel\" WHERE \"origin\"='intel' ORDER BY \"yyyymmdd\" DESC LIMIT 1;")
