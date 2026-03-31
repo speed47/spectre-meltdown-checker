@@ -3,29 +3,29 @@ Spectre & Meltdown Checker
 
 A shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018, and give you guidance as to how to mitigate them.
 
-CVE | Aliases | Impact | Mitigation | Perf. impact
---- | ------- | ------ | ---------- | ------------
-[CVE-2017-5753](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5753) | Spectre V1 | Kernel & all software | Recompile with LFENCE-inserting compiler | Negligible
-[CVE-2017-5715](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5715) | Spectre V2 | Kernel | Microcode (IBRS) and/or retpoline | Medium to high
-[CVE-2017-5754](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754) | Meltdown | Kernel | Kernel update (PTI/KPTI) | Low to medium
-[CVE-2018-3640](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3640) | Variant 3a | Kernel | Microcode update | Negligible
-[CVE-2018-3639](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3639) | Variant 4, SSB | JIT software | Microcode + kernel update | Low to medium
-[CVE-2018-3615](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3615) | Foreshadow (SGX) | SGX enclaves | Microcode update | Negligible
-[CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620) | Foreshadow-NG (OS/SMM) | Kernel & SMM | Kernel update (PTE inversion) | Negligible
-[CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646) | Foreshadow-NG (VMM) | VMM/hypervisors | Kernel update (L1d flush) or disable EPT/SMT | Low to significant
-[CVE-2018-12126](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12126) | MSBDS, Fallout | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | MFBDS, ZombieLoad | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | MLPDS, RIDL | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | MDSUM, RIDL | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TAA, ZombieLoad V2 | Kernel | Microcode + kernel update | Low to significant
-[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | iTLB Multihit, No eXcuses | VMM/hypervisors | Disable hugepages or update hypervisor | Low to significant
-[CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | SRBDS, CROSSTalk | All software (RDRAND/RDSEED) | Microcode + kernel update | Low
-[CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Downfall, GDS | Kernel & all software | Microcode update or disable AVX | Negligible to significant (AVX-heavy)
-[CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Inception, SRSO | Kernel & all software | Kernel + microcode update | Low to significant
-[CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Zenbleed | Kernel & all software | Kernel (MSR bit) or microcode update | Negligible
-[CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Reptar | All software | Microcode update | Low
-[CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | TSA-SQ | Kernel & all software (AMD) | Microcode + kernel update; SMT increases exposure | Low to medium
-[CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | TSA-L1 | Kernel & all software (AMD) | Microcode + kernel update | Low to medium
+CVE | Name | Aliases | Impact | Mitigation
+--- | ---- | ------- | ------ | ----------
+[CVE-2017-5753](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5753) | Bounds Check Bypass | Spectre V1 | Kernel & userspace | Recompile everything with LFENCE
+[CVE-2017-5715](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5715) | Branch Target Injection | Spectre V2 | Kernel | Microcode + kernel update (or retpoline)
+[CVE-2017-5754](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754) | Rogue Data Cache Load | Meltdown | Kernel | Kernel update
+[CVE-2018-3640](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3640) | Rogue System Register Read | Variant 3a | Kernel | Microcode update
+[CVE-2018-3639](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3639) | Speculative Store Bypass | Variant 4, SSB | JIT software | Microcode + kernel update
+[CVE-2018-3615](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3615) | L1 Terminal Fault | Foreshadow (SGX) | SGX enclaves | Microcode update
+[CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620) | L1 Terminal Fault | Foreshadow-NG (OS/SMM) | Kernel | Kernel update
+[CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646) | L1 Terminal Fault | Foreshadow-NG (VMM) | Hypervisors | Kernel update (or disable EPT/SMT)
+[CVE-2018-12126](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12126) | Microarchitectural Store Buffer Data Sampling | MSBDS, Fallout | Kernel | Microcode + kernel update
+[CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | Microarchitectural Fill Buffer Data Sampling | MFBDS, ZombieLoad | Kernel | Microcode + kernel update
+[CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | Microarchitectural Load Port Data Sampling | MLPDS, RIDL | Kernel | Microcode + kernel update
+[CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL | Kernel | Microcode + kernel update
+[CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX Asynchronous Abort | TAA, ZombieLoad V2 | Kernel | Microcode + kernel update
+[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes | iTLB Multihit, No eXcuses | Hypervisors | Hypervisor update (or disable hugepages)
+[CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | Special Register Buffer Data Sampling | SRBDS, CROSSTalk | Kernel & userspace | Microcode + kernel update
+[CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | Downfall, GDS | Kernel & userspace | Microcode update (or disable AVX)
+[CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO | Kernel & userspace | Microcode + kernel update
+[CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed | Kernel & userspace | Microcode update (or kernel workaround)
+[CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar | Kernel & userspace | Microcode update
+[CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack, Store Queue | TSA-SQ | Kernel & userspace | Microcode + kernel update
+[CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack, L1 | TSA-L1 | Kernel & userspace | Microcode + kernel update
 
 <details>
 <summary>Detailed CVE descriptions</summary>
