@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.21.0331932'
+VERSION='26.21.0331950'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -546,7 +546,7 @@ is_cpu_affected() {
                 [ -z "$affected_variantl1tf" ] && affected_variantl1tf=immune
             else
                 pr_debug "is_cpu_affected: intel family 6 is vuln to l1tf"
-                affected_variantl1tf=vuln
+                [ -z "$affected_variantl1tf" ] && affected_variantl1tf=vuln
             fi
         elif [ "$cpu_family" -lt 6 ]; then
             pr_debug "is_cpu_affected: intel family < 6 is immune to l1tf"
@@ -558,6 +558,7 @@ is_cpu_affected() {
             # that they're unaffected by GDS. Also set by hypervisors on virtual CPUs
             # so that the guest kernel doesn't try to mitigate GDS when it's already mitigated on the host
             pr_debug "is_cpu_affected: downfall: not affected (GDS_NO)"
+            affected_downfall=immune
         elif [ "$cpu_family" = 6 ]; then
             # list from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=64094e7e3118aff4b0be8ff713c242303e139834
             set -u
@@ -669,6 +670,7 @@ is_cpu_affected() {
             # they're not affected to TSA-SQ and TSA-L1
             # these vars are set in check_cpu()
             pr_debug "is_cpu_affected: TSA_SQ_NO and TSA_L1_NO are set so not vuln to TSA"
+            affected_tsa=immune
         elif [ "$cpu_family" = $((0x19)) ]; then
             affected_tsa=vuln
         fi
@@ -5881,6 +5883,7 @@ check_CVE_2018_3620_linux() {
         # this kernel has the /sys interface, trust it over everything
         sys_interface_available=1
         status=$ret_sys_interface_check_status
+        msg=$ret_sys_interface_check_fullmsg
     fi
     if [ "$opt_sysfs_only" != 1 ]; then
         pr_info_nol "* Kernel supports PTE inversion: "
