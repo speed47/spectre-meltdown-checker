@@ -1174,60 +1174,92 @@ check_redhat_canonical_spectre() {
     fi
 }
 
-# Detect whether this system is hosting virtual machines (hypervisor check)
-# Sets: g_has_vmm
+# Detect whether this system is hosting virtual machines (hypervisor check).
+# Detection runs only on the first call; subsequent calls reuse the cached
+# result.  The status line is always printed so each CVE section shows the
+# hypervisor context to the user.
+# Sets: g_has_vmm, g_has_vmm_reason
 check_has_vmm() {
     local binary pid
     pr_info_nol "* This system is a host running a hypervisor: "
-    g_has_vmm=$opt_vmm
-    if [ "$g_has_vmm" = -1 ] && [ "$opt_paranoid" = 1 ]; then
-        # In paranoid mode, if --vmm was not specified on the command-line,
-        # we want to be secure before everything else, so assume we're running
-        # a hypervisor, as this requires more mitigations
-        g_has_vmm=2
-    elif [ "$g_has_vmm" = -1 ]; then
-        # Here, we want to know if we are hosting a hypervisor, and running some VMs on it.
-        # If we find no evidence that this is the case, assume we're not (to avoid scaring users),
-        # this can always be overridden with --vmm in any case.
-        g_has_vmm=0
-        if command -v pgrep >/dev/null 2>&1; then
-            # remove xenbus and xenwatch, also present inside domU
-            # remove libvirtd as it can also be used to manage containers and not VMs
-            # for each binary we want to grep, get the pids
-            for binary in qemu kvm xenstored xenconsoled; do
-                for pid in $(pgrep -x "$binary"); do
-                    # resolve the exe symlink, if it doesn't resolve with -m,
-                    # which doesn't even need the dest to exist, it means the symlink
-                    # is null, which is the case for kernel threads: ignore those to
-                    # avoid false positives (such as [kvm-irqfd-clean] under at least RHEL 7.6/7.7)
-                    if ! [ "$(readlink -m "/proc/$pid/exe")" = "/proc/$pid/exe" ]; then
-                        pr_debug "g_has_vmm: found PID $pid"
-                        g_has_vmm=1
-                    fi
-                done
-            done
-            unset binary pid
+    if [ "$g_has_vmm_cached" != 1 ]; then
+        g_has_vmm=$opt_vmm
+        if [ "$g_has_vmm" != -1 ]; then
+            # --vmm was explicitly set on the command line
+            g_has_vmm_reason="forced from command line"
+        elif [ "$opt_paranoid" = 1 ]; then
+            # In paranoid mode, if --vmm was not specified on the command-line,
+            # we want to be secure before everything else, so assume we're running
+            # a hypervisor, as this requires more mitigations
+            g_has_vmm=1
+            g_has_vmm_reason="paranoid mode"
         else
-            # ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
-            # shellcheck disable=SC2009
-            if command -v ps >/dev/null && ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
-                g_has_vmm=1
+            # Here, we want to know if we are hosting a hypervisor, and running some VMs on it.
+            # If we find no evidence that this is the case, assume we're not (to avoid scaring users),
+            # this can always be overridden with --vmm in any case.
+            g_has_vmm=0
+            if command -v pgrep >/dev/null 2>&1; then
+                # Exclude xenbus/xenwatch (present inside domU guests) and
+                # libvirtd (also manages containers, not just VMs).
+                # Use pgrep -x (exact match) for most binaries.  QEMU is
+                # special: the binary is almost never just "qemu" — it is
+                # "qemu-system-x86_64", "qemu-system-aarch64", etc.  We
+                # keep "qemu" for the rare wrapper/symlink case and add
+                # "qemu-system-" as a substring match via a separate pgrep
+                # call (without -x) to catch all qemu-system-* variants.
+                # Kernel threads (e.g. [kvm-irqfd-clean]) are filtered out
+                # below via the /proc/$pid/exe symlink check.
+                # Note: the kernel truncates process names to 15 chars
+                # (TASK_COMM_LEN), so pgrep -x can't match longer names.
+                # "cloud-hypervisor" (16 chars) is handled in the substring
+                # block below alongside qemu-system-*.
+                for binary in qemu kvm xenstored xenconsoled \
+                    VBoxHeadless VBoxSVC vmware-vmx firecracker bhyve; do
+                    for pid in $(pgrep -x "$binary"); do
+                        # resolve the exe symlink, if it doesn't resolve with -m,
+                        # which doesn't even need the dest to exist, it means the symlink
+                        # is null, which is the case for kernel threads: ignore those to
+                        # avoid false positives (such as [kvm-irqfd-clean] under at least RHEL 7.6/7.7)
+                        if ! [ "$(readlink -m "/proc/$pid/exe")" = "/proc/$pid/exe" ]; then
+                            pr_debug "g_has_vmm: found PID $pid ($binary)"
+                            g_has_vmm=1
+                            g_has_vmm_reason="$binary process found (PID $pid)"
+                        fi
+                    done
+                done
+                # substring matches for names that pgrep -x can't handle:
+                # - qemu-system-*: variable suffix (x86_64, aarch64, ...)
+                # - cloud-hypervisor: 16 chars, exceeds TASK_COMM_LEN (15)
+                if [ "$g_has_vmm" = 0 ]; then
+                    for binary in "qemu-system-" "cloud-hyperviso"; do
+                        for pid in $(pgrep "$binary"); do
+                            if ! [ "$(readlink -m "/proc/$pid/exe")" = "/proc/$pid/exe" ]; then
+                                pr_debug "g_has_vmm: found PID $pid ($binary*)"
+                                g_has_vmm=1
+                                g_has_vmm_reason="$binary* process found (PID $pid)"
+                            fi
+                        done
+                    done
+                fi
+                unset binary pid
+            else
+                # ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
+                # shellcheck disable=SC2009
+                if command -v ps >/dev/null && ps ax | grep -vw grep | grep -q \
+                    -e '\<qemu' -e '/qemu' -e '\<kvm' -e '/kvm' \
+                    -e '/xenstored' -e '/xenconsoled' \
+                    -e '\<VBoxHeadless' -e '\<VBoxSVC' -e '\<vmware-vmx' \
+                    -e '\<firecracker' -e '\<cloud-hypervisor' -e '\<bhyve'; then
+                    g_has_vmm=1
+                    g_has_vmm_reason="hypervisor process found"
+                fi
             fi
         fi
+        g_has_vmm_cached=1
     fi
     if [ "$g_has_vmm" = 0 ]; then
-        if [ "$opt_vmm" != -1 ]; then
-            pstatus green NO "forced from command line"
-        else
-            pstatus green NO
-        fi
+        pstatus green NO "$g_has_vmm_reason"
     else
-        if [ "$opt_vmm" != -1 ]; then
-            pstatus blue YES "forced from command line"
-        elif [ "$g_has_vmm" = 2 ]; then
-            pstatus blue YES "paranoid mode"
-        else
-            pstatus blue YES
-        fi
+        pstatus blue YES "$g_has_vmm_reason"
     fi
 }
