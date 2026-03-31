@@ -1,7 +1,9 @@
 Spectre & Meltdown Checker
 ==========================
 
-A shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018, and give you guidance as to how to mitigate them.
+A self-contained shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018, and give you guidance as to how to mitigate them.
+
+## List
 
 CVE | Name | Aliases
 --- | ---- | -------
@@ -68,8 +70,10 @@ CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel
 
 > (3) CVE-2018-3615 (Foreshadow SGX) inverts the normal trust model: the OS reads SGX enclave data. It is irrelevant unless the system runs SGX enclaves, and the attacker must already have OS-level access.
 
+## Detailed CVE descriptions
+
 <details>
-<summary>Detailed CVE descriptions</summary>
+<summary>Unfold for more detailed CVE descriptions</summary>
 
 **CVE-2017-5753 — Bounds Check Bypass (Spectre Variant 1)**
 
@@ -151,13 +155,15 @@ On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculative
 
 </details>
 
+## Scope
+
 Supported operating systems:
 - Linux (all versions, flavors and distros)
 - FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](FAQ.md#which-bsd-oses-are-supported))
 
 For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
 
-Other operating systems such as MacOS, Windows, ESXi, etc. [will most likely never be supported](FAQ.md#why-is-my-os-not-supported).
+Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](FAQ.md#why-is-my-os-not-supported).
 
 Supported architectures:
 - `x86` (32 bits)
@@ -167,15 +173,13 @@ Supported architectures:
 
 ## Frequently Asked Questions (FAQ)
 
-- What is the purpose of this tool?
-- Why was it written?
-- How can it be useful to me?
-- How does it work?
-- What can I expect from it?
+What is the purpose of this tool? Why was it written? How can it be useful to me? How does it work? What can I expect from it?
 
 All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
 
-## Easy way to run the script
+## Running the script
+
+### Direct way (recommended)
 
 - Get the latest version of the script using `curl` *or* `wget`
 
@@ -197,9 +201,12 @@ chmod +x spectre-meltdown-checker.sh
 sudo ./spectre-meltdown-checker.sh
 ```
 
-### Run the script in a docker container
+### Using a docker container
 
-#### With docker-compose
+<details>
+<summary>Unfold for instructions</summary>
+
+Using `docker compose`:
 
 ```shell
 docker compose build
@@ -209,7 +216,7 @@ docker compose run --rm spectre-meltdown-checker
 Note that on older versions of docker, `docker-compose` is a separate command, so you might
 need to replace the two `docker compose` occurences above by `docker-compose`.
 
-#### Without docker-compose
+Using `docker build` directly:
 
 ```shell
 docker build -t spectre-meltdown-checker .
