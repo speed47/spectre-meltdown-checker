@@ -100,10 +100,10 @@ There is no separate test suite. CI (`.github/workflows/check.yml`) runs shellch
 
 The entire tool is a single bash script with no external script dependencies. Key structural sections:
 
-- **Output/logging functions** (~line 253): `pr_warn`, `pr_info`, `pr_verbose`, `pr_debug`, `explain`, `pstatus`, `pvulnstatus` — verbosity-aware output with color support
-- **CPU detection** (~line 2171): `parse_cpu_details`, `is_intel`/`is_amd`/`is_hygon`, `read_cpuid`, `read_msr`, `is_cpu_smt_enabled` — hardware identification via CPUID/MSR registers
+- **Output/logging functions** (~line 253): `pr_warn`, `pr_info`, `pr_verbose`, `pr_debug`, `explain`, `pstatus`, `pvulnstatus` - verbosity-aware output with color support
+- **CPU detection** (~line 2171): `parse_cpu_details`, `is_intel`/`is_amd`/`is_hygon`, `read_cpuid`, `read_msr`, `is_cpu_smt_enabled` - hardware identification via CPUID/MSR registers
 - **Microcode database** (embedded): Intel/AMD microcode version lookup via `read_mcedb`/`read_inteldb`; updated automatically via `.github/workflows/autoupdate.yml`
-- **Kernel analysis** (~line 1568): `extract_kernel`, `try_decompress` — extracts and inspects kernel images (handles gzip, bzip2, xz, lz4, zstd compression)
+- **Kernel analysis** (~line 1568): `extract_kernel`, `try_decompress` - extracts and inspects kernel images (handles gzip, bzip2, xz, lz4, zstd compression)
 - **Vulnerability checks**: 19 `check_CVE_<year>_<number>()` functions, each with `_linux()` and `_bsd()` variants. Uses whitelist logic (assumes affected unless proven otherwise)
 - **Main flow** (~line 6668): Parse options → detect CPU → loop through requested CVEs → output results (text/json/nrpe/prometheus) → cleanup
 
@@ -249,24 +249,24 @@ check_CVE_YYYY_NNNNN_bsd() {
 }
 ```
 
-The entry point calls `check_cve`, which prints the CVE header and dispatches to `_linux()` or `_bsd()` based on `$g_os`. If BSD mitigations are not yet understood, use the stub above — it correctly reports UNK rather than a false OK.
+The entry point calls `check_cve`, which prints the CVE header and dispatches to `_linux()` or `_bsd()` based on `$g_os`. If BSD mitigations are not yet understood, use the stub above - it correctly reports UNK rather than a false OK.
 
 ### Step 2: Register the CVE in the CPU Affection Logic
 
 In `src/libs/200_cpu_affected.sh`, add an `affected_yourname` variable and populate it inside `is_cpu_affected()`. The variable follows the whitelist principle: **assume affected (`1`) unless you can prove the CPU is immune (`0`)**. Two kinds of evidence can prove immunity:
 
-- **Static identifiers**: CPU vendor, family, model, stepping — these identify the hardware design.
+- **Static identifiers**: CPU vendor, family, model, stepping - these identify the hardware design.
 - **Hardware immunity `cap_*` bits**: CPUID or MSR bits that the CPU vendor defines to explicitly declare "this hardware is not affected" (e.g. `cap_rdcl_no` for Meltdown, `cap_ssb_no` for Variant 4, `cap_gds_no` for Downfall, `cap_tsa_sq_no`/`cap_tsa_l1_no` for TSA). These are read in `check_cpu()` and stored as `cap_*` globals.
 
 Never use microcode version strings.
 
-**Important**: Do not confuse hardware immunity bits with *mitigation* capability bits. A hardware immunity bit (e.g. `GDS_NO`, `TSA_SQ_NO`) declares that the CPU design is architecturally free of the vulnerability — it belongs here in `is_cpu_affected()`. A mitigation capability bit (e.g. `VERW_CLEAR`, `MD_CLEAR`) indicates that updated microcode provides a mechanism to work around a vulnerability the CPU *does* have — it belongs in the `check_CVE_YYYY_NNNNN_linux()` function (Phase 2), where it is used to determine whether mitigations are in place.
+**Important**: Do not confuse hardware immunity bits with *mitigation* capability bits. A hardware immunity bit (e.g. `GDS_NO`, `TSA_SQ_NO`) declares that the CPU design is architecturally free of the vulnerability - it belongs here in `is_cpu_affected()`. A mitigation capability bit (e.g. `VERW_CLEAR`, `MD_CLEAR`) indicates that updated microcode provides a mechanism to work around a vulnerability the CPU *does* have - it belongs in the `check_CVE_YYYY_NNNNN_linux()` function (Phase 2), where it is used to determine whether mitigations are in place.
 
 ### Step 3: Implement the Linux Check
 
 The `_linux()` function follows a standard algorithm with four phases:
 
-**Phase 1 — Initialize and check sysfs:**
+**Phase 1 - Initialize and check sysfs:**
 
 ```sh
 check_CVE_YYYY_NNNNN_linux() {
@@ -282,7 +282,7 @@ check_CVE_YYYY_NNNNN_linux() {
 
 `sys_interface_check` reads `/sys/devices/system/cpu/vulnerabilities/<name>` and parses the kernel's own assessment into `ret_sys_interface_check_status` (OK/VULN/UNK) and `ret_sys_interface_check_fullmsg`. If the sysfs file doesn't exist (older kernel, or the CVE predates kernel awareness), it returns false and `sys_interface_available` stays 0.
 
-**Phase 2 — Custom detection (kernel + runtime):**
+**Phase 2 - Custom detection (kernel + runtime):**
 
 Guarded by `if [ "$opt_sysfs_only" != 1 ]; then` so users who trust sysfs can skip it.
 
@@ -296,7 +296,7 @@ This is where the real detection lives. Check for mitigations at each layer:
         kernel_mitigated="found mitigation evidence in kernel image"
     fi
     ```
-    Guard with `if [ -n "$g_kernel_err" ]; then` first — the kernel image may be unavailable.
+    Guard with `if [ -n "$g_kernel_err" ]; then` first - the kernel image may be unavailable.
 
   - **Kernel config** (`$g_kernel_config`): Look for the `CONFIG_*` option that enables the mitigation.
     ```sh
@@ -337,38 +337,227 @@ Close the `opt_sysfs_only` block with the forced-sysfs fallback:
 	fi
 ```
 
-**Phase 3 — CPU affection gate:**
+**Phase 3 - CPU affection gate:**
 
 ```sh
 	if ! is_cpu_affected "$cve"; then
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
 ```
 
-If the CPU is not affected, nothing else matters — report OK and return. This overrides any sysfs or custom detection result.
+If the CPU is not affected, nothing else matters - report OK and return. This overrides any sysfs or custom detection result.
 
-**Phase 4 — Final status determination:**
+**Phase 4 - Final status determination:**
 
-For affected CPUs, combine the evidence from Phase 2 into a final verdict:
+For affected CPUs, combine the evidence from Phase 2 into a final verdict. The dispatch
+works through `msg`: if Phase 1 (sysfs) or a sysfs override set `msg` to non-empty, use
+it directly; otherwise run own logic or fall back to the raw sysfs result.
 
 ```sh
-	elif [ "$opt_sysfs_only" != 1 ]; then
-		if [ "$microcode_ok" = 1 ] && [ -n "$kernel_mitigated" ]; then
-			pvulnstatus "$cve" OK "Both kernel and microcode mitigate the vulnerability"
-		elif [ "$microcode_ok" = 1 ]; then
-			pvulnstatus "$cve" OK "Microcode mitigates the vulnerability"
-		elif [ -n "$kernel_mitigated" ]; then
-			pvulnstatus "$cve" OK "Kernel mitigates the vulnerability"
+	elif [ -z "$msg" ]; then
+		# msg is empty: sysfs either wasn't available, or gave a standard
+		# response that wasn't overridden. Use our own logic when we have it.
+		if [ "$opt_sysfs_only" != 1 ]; then
+			# --- own logic using Phase 2 variables ---
+			if [ "$microcode_ok" = 1 ] && [ -n "$kernel_mitigated" ]; then
+				pvulnstatus "$cve" OK "Both kernel and microcode mitigate the vulnerability"
+			else
+				pvulnstatus "$cve" VULN "Neither kernel nor microcode mitigate the vulnerability"
+				explain "Remediation advice here..."
+			fi
 		else
-			pvulnstatus "$cve" VULN "Neither kernel nor microcode mitigate the vulnerability"
-			explain "Remediation advice here..."
+			# --sysfs-only: Phase 2 variables are unset, fall back to the
+			# raw sysfs result (status + fullmsg were set in Phase 1).
+			pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
 		fi
 	else
-		pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
+		# msg was explicitly set - either by the "sysfs not available" elif
+		# above, or by a sysfs override in Phase 1. Use it as-is.
+		pvulnstatus "$cve" "$status" "$msg"
 	fi
 }
 ```
 
-The exact combination logic depends on the CVE. Some require **both** microcode and kernel fixes (report VULN if either is missing). Others are mitigated by **either** layer alone (report OK if one is present). Some also require SMT to be disabled — check with `is_cpu_smt_enabled()`.
+The `opt_sysfs_only` guard inside the `[ -z "$msg" ]` branch is **critical**: without it,
+`--sysfs-only` mode would fall into own-logic with all Phase 2 variables unset, producing
+wrong results. The `else` at line `pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"`
+is safe because it is only reachable when sysfs was available (if it wasn't, the "sysfs not
+available" `elif` at the end of Phase 2 would have set `msg`, sending us to the other branch).
+
+The exact combination logic depends on the CVE. Some require **both** microcode and kernel fixes (report VULN if either is missing). Others are mitigated by **either** layer alone (report OK if one is present). Some also require SMT to be disabled - check with `is_cpu_smt_enabled()`.
+
+**Sysfs overrides:** When the kernel's sysfs reporting is known to be incorrect for certain
+messages (e.g. old kernels misclassifying a partial mitigation as fully mitigated), add an
+override in Phase 1 after `sys_interface_check` returns. The override sets both `status` and
+`msg`, which routes Phase 4 to the `else` branch - bypassing own logic entirely. This is
+correct because the override and own logic will always agree on the verdict. Example:
+
+```sh
+	if sys_interface_check "$VULN_SYSFS_BASE/vuln_name"; then
+		sys_interface_available=1
+		status=$ret_sys_interface_check_status
+		# Override: old kernels (before <commit>) incorrectly reported this as mitigated
+		if echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Mitigation:.*partial mitigation.*missing piece'; then
+			status=VULN
+			msg="Vulnerable: partial mitigation, missing piece (your kernel incorrectly reports this as mitigated, it was fixed in more recent kernels)"
+		fi
+	fi
+```
+
+When adding a sysfs override, also add an `explain` call in the `else` branch of Phase 4
+(where `msg` is non-empty) to tell the user why the kernel says "Mitigated" while the script
+reports vulnerable. Additionally, in Phase 2, add a kernel-image grep to inform the user
+whether their kernel has the corrected reporting (the post-fix kernel will contain the new
+vulnerability string in its image).
+
+**Sysfs message inventory:** Before writing Phase 1 (and any sysfs overrides), audit **every
+version** of the sysfs message that the kernel has ever produced for this vulnerability. The
+script may run on any kernel - from early release candidates that first introduced the sysfs
+file, through every stable release, up to the latest mainline. The inventory must catalogue
+every string variant, including:
+
+- Messages that only existed briefly between two commits in the same release cycle.
+- Format changes (e.g. field reordering, renamed labels).
+- New states added in later kernels (e.g. new flush modes, new mitigation strategies).
+- Reporting corrections where a later kernel changed its assessment of what counts as
+  mitigated (e.g. a message that said `"Mitigation: ..."` in kernel A is reclassified as
+  `"Vulnerable: ..."` in kernel B under the same conditions).
+
+Document all discovered variants as comments in the CVE file, grouped by the kernel commit
+that introduced or changed them, so future readers can understand the evolution at a glance.
+See `src/vulns/CVE-2018-3646.sh` (Phase 1 comment block) for a reference example.
+
+This inventory matters because later kernels may have a different - and more accurate - view
+of what is vulnerable versus mitigated for a given vulnerability, as understanding progresses
+over time. The script must be able to reach the same conclusions as the most recent kernel,
+even when running under an old kernel that misreports a vulnerability as mitigated. This is
+exactly what sysfs overrides (described above) are for: when the inventory reveals that an
+old kernel's message is now known to be wrong, add an override in Phase 1 to correct the
+status, and use the Phase 2 kernel-image grep to tell the user whether their kernel has the
+corrected reporting.
+
+**How to build the inventory - git blame walkback method:**
+
+The goal is to find every commit that changed the sysfs output strings for a given
+vulnerability. The method uses `git blame` iteratively, walking backwards through history
+until the vulnerability's sysfs reporting no longer exists.
+
+1. **Locate the output function.** Most vulnerability sysfs files are generated from
+   `arch/x86/kernel/cpu/bugs.c`. Find the `*_show_state()` function for the vulnerability
+   (e.g. `l1tf_show_state()`, `mds_show_state()`) and the corresponding `case X86_BUG_*`
+   in `cpu_show_common()`. Both paths can produce messages: the show_state function handles
+   the mitigated cases, while `cpu_show_common()` handles `"Not affected"` (common to all
+   bugs) and `"Vulnerable"` (fallthrough). Some vulnerabilities also use string arrays
+   (e.g. `l1tf_vmx_states[]`, `spectre_v1_strings[]`) - include those in the audit.
+
+2. **Blame the current code.** Run `git blame` on the relevant line range:
+
+   ```
+   git blame -L<start>,<end> arch/x86/kernel/cpu/bugs.c
+   ```
+
+   For each line that contributes to the sysfs output (format strings, string arrays, enum
+   lookups, conditional branches that select different messages), note the commit hash.
+
+3. **Walk back one commit at a time.** For each commit found in step 2, check the state of
+   the file **before** that commit to see what changed:
+
+   ```
+   git show <commit>^:arch/x86/kernel/cpu/bugs.c | grep -n -A10 '<function_name>'
+   ```
+
+   Compare the output strings, format patterns, and conditional logic with the version after
+   the commit. Record any differences: added/removed/renamed states, reordered fields,
+   changed conditions.
+
+4. **Repeat until the vulnerability disappears.** Take the oldest commit found and check the
+   parent. Eventually you reach a version where the `case X86_BUG_*` for this vulnerability
+   does not exist - that is the boundary.
+
+5. **Watch for non-obvious string changes.** Some commits change the output without touching
+   the format strings themselves:
+   - **Condition changes**: A commit may change *when* a branch is taken (e.g. switching from
+     `cpu_smt_control == CPU_SMT_ENABLED` to `sched_smt_active()`), which changes which
+     message appears for the same hardware state, even though the strings are identical.
+   - **Enum additions**: A new entry in a string array (e.g. adding `"flush not necessary"` to
+     `l1tf_vmx_states[]`) adds a new possible message without changing the format string.
+   - **Early returns**: Adding or removing an early-return path changes which messages are
+     reachable (e.g. returning `L1TF_DEFAULT_MSG` for `FLUSH_AUTO` before reaching the VMX
+     format string).
+   - **Mechanical changes**: `sprintf` → `sysfs_emit`, `const` qualifications, whitespace
+     reformats - these do not change strings and can be noted briefly or omitted.
+
+6. **Cross-check with `git log`.** After the blame walkback, run a targeted `git log` to
+   confirm no commits were missed:
+
+   ```
+   git log --all --oneline -- arch/x86/kernel/cpu/bugs.c | xargs -I{} \
+     sh -c 'git show {} -- arch/x86/kernel/cpu/bugs.c | grep -q "<vuln_name>" && echo {}'
+   ```
+
+   Any commit that touches lines mentioning the vulnerability name should already be in
+   your inventory. If one is missing, inspect it.
+
+7. **Audit the stable tree.** After completing the mainline inventory, repeat the process on
+   the linux-stable repository (`~/linux-stable`). Stable/LTS branches can carry backports
+   that differ from mainline in subtle ways:
+
+   - **Partial backports**: A stable branch may backport the mitigation but not the VMX
+     reporting, producing a simpler set of messages than mainline (e.g. 4.4.y has l1tf's
+     `"PTE Inversion"` but no VMX flush state reporting at all).
+   - **Stable-only commits**: Maintainers sometimes make stable-specific changes that never
+     existed in mainline (e.g. renaming a string to match upstream without backporting the
+     full commit that originally renamed it).
+   - **Backport batching**: Multiple mainline commits may land in the same stable release,
+     meaning intermediate formats (that existed briefly between mainline commits) may never
+     have shipped in any stable release. Note this when it happens - it narrows the set of
+     messages that real-world kernels can produce, but the script should still handle the
+     intermediate formats since someone could be running a mainline rc kernel.
+   - **Missing backports**: Some stable branches reach EOL before a fix is backported (e.g.
+     the `sched_smt_active()` change was not backported to 4.17.y or 4.18.y). This doesn't
+     change the strings but can change which message appears for the same hardware state.
+
+   Check each LTS/stable branch that was active when the vulnerability's sysfs support was
+   introduced. A quick way to identify relevant branches:
+
+   ```
+   cd ~/linux-stable
+   for branch in $(git branch -r | grep 'linux-'); do
+     count=$(git show "$branch:arch/x86/kernel/cpu/bugs.c" 2>/dev/null | grep -c '<vuln_name>')
+     [ "$count" -gt 0 ] && echo "$branch: $count matches"
+   done
+   ```
+
+   Then for each branch with matches, show the output function and compare it with mainline.
+   Document stable-specific differences in a separate `--- stable backports ---` section of
+   the inventory comment.
+
+**Comment format in CVE files:**
+
+The inventory comment goes in Phase 1, right after `sys_interface_check` returns successfully.
+Group entries chronologically by commit, newest last. For each commit, show the hash, the
+kernel version it appeared in, and the exact message(s) it introduced or changed. Use `+` to
+indicate incremental additions to an enum or format. Example:
+
+```sh
+    # Complete sysfs message inventory for <vuln>, traced via git blame:
+    #
+    # all versions:
+    #   "Not affected"                (cpu_show_common, <commit>)
+    #   "Vulnerable"                  (cpu_show_common fallthrough, <commit>)
+    #
+    # <commit> (<version>, <what changed>):
+    #   "Mitigation: <original message>"
+    # <commit> (<version>, <what changed>):
+    #   "Mitigation: <new message format>"
+    #     <field>: value1 | value2 | value3
+    # <commit> (<version>, <what changed>):
+    #     <field>: + value4
+    #
+    # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
+```
+
+The final line (`all messages start with ...`) is a summary that helps verify the grep
+patterns used to derive `status` from the message are complete.
 
 ### Cross-Cutting Features
 
@@ -405,7 +594,7 @@ Other paranoid-mode effects include requiring unconditional (rather than conditi
 
 The `--vmm` option tells the script whether the system is a hypervisor host running untrusted virtual machines. It accepts three values: `auto` (default, auto-detect by looking for `qemu`/`kvm`/`xen` processes), `yes` (force hypervisor mode), or `no` (force non-hypervisor mode). The result is stored in `g_has_vmm` by the `check_has_vmm()` function.
 
-Some vulnerabilities (e.g. L1TF/CVE-2018-3646, ITLBMH/CVE-2018-12207) only matter — or require additional mitigations — when the host is running a hypervisor with untrusted guests. If `g_has_vmm` is 0, the system can be reported as not vulnerable to these VMM-specific aspects:
+Some vulnerabilities (e.g. L1TF/CVE-2018-3646, ITLBMH/CVE-2018-12207) only matter - or require additional mitigations - when the host is running a hypervisor with untrusted guests. If `g_has_vmm` is 0, the system can be reported as not vulnerable to these VMM-specific aspects:
 
 ```sh
 if [ "$g_has_vmm" = 0 ]; then
@@ -429,13 +618,13 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 
 ### Key Rules to Remember
 
-- **Never hardcode kernel or microcode versions** — detect capabilities directly (design principles 2 and 3).
-- **Assume affected by default** — only mark a CPU as unaffected when there is positive evidence (design principle 4).
-- **Always handle both live and offline modes** — use `$opt_live` to branch, and print `N/A "not testable in offline mode"` for runtime-only checks when offline.
+- **Never hardcode kernel or microcode versions** - detect capabilities directly (design principles 2 and 3).
+- **Assume affected by default** - only mark a CPU as unaffected when there is positive evidence (design principle 4).
+- **Always handle both live and offline modes** - use `$opt_live` to branch, and print `N/A "not testable in offline mode"` for runtime-only checks when offline.
 - **Use `explain()`** when reporting VULN to give actionable remediation advice (see "Cross-Cutting Features" above).
 - **Handle `--paranoid` and `--vmm`** when the CVE has stricter mitigation tiers or VMM-specific aspects (see "Cross-Cutting Features" above).
 - **All indentation must use tabs** (CI enforces this).
-- **Stay POSIX-compatible** — no bashisms, no GNU-only flags in portable code paths.
+- **Stay POSIX-compatible** - no bashisms, no GNU-only flags in portable code paths.
 
 ## Function documentation headers
 
@@ -461,7 +650,7 @@ Every function must have a documentation header immediately above its definition
 
 **Rules:**
 
-- The `# Sets:` line is critical — it makes global side effects explicit so any reviewer can immediately see what a function mutates.
+- The `# Sets:` line is critical - it makes global side effects explicit so any reviewer can immediately see what a function mutates.
 - The `# Callers:` line is required for all `_`-prefixed functions. It documents which functions depend on this helper, making it safe to refactor.
 - Keep descriptions to one line when possible. If more context is needed, add continuation comment lines before the structured lines.
 - Parameter documentation uses `$1=name` format. Append `(optional, default X)` for optional parameters.
