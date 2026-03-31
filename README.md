@@ -57,10 +57,15 @@ CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel
 CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 
 > 💥 Data can be leaked across this boundary.
+
 > ✅ Not affected in this scenario.
+
 > ☠️ Denial of service (system crash or unpredictable behavior), no data leak.
+
 > (1) Cross-process leakage requires SMT (Hyper-Threading) to be active — attacker and victim must share a physical core.
+
 > (2) Only leaks RDRAND/RDSEED output, not arbitrary memory; still allows recovering cryptographic material from any victim.
+
 > (3) CVE-2018-3615 (Foreshadow SGX) inverts the normal trust model: the OS reads SGX enclave data. It is irrelevant unless the system runs SGX enclaves, and the attacker must already have OS-level access.
 
 <details>
