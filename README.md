@@ -3,7 +3,7 @@ Spectre & Meltdown Checker
 
 A self-contained shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018, and give you guidance as to how to mitigate them.
 
-## List
+## CVE list
 
 CVE | Name | Aliases
 --- | ---- | -------
@@ -222,6 +222,8 @@ Using `docker build` directly:
 docker build -t spectre-meltdown-checker .
 docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker
 ```
+
+</details>
 
 ## Example of script output
 

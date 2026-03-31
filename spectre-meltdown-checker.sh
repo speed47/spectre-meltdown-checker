@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.21.0331921'
+VERSION='26.21.0331932'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -5108,13 +5108,15 @@ check_CVE_2017_5715_bsd() {
 # SPECTRE 1 SECTION
 
 # CVE-2017-5753 Spectre Variant 1 (bounds check bypass) - entry point
+# Sets: (none directly, delegates to check_cve)
 check_CVE_2017_5753() {
     check_cve 'CVE-2017-5753'
 }
 
 # CVE-2017-5753 Spectre Variant 1 (bounds check bypass) - Linux mitigation check
+# Sets: g_redhat_canonical_spectre (via check_redhat_canonical_spectre)
 check_CVE_2017_5753_linux() {
-    local status sys_interface_available msg v1_mask_nospec nb_lfence v1_lfence ret explain_text
+    local status sys_interface_available msg v1_kernel_mitigated v1_kernel_mitigated_err v1_mask_nospec ret explain_text
     status=UNK
     sys_interface_available=0
     msg=''
@@ -5124,62 +5126,140 @@ check_CVE_2017_5753_linux() {
         # modifying the vulnerabilities/spectre_v1 file. that's bad. we can't trust it when it says Vulnerable :(
         # see "silent backport" detection at the bottom of this func
         sys_interface_available=1
+        #
+        # Complete sysfs message inventory for spectre_v1, traced via git blame:
+        #
+        # all versions:
+        #   "Not affected"                                                              (cpu_show_common, pre-existing)
+        #
+        # --- x86 mainline ---
+        # 61dc0f555b5c (v4.15, initial spectre_v1 sysfs):
+        #   "Vulnerable"
+        # edfbae53dab8 (v4.16, report get_user mitigation):
+        #   "Mitigation: __user pointer sanitization"
+        # a2059825986a (v5.3, swapgs awareness via spectre_v1_strings[]):
+        #   "Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers"
+        #   "Mitigation: usercopy/swapgs barriers and __user pointer sanitization"
+        # ca01c0d8d030 (v6.12, CONFIG_MITIGATION_SPECTRE_V1 controls default):
+        #   same strings as v5.3+
+        # All stable branches (4.4.y through 6.12.y) have v5.3+ strings backported.
+        #
+        # --- x86 RHEL (centos6, centos7 branches) ---
+        #   "Vulnerable: Load fences, __user pointer sanitization and usercopy barriers only; no swapgs barriers"
+        #   "Mitigation: Load fences, usercopy/swapgs barriers and __user pointer sanitization"
+        #
+        # --- ARM64 ---
+        # 3891ebccace1 (v5.2, first arm64 spectre_v1 sysfs, backported to 4.14.y+):
+        #   "Mitigation: __user pointer sanitization"                                   (hardcoded)
+        # 455697adefdb (v5.10, moved to proton-pack.c):
+        #   same string
+        # Before v5.2: no sysfs override (generic "Not affected" fallback).
+        # Actual mitigation (array_index_mask_nospec with CSDB) landed in v4.16.
+        #
+        # --- ARM32 ---
+        # 9dd78194a372 (v5.17+):
+        #   "Mitigation: __user pointer sanitization"                                   (hardcoded)
+        #
+        # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
         status=$ret_sys_interface_check_status
     fi
     if [ "$opt_sysfs_only" != 1 ]; then
         # no /sys interface (or offline mode), fallback to our own ways
-        pr_info_nol "* Kernel has array_index_mask_nospec: "
-        # vanilla: look for the Linus' mask aka array_index_mask_nospec()
-        # that is inlined at least in raw_copy_from_user (__get_user_X symbols)
-        #mov PER_CPU_VAR(current_task), %_ASM_DX
-        #cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
-        #jae bad_get_user
-        # /* array_index_mask_nospec() are the 2 opcodes that follow */
-        #+sbb %_ASM_DX, %_ASM_DX
-        #+and %_ASM_DX, %_ASM_AX
-        #ASM_STAC
-        # x86 64bits: jae(0x0f 0x83 0x?? 0x?? 0x?? 0x??) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
-        # x86 32bits: cmp(0x3b 0x82 0x?? 0x?? 0x00 0x00) jae(0x73 0x??) sbb(0x19 0xd2) and(0x21 0xd0)
-        #
-        # arm32
-        ##ifdef CONFIG_THUMB2_KERNEL
-        ##define CSDB	".inst.w 0xf3af8014"
-        ##else
-        ##define CSDB	".inst	0xe320f014"     e320f014
-        ##endif
-        #asm volatile(
-        #	"cmp	%1, %2\n"      e1500003
-        #"	sbc	%0, %1, %1\n"  e0c03000
-        #CSDB
-        #: "=r" (mask)
-        #: "r" (idx), "Ir" (sz)
-        #: "cc");
-        #
-        # http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
-        v1_mask_nospec=''
+
+        # Primary detection: grep for sysfs mitigation strings in the kernel binary.
+        # The string "__user pointer sanitization" is present in all kernel versions
+        # that have spectre_v1 sysfs support (x86 v4.16+, ARM64 v5.2+, ARM32 v5.17+),
+        # including RHEL "Load fences" variants. This is cheap and works offline.
+        pr_info_nol "* Kernel has spectre_v1 mitigation (kernel image): "
+        v1_kernel_mitigated=''
+        v1_kernel_mitigated_err=''
         if [ -n "$g_kernel_err" ]; then
-            pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-        elif ! command -v perl >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-        else
-            perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found) }' "$g_kernel"
-            ret=$?
-            if [ "$ret" -gt 0 ]; then
-                pstatus green YES "$ret occurrence(s) found of x86 64 bits array_index_mask_nospec()"
-                v1_mask_nospec="x86 64 bits array_index_mask_nospec"
+            v1_kernel_mitigated_err="$g_kernel_err"
+        elif grep -q '__user pointer sanitization' "$g_kernel"; then
+            if grep -q 'usercopy/swapgs barriers' "$g_kernel"; then
+                v1_kernel_mitigated="usercopy/swapgs barriers and target sanitization"
+            elif grep -q 'Load fences' "$g_kernel"; then
+                v1_kernel_mitigated="RHEL Load fences mitigation"
             else
-                perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found) }' "$g_kernel"
+                v1_kernel_mitigated="__user pointer sanitization"
+            fi
+        fi
+        if [ -z "$v1_kernel_mitigated" ] && [ -r "$opt_config" ]; then
+            if grep -q '^CONFIG_MITIGATION_SPECTRE_V1=y' "$opt_config"; then
+                v1_kernel_mitigated="CONFIG_MITIGATION_SPECTRE_V1 found in kernel config"
+            fi
+        fi
+        if [ -z "$v1_kernel_mitigated" ] && [ -n "$opt_map" ]; then
+            if grep -q 'spectre_v1_select_mitigation' "$opt_map"; then
+                v1_kernel_mitigated="found spectre_v1_select_mitigation in System.map"
+            fi
+        fi
+        if [ -n "$v1_kernel_mitigated" ]; then
+            pstatus green YES "$v1_kernel_mitigated"
+        elif [ -n "$v1_kernel_mitigated_err" ]; then
+            pstatus yellow UNKNOWN "couldn't check ($v1_kernel_mitigated_err)"
+        else
+            pstatus yellow NO
+        fi
+
+        # Fallback for v4.15-era kernels: binary pattern matching for array_index_mask_nospec().
+        # The sysfs mitigation strings were not present in the kernel image until v4.16 (x86)
+        # and v5.2 (ARM64), but the actual mitigation code landed in v4.15 (x86) and v4.16 (ARM64).
+        # For offline analysis of these old kernels, match the specific instruction patterns.
+        if [ -z "$v1_kernel_mitigated" ]; then
+            pr_info_nol "* Kernel has array_index_mask_nospec (v4.15 binary pattern): "
+            # vanilla: look for the Linus' mask aka array_index_mask_nospec()
+            # that is inlined at least in raw_copy_from_user (__get_user_X symbols)
+            #mov PER_CPU_VAR(current_task), %_ASM_DX
+            #cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
+            #jae bad_get_user
+            # /* array_index_mask_nospec() are the 2 opcodes that follow */
+            #+sbb %_ASM_DX, %_ASM_DX
+            #+and %_ASM_DX, %_ASM_AX
+            #ASM_STAC
+            # x86 64bits: jae(0x0f 0x83 0x?? 0x?? 0x?? 0x??) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
+            # x86 32bits: cmp(0x3b 0x82 0x?? 0x?? 0x00 0x00) jae(0x73 0x??) sbb(0x19 0xd2) and(0x21 0xd0)
+            #
+            # arm32
+            ##ifdef CONFIG_THUMB2_KERNEL
+            ##define CSDB	".inst.w 0xf3af8014"
+            ##else
+            ##define CSDB	".inst	0xe320f014"     e320f014
+            ##endif
+            #asm volatile(
+            #	"cmp	%1, %2\n"      e1500003
+            #"	sbc	%0, %1, %1\n"  e0c03000
+            #CSDB
+            #: "=r" (mask)
+            #: "r" (idx), "Ir" (sz)
+            #: "cc");
+            #
+            # http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
+            v1_mask_nospec=''
+            if [ -n "$g_kernel_err" ]; then
+                pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+            elif ! command -v perl >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
+            else
+                perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
                 ret=$?
-                if [ "$ret" -gt 0 ]; then
-                    pstatus green YES "$ret occurrence(s) found of x86 32 bits array_index_mask_nospec()"
-                    v1_mask_nospec="x86 32 bits array_index_mask_nospec"
+                if [ "$ret" -eq 0 ]; then
+                    pstatus green YES "x86 64 bits array_index_mask_nospec()"
+                    v1_mask_nospec="x86 64 bits array_index_mask_nospec"
                 else
-                    ret=$("${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
-                    if [ "$ret" -gt 0 ]; then
-                        pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
-                        v1_mask_nospec="arm 32 bits array_index_mask_nospec"
+                    perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
+                    ret=$?
+                    if [ "$ret" -eq 0 ]; then
+                        pstatus green YES "x86 32 bits array_index_mask_nospec()"
+                        v1_mask_nospec="x86 32 bits array_index_mask_nospec"
                     else
-                        pstatus yellow NO
+                        ret=$("${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
+                        if [ "$ret" -gt 0 ]; then
+                            pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
+                            v1_mask_nospec="arm 32 bits array_index_mask_nospec"
+                        else
+                            pstatus yellow NO
+                        fi
                     fi
                 fi
             fi
@@ -5213,8 +5293,8 @@ check_CVE_2017_5753_linux() {
         #ffffff8008082e50:       d503229f        hint    #0x14
         # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
         #
-        # if we have v1_mask_nospec or g_redhat_canonical_spectre>0, don't bother disassembling the kernel, the answer is no.
-        if [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
+        # if we already have a detection, don't bother disassembling the kernel, the answer is no.
+        if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
             pstatus yellow NO
         elif [ -n "$g_kernel_err" ]; then
             pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
@@ -5241,8 +5321,8 @@ check_CVE_2017_5753_linux() {
         # ffffff8008090a58:       d503229f        hint    #0x14
         # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
         #
-        # if we have v1_mask_nospec or g_redhat_canonical_spectre>0, don't bother disassembling the kernel, the answer is no.
-        if [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
+        # if we already have a detection, don't bother disassembling the kernel, the answer is no.
+        if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
             pstatus yellow NO
         elif [ -n "$g_kernel_err" ]; then
             pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
@@ -5251,7 +5331,7 @@ check_CVE_2017_5753_linux() {
         elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
             pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
         else
-            "${opt_arch_prefix}objdump" -d "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\smov\s+(w\d+),\s+(w\d+)/ && $r[1]=~/\scmp\s+(x\d+),\s+(x\d+)/ && $r[2]=~/\sngc\s+$2,/ && exit(9); shift @r if @r>3'
+            "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\smov\s+(w\d+),\s+(w\d+)/ && $r[1]=~/\scmp\s+(x\d+),\s+(x\d+)/ && $r[2]=~/\sngc\s+$2,/ && exit(9); shift @r if @r>3'
             ret=$?
             if [ "$ret" -eq 9 ]; then
                 pstatus green YES "array_index_nospec macro is present and used"
@@ -5261,36 +5341,7 @@ check_CVE_2017_5753_linux() {
             fi
         fi
 
-        if [ "$opt_verbose" -ge 2 ] || { [ -z "$v1_mask_nospec" ] && [ "$g_redhat_canonical_spectre" != 1 ] && [ "$g_redhat_canonical_spectre" != 2 ]; }; then
-            # this is a slow heuristic and we don't need it if we already know the kernel is patched
-            # but still show it in verbose mode
-            pr_info_nol "* Checking count of LFENCE instructions following a jump in kernel... "
-            if [ -n "$g_kernel_err" ]; then
-                pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-            else
-                if ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
-                    pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
-                else
-                    # here we disassemble the kernel and count the number of occurrences of the LFENCE opcode
-                    # in non-patched kernels, this has been empirically determined as being around 40-50
-                    # in patched kernels, this is more around 70-80, sometimes way higher (100+)
-                    # v0.13: 68 found in a 3.10.23-xxxx-std-ipv6-64 (with lots of modules compiled-in directly), which doesn't have the LFENCE patches,
-                    # so let's push the threshold to 70.
-                    # v0.33+: now only count lfence opcodes after a jump, way less error-prone
-                    # non patched kernel have between 0 and 20 matches, patched ones have at least 40-45
-                    nb_lfence=$("${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" 2>/dev/null | grep -w -B1 lfence | grep -Ewc 'jmp|jne|je')
-                    if [ "$nb_lfence" -lt 30 ]; then
-                        pstatus yellow NO "only $nb_lfence jump-then-lfence instructions found, should be >= 30 (heuristic)"
-                    else
-                        v1_lfence=1
-                        pstatus green YES "$nb_lfence jump-then-lfence instructions found, which is >= 30 (heuristic)"
-                    fi
-                fi
-            fi
-        fi
-
-    else
-        # we have no sysfs but were asked to use it only!
+    elif [ "$sys_interface_available" = 0 ]; then
         msg="/sys vulnerability interface use forced, but it's not available!"
         status=UNK
     fi
@@ -5301,22 +5352,26 @@ check_CVE_2017_5753_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ -n "$v1_mask_nospec" ]; then
-            pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability ($v1_mask_nospec)"
-        elif [ "$g_redhat_canonical_spectre" = 1 ] || [ "$g_redhat_canonical_spectre" = 2 ]; then
-            pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
-        elif [ "$v1_lfence" = 1 ]; then
-            pvulnstatus "$cve" OK "Kernel source has PROBABLY been patched to mitigate the vulnerability (jump-then-lfence instructions heuristic)"
-        elif [ -n "$g_kernel_err" ]; then
-            pvulnstatus "$cve" UNK "Couldn't find kernel image or tools missing to execute the checks"
-            explain "Re-run this script with root privileges, after installing the missing tools indicated above"
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ -n "$v1_kernel_mitigated" ]; then
+                pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability ($v1_kernel_mitigated)"
+            elif [ -n "$v1_mask_nospec" ]; then
+                pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability ($v1_mask_nospec)"
+            elif [ "$g_redhat_canonical_spectre" = 1 ] || [ "$g_redhat_canonical_spectre" = 2 ]; then
+                pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability (Red Hat/Ubuntu patch)"
+            elif [ -n "$g_kernel_err" ]; then
+                pvulnstatus "$cve" UNK "Couldn't find kernel image or tools missing to execute the checks"
+                explain "Re-run this script with root privileges, after installing the missing tools indicated above"
+            else
+                pvulnstatus "$cve" VULN "Kernel source needs to be patched to mitigate the vulnerability"
+                explain "Your kernel is too old to have the mitigation for Variant 1, you should upgrade to a newer kernel. If you're using a Linux distro and didn't compile the kernel yourself, you should upgrade your distro to get a newer kernel."
+            fi
         else
-            pvulnstatus "$cve" VULN "Kernel source needs to be patched to mitigate the vulnerability"
-            explain "Your kernel is too old to have the mitigation for Variant 1, you should upgrade to a newer kernel. If you're using a Linux distro and didn't compile the kernel yourself, you should upgrade your distro to get a newer kernel."
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
         fi
     else
-        if [ "$msg" = "Vulnerable" ] && [ -n "$v1_mask_nospec" ]; then
-            pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability (silent backport of array_index_mask_nospec)"
+        if [ "$msg" = "Vulnerable" ] && { [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ]; }; then
+            pvulnstatus "$cve" OK "Kernel source has been patched to mitigate the vulnerability (silent backport of spectre_v1 mitigation)"
         else
             if [ "$msg" = "Vulnerable" ]; then
                 msg="Kernel source needs to be patched to mitigate the vulnerability"
@@ -5332,10 +5387,9 @@ check_CVE_2017_5753_linux() {
 # CVE-2017-5753 Spectre Variant 1 (bounds check bypass) - BSD mitigation check
 check_CVE_2017_5753_bsd() {
     if ! is_cpu_affected "$cve"; then
-        # override status & msg in case CPU is not vulnerable after all
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     else
-        pvulnstatus "$cve" VULN "no mitigation for BSD yet"
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
     fi
 }
 
