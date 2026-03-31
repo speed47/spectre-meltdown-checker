@@ -5,23 +5,23 @@ A shell script to assess your system's resilience against the several [transient
 
 CVE | Name | Aliases
 --- | ---- | -------
-[CVE-2017-5753](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5753) | Bounds Check Bypass | Spectre Variant 1
-[CVE-2017-5715](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5715) | Branch Target Injection | Spectre Variant 2
-[CVE-2017-5754](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754) | Rogue Data Cache Load | Meltdown, Variant 3
+[CVE-2017-5753](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5753) | Bounds Check Bypass | Spectre V1
+[CVE-2017-5715](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5715) | Branch Target Injection | Spectre V2
+[CVE-2017-5754](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754) | Rogue Data Cache Load | Meltdown
 [CVE-2018-3640](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3640) | Rogue System Register Read | Variant 3a
 [CVE-2018-3639](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3639) | Speculative Store Bypass | Variant 4, SSB
-[CVE-2018-3615](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3615) | L1 Terminal Fault | L1TF, Foreshadow (SGX)
-[CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620) | L1 Terminal Fault | L1TF, Foreshadow-NG (OS/SMM)
-[CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646) | L1 Terminal Fault | L1TF, Foreshadow-NG (VMM)
+[CVE-2018-3615](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3615) | L1 Terminal Fault | Foreshadow (SGX)
+[CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620) | L1 Terminal Fault | Foreshadow-NG (OS/SMM)
+[CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646) | L1 Terminal Fault | Foreshadow-NG (VMM)
 [CVE-2018-12126](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12126) | Microarchitectural Store Buffer Data Sampling | MSBDS, Fallout
 [CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | Microarchitectural Fill Buffer Data Sampling | MFBDS, ZombieLoad
 [CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | Microarchitectural Load Port Data Sampling | MLPDS, RIDL
 [CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX Asynchronous Abort | TAA, ZombieLoad V2
-[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes | MCEPSC, iTLB Multihit, No eXcuses
+[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes | iTLB Multihit, No eXcuses
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | Special Register Buffer Data Sampling | SRBDS, CROSSTalk
-[CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | GDS, Downfall
-[CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, RAS, SRSO
+[CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | Downfall, GDS
+[CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed
 [CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar
 [CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack, Store Queue | TSA-SQ
@@ -32,36 +32,36 @@ CVE | Name | Aliases
 Depending on your situation, the table below answers whether an attacker in a given position can extract data from a given target.
 The "Userland → Kernel" column also applies within a VM (VM userland vs. VM kernel), since the same CPU mechanisms are at play regardless of virtualization.
 
-Vulnerability | Userland → Kernel | Userland → Userland | VM → Host | VM → VM
------------- | :---------------: | :-----------------: | :-------: | :-----:
+Vulnerability | Userland → Kernel | Userland → Userland | VM → Host | VM → VM | Mitigation
+------------ | :---------------: | :-----------------: | :-------: | :-----: | ----------
 CVE-2017-5753 (Spectre V1) | 💥 | 💥 | 💥 | 💥 | Recompile everything with LFENCE
 CVE-2017-5715 (Spectre V2) | 💥 | 💥 | 💥 | 💥 | Microcode + kernel update (or retpoline)
 CVE-2017-5754 (Meltdown) | 💥 | ✅ | ✅ | ✅ | Kernel update
 CVE-2018-3640 (Variant 3a) | 💥 | ✅ | ✅ | ✅ | Microcode update
 CVE-2018-3639 (Variant 4, SSB) | ✅ | 💥 | ✅ | ✅ | Microcode + kernel update
-CVE-2018-3615 (Foreshadow, SGX) | ✅ | ✅ | ✅ | ✅ | Microcode update
+CVE-2018-3615 (Foreshadow, SGX) | ✅ (3) | ✅ (3) | ✅ (3) | ✅ (3) | Microcode update
 CVE-2018-3620 (Foreshadow-NG, OS/SMM) | 💥 | ✅ | ✅ | ✅ | Kernel update
 CVE-2018-3646 (Foreshadow-NG, VMM) | ✅ | ✅ | 💥 | 💥 | Kernel update (or disable EPT/SMT)
-CVE-2018-12126 (MSBDS, Fallout) | 💥 | 💥 † | 💥 | 💥 † | Microcode + kernel update
-CVE-2018-12130 (MFBDS, ZombieLoad) | 💥 | 💥 † | 💥 | 💥 † | Microcode + kernel update
-CVE-2018-12127 (MLPDS, RIDL) | 💥 | 💥 † | 💥 | 💥 † | Microcode + kernel update
-CVE-2019-11091 (MDSUM, RIDL) | 💥 | 💥 † | 💥 | 💥 † | Microcode + kernel update
-CVE-2019-11135 (TAA, ZombieLoad V2) | 💥 | 💥 † | 💥 | 💥 † | Microcode + kernel update
+CVE-2018-12126 (MSBDS, Fallout) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2018-12130 (MFBDS, ZombieLoad) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2018-12127 (MLPDS, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2019-11091 (MDSUM, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2019-11135 (TAA, ZombieLoad V2) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2018-12207 (iTLB Multihit, No eXcuses) | ✅ | ✅ | ☠️ | ✅ | Hypervisor update (or disable hugepages)
-CVE-2020-0543 (SRBDS, CROSSTalk) | 💥 ‡ | 💥 ‡ | 💥 ‡ | 💥 ‡ | Microcode + kernel update
+CVE-2020-0543 (SRBDS, CROSSTalk) | 💥 (2) | 💥 (2) | 💥 (2) | 💥 (2) | Microcode + kernel update
 CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (or disable AVX)
 CVE-2023-20569 (Inception, SRSO) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
 CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or kernel workaround)
 CVE-2023-23583 (Reptar) | ☠️ | ☠️ | ☠️ | ☠️ | Microcode update
-CVE-2024-36350 (TSA-SQ) | 💥 | 💥 † | 💥 | 💥 † | Microcode + kernel update
-CVE-2024-36357 (TSA-L1) | 💥 | 💥 † | 💥 | 💥 † | Microcode + kernel update
+CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 
 > 💥 Data can be leaked across this boundary.
 > ✅ Not affected in this scenario.
 > ☠️ Denial of service (system crash or unpredictable behavior), no data leak.
-> † Cross-process leakage requires SMT (Hyper-Threading) to be active — attacker and victim must share a physical core.
-> ‡ Only leaks RDRAND/RDSEED output, not arbitrary memory; still allows recovering cryptographic material from any victim.
-> CVE-2018-3615 (Foreshadow SGX) inverts the normal trust model: the OS reads SGX enclave data. It is irrelevant unless the system runs SGX enclaves, and the attacker must already have OS-level access.
+> (1) Cross-process leakage requires SMT (Hyper-Threading) to be active — attacker and victim must share a physical core.
+> (2) Only leaks RDRAND/RDSEED output, not arbitrary memory; still allows recovering cryptographic material from any victim.
+> (3) CVE-2018-3615 (Foreshadow SGX) inverts the normal trust model: the OS reads SGX enclave data. It is irrelevant unless the system runs SGX enclaves, and the attacker must already have OS-level access.
 
 <details>
 <summary>Detailed CVE descriptions</summary>
