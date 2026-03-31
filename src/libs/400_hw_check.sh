@@ -481,26 +481,27 @@ check_cpu() {
     pr_info_nol "    * CPU indicates STIBP capability: "
     # intel: A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
     # amd: 8000_0008 EBX[15]=1
+    cap_stibp=''
     if is_intel; then
         read_cpuid 0x7 0x0 $EDX 27 1 1
         ret=$?
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES "Intel STIBP feature bit"
-            #cpuid_stibp='Intel STIBP'
+            cap_stibp='Intel STIBP'
         fi
     elif is_amd; then
         read_cpuid 0x80000008 0x0 $EBX 15 1 1
         ret=$?
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES "AMD STIBP feature bit"
-            #cpuid_stibp='AMD STIBP'
+            cap_stibp='AMD STIBP'
         fi
     elif is_hygon; then
         read_cpuid 0x80000008 0x0 $EBX 15 1 1
         ret=$?
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES "HYGON STIBP feature bit"
-            #cpuid_stibp='HYGON STIBP'
+            cap_stibp='HYGON STIBP'
         fi
     else
         ret=invalid
@@ -1003,6 +1004,20 @@ check_cpu() {
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
             cap_verw_clear=0
+        else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+
+        pr_info_nol "    * CPU indicates AutoIBRS capability: "
+        cap_autoibrs=''
+        read_cpuid 0x80000021 0x0 $EAX 8 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            pstatus green YES
+            cap_autoibrs=1
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            pstatus yellow NO
+            cap_autoibrs=0
         else
             pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         fi
