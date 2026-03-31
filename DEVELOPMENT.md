@@ -37,21 +37,24 @@ The project uses 4 branches organized in two pipelines (production and dev/test)
 
 | Branch | Contents | Pushed by |
 |--------|----------|-----------|
+| **`test`** | Dev/test source (split files + Makefile) | Developers |
+| **`test-build`** | Monolithic test script (built artifact) | CI from `test` |
 | **`source`** | Production source (split files + Makefile) | Developers |
-| **`master`** | Monolithic production script (built artifact) | CI from `source` |
-| **`dev`** | Dev/test source (split files + Makefile) | Developers |
-| **`dev-build`** | Monolithic test script (built artifact) | CI from `dev` |
+| **`source-build`** | Monolithic test script (built artifact) | CI from `source` |
+| **`master`** | Monolithic production script (built artifact) | PR by developers from `source-build` |
 
-- **`source`** and **`dev`** contain the split source files and the Makefile. These are the branches developers commit to.
-- **`master`** and **`dev-build`** contain only the monolithic `spectre-meltdown-checker.sh` built by CI. Nobody commits to these directly.
+- **`source`** and **`test`** contain the split source files and the Makefile. These are the branches developers commit to.
+- **`master`**, **`source-build`** and **`test-build`** contain only the monolithic `spectre-meltdown-checker.sh` built by CI. Nobody commits to these directly.
 - **`master`** is the preexisting production branch that users pull from. It cannot be renamed.
-- **`dev-build`** is a testing branch that users can pull from to test pre-release versions.
+- **`test-build`** is a testing branch that users can pull from to test pre-release versions.
+- **`source-build`** is a preprod branch to prepare the artifact before merging to **`master`**.
 
 Typical workflow:
-1. Feature/fix branches are created from `dev` and merged back into `dev`.
-2. CI builds the script and pushes it to `dev-build` for testing.
-3. When ready for release, `dev` is merged into `source`.
-4. CI builds the script and pushes it to `master` for production.
+1. Feature/fix branches are created from `test` and merged back into `test`.
+2. CI builds the script and pushes it to `test-build` for testing.
+3. When ready for release, `test` is merged into `source`.
+4. CI builds the script and pushes it to `source-build` for production.
+5. Developer creates a PR from `source-build` to `master`.
 
 ## Versioning
 

@@ -1,12 +1,12 @@
-name: dev-build
+name: test-build
 
 on:
   push:
     branches:
-      - dev
+      - test
 
 jobs:
-  dev-build:
+  test-build:
 
     runs-on: ubuntu-latest
 
@@ -87,13 +87,13 @@ jobs:
           echo "Left temporary files!"
           exit 1
         fi
-    - name: push artifact to the dev-build branch
+    - name: push artifact to the test-build branch
       run: |
         tmpdir=$(mktemp -d)
         mv ./dist/* $tmpdir/
         rm -rf ./dist
-        git fetch origin dev-build
-        git checkout -f dev-build
+        git fetch origin test-build
+        git checkout -f test-build
         mv $tmpdir/* .
         git add *
         echo =#=#= DIFF CACHED
