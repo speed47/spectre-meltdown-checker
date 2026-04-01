@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.21.0331950'
+VERSION='26.21.0401841'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -365,6 +365,34 @@ g_is_cpu_affected_cached=0
 # >>>>>> libs/200_cpu_affected.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
+
+# Helpers for is_cpu_affected: encode the 4 patterns for setting affected_* variables.
+# Each function takes the variable suffix as $1 (e.g. "variantl1tf", not "affected_variantl1tf").
+# Variables hold 1 (not affected / immune) or 0 (affected / vuln); empty = not yet decided.
+
+# Set affected_$1 to 1 (not affected) unconditionally.
+# Use for: hardware capability bits (cap_rdcl_no, cap_ssb_no, cap_gds_no, cap_tsa_*_no),
+#          is_cpu_specex_free results, and vendor-wide immune facts (AMD/L1TF, Cavium, etc.).
+# This always wins and cannot be overridden by _infer_vuln (which only fires on empty).
+# Must not be followed by _set_vuln for the same variable in the same code path.
+_set_immune() { eval "affected_$1=1"; }
+
+# Set affected_$1 to 0 (affected) unconditionally.
+# Use for: confirmed-vuln model/erratum lists, ARM unknown-CPU fallback.
+# Note: intentionally overrides a prior _infer_immune (1) — this is required for ARM
+#       big.LITTLE cumulative logic where a second vuln core must override a prior safe core.
+# Must not be called after _set_immune for the same variable in the same code path.
+_set_vuln() { eval "affected_$1=0"; }
+
+# Set affected_$1 to 1 (not affected) only if not yet decided (currently empty).
+# Use for: model/family whitelists, per-part ARM immune inferences,
+#          AMD/ARM partial immunity (immune on this variant axis but not others).
+_infer_immune() { eval "[ -z \"\$affected_$1\" ] && affected_$1=1 || :"; }
+
+# Set affected_$1 to 0 (affected) only if not yet decided (currently empty).
+# Use for: family-level catch-all fallbacks (Intel L1TF non-whitelist, itlbmh non-whitelist).
+_infer_vuln() { eval "[ -z \"\$affected_$1\" ] && affected_$1=0 || :"; }
+
 # Return the cached affected_* status for a given CVE
 # Args: $1=cve_id
 # Returns: 0 if affected, 1 if not affected
@@ -438,79 +466,79 @@ is_cpu_affected() {
     affected_itlbmh=''
     affected_srbds=''
     # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
-    affected_zenbleed=immune
-    affected_inception=immune
+    _set_immune zenbleed
+    _set_immune inception
     # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
-    affected_tsa=immune
+    _set_immune tsa
     # Downfall & Reptar are Intel specific, look for "is_intel" below:
-    affected_downfall=immune
-    affected_reptar=immune
+    _set_immune downfall
+    _set_immune reptar
 
     if is_cpu_mds_free; then
-        [ -z "$affected_msbds" ] && affected_msbds=immune
-        [ -z "$affected_mfbds" ] && affected_mfbds=immune
-        [ -z "$affected_mlpds" ] && affected_mlpds=immune
-        [ -z "$affected_mdsum" ] && affected_mdsum=immune
+        _infer_immune msbds
+        _infer_immune mfbds
+        _infer_immune mlpds
+        _infer_immune mdsum
         pr_debug "is_cpu_affected: cpu not affected by Microarchitectural Data Sampling"
     fi
 
     if is_cpu_taa_free; then
-        [ -z "$affected_taa" ] && affected_taa=immune
+        _infer_immune taa
         pr_debug "is_cpu_affected: cpu not affected by TSX Asynhronous Abort"
     fi
 
     if is_cpu_srbds_free; then
-        [ -z "$affected_srbds" ] && affected_srbds=immune
+        _infer_immune srbds
         pr_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
     fi
 
     if is_cpu_specex_free; then
-        affected_variant1=immune
-        affected_variant2=immune
-        affected_variant3=immune
-        affected_variant3a=immune
-        affected_variant4=immune
-        affected_variantl1tf=immune
-        affected_msbds=immune
-        affected_mfbds=immune
-        affected_mlpds=immune
-        affected_mdsum=immune
-        affected_taa=immune
-        affected_srbds=immune
+        _set_immune variant1
+        _set_immune variant2
+        _set_immune variant3
+        _set_immune variant3a
+        _set_immune variant4
+        _set_immune variantl1tf
+        _set_immune msbds
+        _set_immune mfbds
+        _set_immune mlpds
+        _set_immune mdsum
+        _set_immune taa
+        _set_immune srbds
     elif is_intel; then
         # Intel
         # https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
         # https://github.com/paboldin/meltdown-exploit/issues/19 ^F E5200 => meltdown affected
         # model name : Pentium(R) Dual-Core  CPU      E5200  @ 2.50GHz
         if echo "$cpu_friendly_name" | grep -qE 'Pentium\(R\) Dual-Core[[:space:]]+CPU[[:space:]]+E[0-9]{4}K?'; then
-            affected_variant1=vuln
-            [ -z "$affected_variant2" ] && affected_variant2=immune
-            affected_variant3=vuln
+            _set_vuln variant1
+            _infer_immune variant2
+            _set_vuln variant3
         fi
         if [ "$cap_rdcl_no" = 1 ]; then
             # capability bit for future Intel processor that will explicitly state
             # that they're not affected to Meltdown
             # this var is set in check_cpu()
-            [ -z "$affected_variant3" ] && affected_variant3=immune
-            [ -z "$affected_variantl1tf" ] && affected_variantl1tf=immune
+            _set_immune variant3
+            _set_immune variantl1tf
             pr_debug "is_cpu_affected: RDCL_NO is set so not vuln to meltdown nor l1tf"
         fi
         if [ "$cap_ssb_no" = 1 ]; then
             # capability bit for future Intel processor that will explicitly state
             # that they're not affected to Variant 4
             # this var is set in check_cpu()
-            [ -z "$affected_variant4" ] && affected_variant4=immune
+            _set_immune variant4
             pr_debug "is_cpu_affected: SSB_NO is set so not vuln to affected_variant4"
         fi
         if is_cpu_ssb_free; then
-            [ -z "$affected_variant4" ] && affected_variant4=immune
+            _infer_immune variant4
             pr_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to affected_variant4"
         fi
         # variant 3a
         if [ "$cpu_family" = 6 ]; then
             if [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] || [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
                 pr_debug "is_cpu_affected: xeon phi immune to variant 3a"
-                [ -z "$affected_variant3a" ] && affected_variant3a=immune
+                _infer_immune variant3a
             elif [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ]; then
@@ -519,10 +547,10 @@ is_cpu_affected() {
                 # => silvermont CPUs (aka cherry lake for tablets and brawsell for mobile/desktop) don't seem to be affected
                 # => goldmont ARE affected
                 pr_debug "is_cpu_affected: silvermont immune to variant 3a"
-                [ -z "$affected_variant3a" ] && affected_variant3a=immune
+                _infer_immune variant3a
             fi
         fi
-        # L1TF (RDCL_NO already checked above)
+        # L1TF (cap_rdcl_no already checked above)
         if [ "$cpu_family" = 6 ]; then
             if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_SALTWELL_TABLET" ] ||
@@ -543,14 +571,14 @@ is_cpu_affected() {
                 [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
 
                 pr_debug "is_cpu_affected: intel family 6 but model known to be immune to l1tf"
-                [ -z "$affected_variantl1tf" ] && affected_variantl1tf=immune
+                _infer_immune variantl1tf
             else
                 pr_debug "is_cpu_affected: intel family 6 is vuln to l1tf"
-                [ -z "$affected_variantl1tf" ] && affected_variantl1tf=vuln
+                _infer_vuln variantl1tf
             fi
         elif [ "$cpu_family" -lt 6 ]; then
             pr_debug "is_cpu_affected: intel family < 6 is immune to l1tf"
-            [ -z "$affected_variantl1tf" ] && affected_variantl1tf=immune
+            _infer_immune variantl1tf
         fi
         # Downfall
         if [ "$cap_gds_no" = 1 ]; then
@@ -558,7 +586,7 @@ is_cpu_affected() {
             # that they're unaffected by GDS. Also set by hypervisors on virtual CPUs
             # so that the guest kernel doesn't try to mitigate GDS when it's already mitigated on the host
             pr_debug "is_cpu_affected: downfall: not affected (GDS_NO)"
-            affected_downfall=immune
+            _set_immune downfall
         elif [ "$cpu_family" = 6 ]; then
             # list from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=64094e7e3118aff4b0be8ff713c242303e139834
             set -u
@@ -574,7 +602,7 @@ is_cpu_affected() {
                 [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ]; then
                 pr_debug "is_cpu_affected: downfall: affected"
-                affected_downfall=vuln
+                _set_vuln downfall
             elif [ "$cap_avx2" = 0 ] && [ "$cap_avx512" = 0 ]; then
                 pr_debug "is_cpu_affected: downfall: no avx; immune"
             else
@@ -633,7 +661,7 @@ is_cpu_affected() {
             )
             if [ "$cpu_cpuid" = "$affected_cpuid" ] && [ $((cpu_platformid & ucode_platformid_mask)) -gt 0 ]; then
                 # this is not perfect as Intel never tells about their EOL CPUs, so more CPUs might be affected but there's no way to tell
-                affected_reptar=vuln
+                _set_vuln reptar
                 g_reptar_fixed_ucode_version=$fixed_ucode_ver
                 break
             fi
@@ -642,26 +670,26 @@ is_cpu_affected() {
     elif is_amd || is_hygon; then
         # AMD revised their statement about affected_variant2 => affected
         # https://www.amd.com/en/corporate/speculative-execution
-        affected_variant1=vuln
-        affected_variant2=vuln
-        [ -z "$affected_variant3" ] && affected_variant3=immune
+        _set_vuln variant1
+        _set_vuln variant2
+        _infer_immune variant3
         # https://www.amd.com/en/corporate/security-updates
         # "We have not identified any AMD x86 products susceptible to the Variant 3a vulnerability in our analysis to-date."
-        [ -z "$affected_variant3a" ] && affected_variant3a=immune
+        _infer_immune variant3a
         if is_cpu_ssb_free; then
-            [ -z "$affected_variant4" ] && affected_variant4=immune
+            _infer_immune variant4
             pr_debug "is_cpu_affected: cpu not affected by speculative store bypass so not vuln to affected_variant4"
         fi
-        affected_variantl1tf=immune
+        _set_immune variantl1tf
 
         # Zenbleed
-        amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && affected_zenbleed=vuln
-        amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && affected_zenbleed=vuln
-        amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && affected_zenbleed=vuln
+        amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && _set_vuln zenbleed
+        amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && _set_vuln zenbleed
+        amd_legacy_erratum "$(amd_model_range 0x17 0xa0 0x0 0xaf 0xf)" && _set_vuln zenbleed
 
         # Inception (according to kernel, zen 1 to 4)
         if [ "$cpu_family" = $((0x17)) ] || [ "$cpu_family" = $((0x19)) ]; then
-            affected_inception=vuln
+            _set_vuln inception
         fi
 
         # TSA (Zen 3/4 are affected, unless CPUID says otherwise)
@@ -670,19 +698,19 @@ is_cpu_affected() {
             # they're not affected to TSA-SQ and TSA-L1
             # these vars are set in check_cpu()
             pr_debug "is_cpu_affected: TSA_SQ_NO and TSA_L1_NO are set so not vuln to TSA"
-            affected_tsa=immune
+            _set_immune tsa
         elif [ "$cpu_family" = $((0x19)) ]; then
-            affected_tsa=vuln
+            _set_vuln tsa
         fi
 
     elif [ "$cpu_vendor" = CAVIUM ]; then
-        affected_variant3=immune
-        affected_variant3a=immune
-        affected_variantl1tf=immune
+        _set_immune variant3
+        _set_immune variant3a
+        _set_immune variantl1tf
     elif [ "$cpu_vendor" = PHYTIUM ]; then
-        affected_variant3=immune
-        affected_variant3a=immune
-        affected_variantl1tf=immune
+        _set_immune variant3
+        _set_immune variant3a
+        _set_immune variantl1tf
     elif [ "$cpu_vendor" = ARM ]; then
         # ARM
         # reference: https://developer.arm.com/support/security-update
@@ -714,73 +742,73 @@ is_cpu_affected() {
                 # Maintain cumulative check of vulnerabilities -
                 # if at least one of the cpu is affected, then the system is affected
                 if [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc08 -e 0xc09 -e 0xc0d -e 0xc0e; then
-                    affected_variant1=vuln
-                    affected_variant2=vuln
-                    [ -z "$affected_variant3" ] && affected_variant3=immune
-                    [ -z "$affected_variant3a" ] && affected_variant3a=immune
-                    [ -z "$affected_variant4" ] && affected_variant4=immune
+                    _set_vuln variant1
+                    _set_vuln variant2
+                    _infer_immune variant3
+                    _infer_immune variant3a
+                    _infer_immune variant4
                     pr_debug "checking cpu$i: armv7 A8/A9/A12/A17 non affected to variants 3, 3a & 4"
                 elif [ "$cpuarch" = 7 ] && echo "$cpupart" | grep -q -w -e 0xc0f; then
-                    affected_variant1=vuln
-                    affected_variant2=vuln
-                    [ -z "$affected_variant3" ] && affected_variant3=immune
-                    affected_variant3a=vuln
-                    [ -z "$affected_variant4" ] && affected_variant4=immune
+                    _set_vuln variant1
+                    _set_vuln variant2
+                    _infer_immune variant3
+                    _set_vuln variant3a
+                    _infer_immune variant4
                     pr_debug "checking cpu$i: armv7 A15 non affected to variants 3 & 4"
                 elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd07 -e 0xd08; then
-                    affected_variant1=vuln
-                    affected_variant2=vuln
-                    [ -z "$affected_variant3" ] && affected_variant3=immune
-                    affected_variant3a=vuln
-                    affected_variant4=vuln
+                    _set_vuln variant1
+                    _set_vuln variant2
+                    _infer_immune variant3
+                    _set_vuln variant3a
+                    _set_vuln variant4
                     pr_debug "checking cpu$i: armv8 A57/A72 non affected to variants 3"
                 elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd09; then
-                    affected_variant1=vuln
-                    affected_variant2=vuln
-                    [ -z "$affected_variant3" ] && affected_variant3=immune
-                    [ -z "$affected_variant3a" ] && affected_variant3a=immune
-                    affected_variant4=vuln
+                    _set_vuln variant1
+                    _set_vuln variant2
+                    _infer_immune variant3
+                    _infer_immune variant3a
+                    _set_vuln variant4
                     pr_debug "checking cpu$i: armv8 A73 non affected to variants 3 & 3a"
                 elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0a; then
-                    affected_variant1=vuln
-                    affected_variant2=vuln
-                    affected_variant3=vuln
-                    [ -z "$affected_variant3a" ] && affected_variant3a=immune
-                    affected_variant4=vuln
+                    _set_vuln variant1
+                    _set_vuln variant2
+                    _set_vuln variant3
+                    _infer_immune variant3a
+                    _set_vuln variant4
                     pr_debug "checking cpu$i: armv8 A75 non affected to variant 3a"
                 elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd0b -e 0xd0c -e 0xd0d; then
-                    affected_variant1=vuln
-                    [ -z "$affected_variant2" ] && affected_variant2=immune
-                    [ -z "$affected_variant3" ] && affected_variant3=immune
-                    [ -z "$affected_variant3a" ] && affected_variant3a=immune
-                    affected_variant4=vuln
+                    _set_vuln variant1
+                    _infer_immune variant2
+                    _infer_immune variant3
+                    _infer_immune variant3a
+                    _set_vuln variant4
                     pr_debug "checking cpu$i: armv8 A76/A77/NeoverseN1 non affected to variant 2, 3 & 3a"
                 elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd40 -e 0xd49 -e 0xd4f; then
-                    affected_variant1=vuln
-                    [ -z "$affected_variant2" ] && affected_variant2=immune
-                    [ -z "$affected_variant3" ] && affected_variant3=immune
-                    [ -z "$affected_variant3a" ] && affected_variant3a=immune
-                    [ -z "$affected_variant4" ] && affected_variant4=immune
+                    _set_vuln variant1
+                    _infer_immune variant2
+                    _infer_immune variant3
+                    _infer_immune variant3a
+                    _infer_immune variant4
                     pr_debug "checking cpu$i: armv8 NeoverseN2/V1/V2 non affected to variant 2, 3, 3a & 4"
                 elif [ "$cpuarch" -le 7 ] || { [ "$cpuarch" = 8 ] && [ $((cpupart)) -lt $((0xd07)) ]; }; then
-                    [ -z "$affected_variant1" ] && affected_variant1=immune
-                    [ -z "$affected_variant2" ] && affected_variant2=immune
-                    [ -z "$affected_variant3" ] && affected_variant3=immune
-                    [ -z "$affected_variant3a" ] && affected_variant3a=immune
-                    [ -z "$affected_variant4" ] && affected_variant4=immune
+                    _infer_immune variant1
+                    _infer_immune variant2
+                    _infer_immune variant3
+                    _infer_immune variant3a
+                    _infer_immune variant4
                     pr_debug "checking cpu$i: arm arch$cpuarch, all immune (v7 or v8 and model < 0xd07)"
                 else
-                    affected_variant1=vuln
-                    affected_variant2=vuln
-                    affected_variant3=vuln
-                    affected_variant3a=vuln
-                    affected_variant4=vuln
+                    _set_vuln variant1
+                    _set_vuln variant2
+                    _set_vuln variant3
+                    _set_vuln variant3a
+                    _set_vuln variant4
                     pr_debug "checking cpu$i: arm unknown arch$cpuarch part$cpupart, considering vuln"
                 fi
             fi
             pr_debug "is_cpu_affected: for cpu$i and so far, we have <$affected_variant1> <$affected_variant2> <$affected_variant3> <$affected_variant3a> <$affected_variant4>"
         done
-        affected_variantl1tf=immune
+        _set_immune variantl1tf
     fi
 
     # we handle iTLB Multihit here (not linked to is_specex_free)
@@ -803,43 +831,31 @@ is_cpu_affected() {
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
                 pr_debug "is_cpu_affected: intel family 6 but model known to be immune to itlbmh"
-                [ -z "$affected_itlbmh" ] && affected_itlbmh=immune
+                _infer_immune itlbmh
             else
                 pr_debug "is_cpu_affected: intel family 6 is vuln to itlbmh"
-                affected_itlbmh=vuln
+                _infer_vuln itlbmh
             fi
         elif [ "$cpu_family" -lt 6 ]; then
             pr_debug "is_cpu_affected: intel family < 6 is immune to itlbmh"
-            [ -z "$affected_itlbmh" ] && affected_itlbmh=immune
+            _infer_immune itlbmh
         fi
     else
         pr_debug "is_cpu_affected: non-intel not affected to itlbmh"
-        [ -z "$affected_itlbmh" ] && affected_itlbmh=immune
+        _infer_immune itlbmh
     fi
 
-    pr_debug "is_cpu_affected: temp results are <$affected_variant1> <$affected_variant2> <$affected_variant3> <$affected_variant3a> <$affected_variant4> <$affected_variantl1tf>"
-    [ "$affected_variant1" = "immune" ] && affected_variant1=1 || affected_variant1=0
-    [ "$affected_variant2" = "immune" ] && affected_variant2=1 || affected_variant2=0
-    [ "$affected_variant3" = "immune" ] && affected_variant3=1 || affected_variant3=0
-    [ "$affected_variant3a" = "immune" ] && affected_variant3a=1 || affected_variant3a=0
-    [ "$affected_variant4" = "immune" ] && affected_variant4=1 || affected_variant4=0
-    [ "$affected_variantl1tf" = "immune" ] && affected_variantl1tf=1 || affected_variantl1tf=0
-    [ "$affected_msbds" = "immune" ] && affected_msbds=1 || affected_msbds=0
-    [ "$affected_mfbds" = "immune" ] && affected_mfbds=1 || affected_mfbds=0
-    [ "$affected_mlpds" = "immune" ] && affected_mlpds=1 || affected_mlpds=0
-    [ "$affected_mdsum" = "immune" ] && affected_mdsum=1 || affected_mdsum=0
-    [ "$affected_taa" = "immune" ] && affected_taa=1 || affected_taa=0
-    [ "$affected_itlbmh" = "immune" ] && affected_itlbmh=1 || affected_itlbmh=0
-    [ "$affected_srbds" = "immune" ] && affected_srbds=1 || affected_srbds=0
-    [ "$affected_zenbleed" = "immune" ] && affected_zenbleed=1 || affected_zenbleed=0
-    [ "$affected_downfall" = "immune" ] && affected_downfall=1 || affected_downfall=0
-    [ "$affected_inception" = "immune" ] && affected_inception=1 || affected_inception=0
-    [ "$affected_reptar" = "immune" ] && affected_reptar=1 || affected_reptar=0
-    [ "$affected_tsa" = "immune" ] && affected_tsa=1 || affected_tsa=0
+    # shellcheck disable=SC2154  # affected_zenbleed/inception/tsa/downfall/reptar set via eval (_set_immune)
+    {
+        pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
+        pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
+        pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
+        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar"
+    }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
-    [ "$cap_sgx" = 0 ] && affected_variantl1tf_sgx=1
-    pr_debug "is_cpu_affected: final results are <$affected_variant1> <$affected_variant2> <$affected_variant3> <$affected_variant3a> <$affected_variant4> <$affected_variantl1tf> <$affected_variantl1tf_sgx>"
+    [ "$cap_sgx" = 0 ] && _set_immune variantl1tf_sgx
+    pr_debug "is_cpu_affected: variantl1tf_sgx=<$affected_variantl1tf_sgx>"
     g_is_cpu_affected_cached=1
     _is_cpu_affected_cached "$1"
     return $?
@@ -3513,26 +3529,27 @@ check_cpu() {
     pr_info_nol "    * CPU indicates STIBP capability: "
     # intel: A processor supports STIBP if it enumerates CPUID (EAX=7H,ECX=0):EDX[27] as 1
     # amd: 8000_0008 EBX[15]=1
+    cap_stibp=''
     if is_intel; then
         read_cpuid 0x7 0x0 $EDX 27 1 1
         ret=$?
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES "Intel STIBP feature bit"
-            #cpuid_stibp='Intel STIBP'
+            cap_stibp='Intel STIBP'
         fi
     elif is_amd; then
         read_cpuid 0x80000008 0x0 $EBX 15 1 1
         ret=$?
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES "AMD STIBP feature bit"
-            #cpuid_stibp='AMD STIBP'
+            cap_stibp='AMD STIBP'
         fi
     elif is_hygon; then
         read_cpuid 0x80000008 0x0 $EBX 15 1 1
         ret=$?
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES "HYGON STIBP feature bit"
-            #cpuid_stibp='HYGON STIBP'
+            cap_stibp='HYGON STIBP'
         fi
     else
         ret=invalid
@@ -3694,6 +3711,8 @@ check_cpu() {
         pr_info_nol "    * Indirect Predictor Disable feature is available: "
         read_cpuid 0x7 0x2 $EDX 1 1 1
         ret=$?
+        # cap_ipred is not yet used in verdict logic (no kernel sysfs/config to cross-reference)
+        # shellcheck disable=SC2034
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ipred=1
             pstatus green YES "IPRED_CTRL feature bit"
@@ -3732,9 +3751,6 @@ check_cpu() {
             cap_bhi=-1
             pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         fi
-
-        # make shellcheck happy while we're not yet using these new cpuid values in our checks
-        export cap_ipred cap_rrsba cap_bhi
     fi
 
     if is_intel; then
@@ -4038,6 +4054,20 @@ check_cpu() {
         else
             pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         fi
+
+        pr_info_nol "    * CPU indicates AutoIBRS capability: "
+        cap_autoibrs=''
+        read_cpuid 0x80000021 0x0 $EAX 8 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            pstatus green YES
+            cap_autoibrs=1
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            pstatus yellow NO
+            cap_autoibrs=0
+        else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
     fi
 
     pr_info_nol "  * CPU supports Transactional Synchronization Extensions (TSX): "
@@ -4191,61 +4221,93 @@ check_redhat_canonical_spectre() {
     fi
 }
 
-# Detect whether this system is hosting virtual machines (hypervisor check)
-# Sets: g_has_vmm
+# Detect whether this system is hosting virtual machines (hypervisor check).
+# Detection runs only on the first call; subsequent calls reuse the cached
+# result.  The status line is always printed so each CVE section shows the
+# hypervisor context to the user.
+# Sets: g_has_vmm, g_has_vmm_reason
 check_has_vmm() {
     local binary pid
     pr_info_nol "* This system is a host running a hypervisor: "
-    g_has_vmm=$opt_vmm
-    if [ "$g_has_vmm" = -1 ] && [ "$opt_paranoid" = 1 ]; then
-        # In paranoid mode, if --vmm was not specified on the command-line,
-        # we want to be secure before everything else, so assume we're running
-        # a hypervisor, as this requires more mitigations
-        g_has_vmm=2
-    elif [ "$g_has_vmm" = -1 ]; then
-        # Here, we want to know if we are hosting a hypervisor, and running some VMs on it.
-        # If we find no evidence that this is the case, assume we're not (to avoid scaring users),
-        # this can always be overridden with --vmm in any case.
-        g_has_vmm=0
-        if command -v pgrep >/dev/null 2>&1; then
-            # remove xenbus and xenwatch, also present inside domU
-            # remove libvirtd as it can also be used to manage containers and not VMs
-            # for each binary we want to grep, get the pids
-            for binary in qemu kvm xenstored xenconsoled; do
-                for pid in $(pgrep -x "$binary"); do
-                    # resolve the exe symlink, if it doesn't resolve with -m,
-                    # which doesn't even need the dest to exist, it means the symlink
-                    # is null, which is the case for kernel threads: ignore those to
-                    # avoid false positives (such as [kvm-irqfd-clean] under at least RHEL 7.6/7.7)
-                    if ! [ "$(readlink -m "/proc/$pid/exe")" = "/proc/$pid/exe" ]; then
-                        pr_debug "g_has_vmm: found PID $pid"
-                        g_has_vmm=1
-                    fi
-                done
-            done
-            unset binary pid
+    if [ "$g_has_vmm_cached" != 1 ]; then
+        g_has_vmm=$opt_vmm
+        if [ "$g_has_vmm" != -1 ]; then
+            # --vmm was explicitly set on the command line
+            g_has_vmm_reason="forced from command line"
+        elif [ "$opt_paranoid" = 1 ]; then
+            # In paranoid mode, if --vmm was not specified on the command-line,
+            # we want to be secure before everything else, so assume we're running
+            # a hypervisor, as this requires more mitigations
+            g_has_vmm=1
+            g_has_vmm_reason="paranoid mode"
         else
-            # ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
-            # shellcheck disable=SC2009
-            if command -v ps >/dev/null && ps ax | grep -vw grep | grep -q -e '\<qemu' -e '/qemu' -e '<\kvm' -e '/kvm' -e '/xenstored' -e '/xenconsoled'; then
-                g_has_vmm=1
+            # Here, we want to know if we are hosting a hypervisor, and running some VMs on it.
+            # If we find no evidence that this is the case, assume we're not (to avoid scaring users),
+            # this can always be overridden with --vmm in any case.
+            g_has_vmm=0
+            if command -v pgrep >/dev/null 2>&1; then
+                # Exclude xenbus/xenwatch (present inside domU guests) and
+                # libvirtd (also manages containers, not just VMs).
+                # Use pgrep -x (exact match) for most binaries.  QEMU is
+                # special: the binary is almost never just "qemu" — it is
+                # "qemu-system-x86_64", "qemu-system-aarch64", etc.  We
+                # keep "qemu" for the rare wrapper/symlink case and add
+                # "qemu-system-" as a substring match via a separate pgrep
+                # call (without -x) to catch all qemu-system-* variants.
+                # Kernel threads (e.g. [kvm-irqfd-clean]) are filtered out
+                # below via the /proc/$pid/exe symlink check.
+                # Note: the kernel truncates process names to 15 chars
+                # (TASK_COMM_LEN), so pgrep -x can't match longer names.
+                # "cloud-hypervisor" (16 chars) is handled in the substring
+                # block below alongside qemu-system-*.
+                for binary in qemu kvm xenstored xenconsoled \
+                    VBoxHeadless VBoxSVC vmware-vmx firecracker bhyve; do
+                    for pid in $(pgrep -x "$binary"); do
+                        # resolve the exe symlink, if it doesn't resolve with -m,
+                        # which doesn't even need the dest to exist, it means the symlink
+                        # is null, which is the case for kernel threads: ignore those to
+                        # avoid false positives (such as [kvm-irqfd-clean] under at least RHEL 7.6/7.7)
+                        if ! [ "$(readlink -m "/proc/$pid/exe")" = "/proc/$pid/exe" ]; then
+                            pr_debug "g_has_vmm: found PID $pid ($binary)"
+                            g_has_vmm=1
+                            g_has_vmm_reason="$binary process found (PID $pid)"
+                        fi
+                    done
+                done
+                # substring matches for names that pgrep -x can't handle:
+                # - qemu-system-*: variable suffix (x86_64, aarch64, ...)
+                # - cloud-hypervisor: 16 chars, exceeds TASK_COMM_LEN (15)
+                if [ "$g_has_vmm" = 0 ]; then
+                    for binary in "qemu-system-" "cloud-hyperviso"; do
+                        for pid in $(pgrep "$binary"); do
+                            if ! [ "$(readlink -m "/proc/$pid/exe")" = "/proc/$pid/exe" ]; then
+                                pr_debug "g_has_vmm: found PID $pid ($binary*)"
+                                g_has_vmm=1
+                                g_has_vmm_reason="$binary* process found (PID $pid)"
+                            fi
+                        done
+                    done
+                fi
+                unset binary pid
+            else
+                # ignore SC2009 as `ps ax` is actually used as a fallback if `pgrep` isn't installed
+                # shellcheck disable=SC2009
+                if command -v ps >/dev/null && ps ax | grep -vw grep | grep -q \
+                    -e '\<qemu' -e '/qemu' -e '\<kvm' -e '/kvm' \
+                    -e '/xenstored' -e '/xenconsoled' \
+                    -e '\<VBoxHeadless' -e '\<VBoxSVC' -e '\<vmware-vmx' \
+                    -e '\<firecracker' -e '\<cloud-hypervisor' -e '\<bhyve'; then
+                    g_has_vmm=1
+                    g_has_vmm_reason="hypervisor process found"
+                fi
             fi
         fi
+        g_has_vmm_cached=1
     fi
     if [ "$g_has_vmm" = 0 ]; then
-        if [ "$opt_vmm" != -1 ]; then
-            pstatus green NO "forced from command line"
-        else
-            pstatus green NO
-        fi
+        pstatus green NO "$g_has_vmm_reason"
     else
-        if [ "$opt_vmm" != -1 ]; then
-            pstatus blue YES "forced from command line"
-        elif [ "$g_has_vmm" = 2 ]; then
-            pstatus blue YES "paranoid mode"
-        else
-            pstatus blue YES
-        fi
+        pstatus blue YES "$g_has_vmm_reason"
     fi
 }
 
@@ -4504,22 +4566,224 @@ check_mds_linux() {
 # SPECTRE 2 SECTION
 
 # CVE-2017-5715 Spectre Variant 2 (branch target injection) - entry point
+# Sets: vulnstatus
 check_CVE_2017_5715() {
     check_cve 'CVE-2017-5715'
 }
 
 # CVE-2017-5715 Spectre Variant 2 (branch target injection) - Linux mitigation check
+# Sets: g_ibrs_can_tell, g_ibrs_supported, g_ibrs_enabled, g_ibrs_fw_enabled,
+#   g_ibpb_can_tell, g_ibpb_supported, g_ibpb_enabled, g_specex_knob_dir
 check_CVE_2017_5715_linux() {
-    local status sys_interface_available msg dir bp_harden_can_tell bp_harden retpoline retpoline_compiler retpoline_compiler_reason retp_enabled rsb_filling explain_hypervisor
+    local status sys_interface_available msg dir bp_harden_can_tell bp_harden retpoline retpoline_compiler retpoline_compiler_reason retp_enabled rsb_filling
+    local v2_base_mode v2_stibp_status v2_pbrsb_status v2_bhi_status v2_ibpb_mode v2_vuln_module v2_is_autoibrs smt_enabled
     status=UNK
     sys_interface_available=0
     msg=''
     if sys_interface_check "$VULN_SYSFS_BASE/spectre_v2"; then
-        # this kernel has the /sys interface, trust it over everything
         sys_interface_available=1
         status=$ret_sys_interface_check_status
+        #
+        # Complete sysfs message inventory for spectre_v2, traced via git blame
+        # on mainline (~/linux) and stable (~/linux-stable):
+        #
+        # all versions:
+        #   "Not affected"                          (cpu_show_common, 61dc0f555b5c)
+        #   "Vulnerable"                            (cpu_show_common fallthrough / spectre_v2_strings[NONE], 61dc0f555b5c)
+        #
+        # The output is a composite string: <base>[<ibpb>][<ibrs_fw>][<stibp>][<rsb>][<pbrsb>][<bhi>][<module>]
+        # where <base> comes from spectre_v2_strings[] (or an early-return override),
+        # and the remaining fields are appended by helper functions.
+        # Before v6.9-rc4 (0cd01ac5dcb1), fields were separated by ", ".
+        # From v6.9-rc4 onward, fields are separated by "; ".
+        #
+        # --- base string (spectre_v2_strings[]) ---
+        #
+        # da285121560e (v4.15, initial spectre_v2 sysfs):
+        #   "Vulnerable"
+        #   "Mitigation: None"                           (documented in spectre.rst 5ad3eb113245,
+        #     not found in code but listed as a possible value; treat as vulnerable / sysfs override)
+        #   "Vulnerable: Minimal generic ASM retpoline"
+        #   "Vulnerable: Minimal AMD ASM retpoline"
+        #   "Mitigation: Full generic retpoline"
+        #   "Mitigation: Full AMD retpoline"
+        # 706d51681d63 (v4.19, added Enhanced IBRS):
+        #   + "Mitigation: Enhanced IBRS"
+        # ef014aae8f1c (v4.20-rc5, removed minimal retpoline):
+        #   - "Vulnerable: Minimal generic ASM retpoline"
+        #   - "Vulnerable: Minimal AMD ASM retpoline"
+        # d45476d98324 (v5.17-rc8, renamed retpoline variants):
+        #   "Mitigation: Full generic retpoline" -> "Mitigation: Retpolines"
+        #   "Mitigation: Full AMD retpoline" -> "Mitigation: LFENCE" (in array)
+        #   NOTE: "Mitigation: LFENCE" was the actual sysfs output for a brief window
+        #   (between d45476d98324 and eafd987d4a82, both in v5.17-rc8) before the
+        #   show_state override reclassified it as "Vulnerable: LFENCE". LFENCE alone
+        #   is now considered an insufficient mitigation for Spectre v2. Any kernel
+        #   reporting "Mitigation: LFENCE" is from this narrow window and should be
+        #   treated as vulnerable.
+        # 1e19da8522c8 (v5.17-rc8, split Enhanced IBRS into 3 modes):
+        #   "Mitigation: Enhanced IBRS" -> "Mitigation: Enhanced IBRS" (EIBRS alone)
+        #   + "Mitigation: Enhanced IBRS + LFENCE"
+        #   + "Mitigation: Enhanced IBRS + Retpolines"
+        # 7c693f54c873 (v5.19-rc7, added kernel IBRS):
+        #   + "Mitigation: IBRS"
+        # e7862eda309e (v6.3-rc1, AMD Automatic IBRS):
+        #   "Mitigation: Enhanced IBRS" -> "Mitigation: Enhanced / Automatic IBRS"
+        #   "Mitigation: Enhanced IBRS + LFENCE" -> "Mitigation: Enhanced / Automatic IBRS + LFENCE"
+        #   "Mitigation: Enhanced IBRS + Retpolines" -> "Mitigation: Enhanced / Automatic IBRS + Retpolines"
+        # d1cc1baef67a (v6.18-rc1, fixed LFENCE in array):
+        #   "Mitigation: LFENCE" -> "Vulnerable: LFENCE" (in array, matching the
+        #   show_state override that had been correcting the sysfs output since v5.17)
+        #
+        # --- early-return overrides in spectre_v2_show_state() ---
+        #
+        # These bypass the base string + suffix format entirely.
+        #
+        # eafd987d4a82 (v5.17-rc8, LFENCE override):
+        #   "Vulnerable: LFENCE"
+        #   (overrode the array's "Mitigation: LFENCE"; removed in v6.18-rc1 when the array
+        #   was fixed to say "Vulnerable: LFENCE" directly)
+        # 44a3918c8245 (v5.17-rc8, created spectre_v2_show_state, eIBRS+eBPF):
+        #   "Vulnerable: Unprivileged eBPF enabled"
+        #   (immediately renamed below)
+        # 0de05d056afd (v5.17-rc8, renamed + added eIBRS+LFENCE case):
+        #   "Vulnerable: Unprivileged eBPF enabled" -> "Vulnerable: eIBRS with unprivileged eBPF"
+        #   + "Vulnerable: eIBRS+LFENCE with unprivileged eBPF and SMT"
+        #
+        # --- <ibpb> suffix (ibpb_state()) ---
+        #
+        # 20ffa1caecca (v4.16-rc1, initial IBPB):
+        #   ", IBPB" (present/absent)
+        # a8f76ae41cd6 (v4.20-rc5, extracted ibpb_state()):
+        #   ", IBPB: disabled" | ", IBPB: always-on"
+        # 7cc765a67d8e (v4.20-rc5, conditional IBPB):
+        #   + ", IBPB: conditional"
+        # 0cd01ac5dcb1 (v6.9-rc4, separator change):
+        #   ", IBPB: ..." -> "; IBPB: ..."
+        #
+        # --- <ibrs_fw> suffix ---
+        #
+        # dd84441a7971 (v4.16-rc4):
+        #   ", IBRS_FW" (present/absent)
+        # 0cd01ac5dcb1 (v6.9-rc4, separator change):
+        #   ", IBRS_FW" -> "; IBRS_FW"
+        #
+        # --- <stibp> suffix (stibp_state()) ---
+        #
+        # 53c613fe6349 (v4.20-rc1, initial STIBP):
+        #   ", STIBP" (present/absent)
+        # a8f76ae41cd6 (v4.20-rc5, extracted stibp_state()):
+        #   ", STIBP: disabled" | ", STIBP: forced"
+        # 9137bb27e60e (v4.20-rc5, added prctl):
+        #   + ", STIBP: conditional" (when prctl/seccomp + switch_to_cond_stibp)
+        # 20c3a2c33e9f (v5.0-rc1, added always-on preferred):
+        #   + ", STIBP: always-on"
+        # 34bce7c9690b (v4.20-rc5, eIBRS suppresses STIBP):
+        #   returns "" when eIBRS is in use
+        # fd470a8beed8 (v6.5-rc4, AutoIBRS exception):
+        #   returns "" only when eIBRS AND not AutoIBRS (AutoIBRS shows STIBP)
+        # 0cd01ac5dcb1 (v6.9-rc4, separator change):
+        #   ", STIBP: ..." -> "; STIBP: ..."
+        #
+        # --- <rsb> suffix ---
+        #
+        # bb4b3b776273 (v4.20-rc1):
+        #   ", RSB filling" (present/absent)
+        # 53c613fe6349 (v4.20-rc1, temporarily removed, re-added in a8f76ae41cd6)
+        # 0cd01ac5dcb1 (v6.9-rc4, separator change):
+        #   ", RSB filling" -> "; RSB filling"
+        #
+        # --- <pbrsb> suffix (pbrsb_eibrs_state()) ---
+        #
+        # 2b1299322016 (v6.0-rc1):
+        #   ", PBRSB-eIBRS: Not affected" | ", PBRSB-eIBRS: SW sequence" | ", PBRSB-eIBRS: Vulnerable"
+        # 0cd01ac5dcb1 (v6.9-rc4, separator change):
+        #   ", PBRSB-eIBRS: ..." -> "; PBRSB-eIBRS: ..."
+        #
+        # --- <bhi> suffix (spectre_bhi_state()) ---
+        #
+        # ec9404e40e8f (v6.9-rc4):
+        #   "; BHI: Not affected" | "; BHI: BHI_DIS_S" | "; BHI: SW loop, KVM: SW loop"
+        #   | "; BHI: Retpoline" | "; BHI: Vulnerable"
+        # 95a6ccbdc719 (v6.9-rc4, KVM default):
+        #   + "; BHI: Vulnerable, KVM: SW loop"
+        # 5f882f3b0a8b (v6.9-rc4, clarified syscall hardening):
+        #   removed "; BHI: Vulnerable (Syscall hardening enabled)"
+        #   removed "; BHI: Syscall hardening, KVM: SW loop"
+        #   (both replaced by "; BHI: Vulnerable" / "; BHI: Vulnerable, KVM: SW loop")
+        #
+        # --- <module> suffix (spectre_v2_module_string()) ---
+        #
+        # caf7501a1b4e (v4.16-rc1):
+        #   " - vulnerable module loaded" (present/absent)
+        #
+        # --- stable backports ---
+        #
+        # 3.2.y: old-style base strings ("Full generic/AMD retpoline", "Minimal generic/AMD
+        #   ASM retpoline"). Suffixes: ", IBPB" only (no STIBP/IBRS_FW/RSB). Format: %s%s\n.
+        #   Has "Mitigation: Enhanced IBRS" (no "/ Automatic") in later releases.
+        # 3.16.y, 4.4.y: old-style base strings. ibpb_state()/stibp_state()/IBRS_FW/RSB filling.
+        #   3.16.y lacks STIBP "always-on". Comma separators.
+        #   Both have "Mitigation: Enhanced IBRS" (no "/ Automatic"). No LFENCE/EIBRS modes.
+        # 4.9.y: has spectre_v2_show_state() with LFENCE override ("Vulnerable: LFENCE"),
+        #   eIBRS+eBPF overrides. "Mitigation: Enhanced IBRS" (no "/ Automatic").
+        #   No SPECTRE_V2_IBRS. No pbrsb or BHI. Comma separators.
+        # 4.14.y: like 4.9.y but also has SPECTRE_V2_IBRS and pbrsb_eibrs_state().
+        #   "Mitigation: Enhanced IBRS" (no "/ Automatic"). No BHI. Comma separators.
+        # 4.19.y: like 4.14.y but has "Enhanced / Automatic IBRS". No BHI. Comma separators.
+        # 5.4.y, 5.10.y: like 4.19.y. No BHI. Comma separators.
+        # 5.15.y, 6.1.y, 6.6.y, 6.12.y: match mainline (semicolons, BHI, all fields).
+        #
+        # --- Red Hat / CentOS / Rocky kernels ---
+        #
+        # Red Hat kernels carry their own spectre_v2 mitigation implementation that differs
+        # significantly from mainline. The following strings are unique to Red Hat kernels:
+        #
+        # centos6 (RHEL 6, kernel 2.6.32): base strings are a superset of mainline v4.15:
+        #   "Vulnerable: Minimal ASM retpoline"         (no "generic" qualifier)
+        #   "Vulnerable: Minimal AMD ASM retpoline"
+        #   "Vulnerable: Retpoline without IBPB"
+        #   "Vulnerable: Retpoline on Skylake+"          (removed in later centos6 releases)
+        #   "Vulnerable: Retpoline with unsafe module(s)"
+        #   "Mitigation: Full AMD retpoline"
+        #   "Mitigation: Full retpoline"                 (no "generic" qualifier)
+        #   "Mitigation: Full retpoline and IBRS (user space)"
+        #   "Mitigation: IBRS (kernel)"
+        #   "Mitigation: IBRS (kernel and user space)"
+        #   "Mitigation: IBP disabled"
+        #   Suffixes: ", IBPB" only. Format: %s%s\n.
+        #
+        # centos7 (RHEL 7, kernel 3.10): early releases have all centos6 strings plus
+        #   "Vulnerable: Retpoline on Skylake+". Later releases removed Skylake+ and
+        #   Minimal AMD, and changed AMD retpoline to:
+        #   "Vulnerable: AMD retpoline (LFENCE/JMP)"
+        #   Added "Mitigation: Enhanced IBRS". Suffixes: ibpb_state() + stibp_state()
+        #   with simple ", IBPB" / ", STIBP" strings. No IBRS_FW/RSB/pbrsb/BHI.
+        #
+        # centos8 (RHEL 8, kernel 4.18): uses mainline v5.17+ style enum names
+        #   (RETPOLINE/LFENCE/EIBRS) but retains RHEL-specific entries:
+        #   "Mitigation: IBRS (kernel)"                  (SPECTRE_V2_IBRS)
+        #   "Mitigation: Full retpoline and IBRS (user space)" (SPECTRE_V2_RETPOLINE_IBRS_USER)
+        #   "Mitigation: IBRS (kernel and user space)"   (SPECTRE_V2_IBRS_ALWAYS)
+        #   "Mitigation: Enhanced IBRS" (no "/ Automatic"). spectre_v2_show_state() with
+        #   LFENCE/eIBRS+eBPF overrides. Comma separators. No pbrsb/BHI.
+        #
+        # rocky9 (RHEL 9, kernel 5.14): matches mainline. Semicolons, BHI, all fields.
+        # rocky10 (RHEL 10, kernel 6.12): matches mainline.
+        #
+        # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
     fi
     if [ "$opt_sysfs_only" != 1 ]; then
+        check_has_vmm
+
+        v2_base_mode=''
+        v2_stibp_status=''
+        v2_pbrsb_status=''
+        v2_bhi_status=''
+        v2_ibpb_mode=''
+        v2_vuln_module=''
+        v2_is_autoibrs=0
+
         pr_info "* Mitigation 1"
 
         g_ibrs_can_tell=0
@@ -4898,6 +5162,233 @@ check_CVE_2017_5715_linux() {
             fi
         fi
 
+        # Mitigation 3: derive structured mitigation variables for the verdict.
+        # These are set from sysfs fields (when available) with hardware fallbacks.
+        pr_info "* Mitigation 3 (sub-mitigations)"
+
+        # --- v2_base_mode: which base Spectre v2 mitigation is active ---
+        pr_info_nol "  * Base Spectre v2 mitigation mode: "
+        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+            # Parse from sysfs (handle all mainline, stable, and RHEL variants)
+            case "$ret_sys_interface_check_fullmsg" in
+                *"Enhanced / Automatic IBRS + LFENCE"* | *"Enhanced IBRS + LFENCE"*) v2_base_mode=eibrs_lfence ;;
+                *"Enhanced / Automatic IBRS + Retpolines"* | *"Enhanced IBRS + Retpolines"*) v2_base_mode=eibrs_retpoline ;;
+                *"Enhanced / Automatic IBRS"* | *"Enhanced IBRS"*) v2_base_mode=eibrs ;;
+                *"Mitigation: IBRS (kernel and user space)"*) v2_base_mode=ibrs ;;
+                *"Mitigation: IBRS (kernel)"*) v2_base_mode=ibrs ;;
+                *"Mitigation: IBRS"*) v2_base_mode=ibrs ;;
+                *"Mitigation: Retpolines"* | *"Full generic retpoline"* | *"Full retpoline"* | *"Full AMD retpoline"*) v2_base_mode=retpoline ;;
+                *"Vulnerable: LFENCE"* | *"Mitigation: LFENCE"*) v2_base_mode=lfence ;;
+                *"Vulnerable"*) v2_base_mode=none ;;
+                *) v2_base_mode=unknown ;;
+            esac
+        fi
+        # Fallback to existing variables if sysfs didn't provide a base mode
+        if [ -z "$v2_base_mode" ] || [ "$v2_base_mode" = "unknown" ]; then
+            if [ "$g_ibrs_enabled" = 4 ]; then
+                v2_base_mode=eibrs
+            elif [ -n "$g_ibrs_enabled" ] && [ "$g_ibrs_enabled" -ge 1 ] 2>/dev/null; then
+                v2_base_mode=ibrs
+            elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ]; then
+                v2_base_mode=retpoline
+            elif [ "$retpoline" = 1 ]; then
+                v2_base_mode=retpoline
+            fi
+        fi
+        case "$v2_base_mode" in
+            eibrs) pstatus green "Enhanced / Automatic IBRS" ;;
+            eibrs_lfence) pstatus green "Enhanced / Automatic IBRS + LFENCE" ;;
+            eibrs_retpoline) pstatus green "Enhanced / Automatic IBRS + Retpolines" ;;
+            ibrs) pstatus green "IBRS" ;;
+            retpoline) pstatus green "Retpolines" ;;
+            lfence) pstatus red "LFENCE (insufficient)" ;;
+            none) pstatus yellow "None" ;;
+            *) pstatus yellow UNKNOWN ;;
+        esac
+
+        # --- v2_is_autoibrs: AMD AutoIBRS vs Intel eIBRS ---
+        case "$v2_base_mode" in
+            eibrs | eibrs_lfence | eibrs_retpoline)
+                if [ "$cap_autoibrs" = 1 ] || { (is_amd || is_hygon) && [ "$cap_ibrs_all" != 1 ]; }; then
+                    v2_is_autoibrs=1
+                fi
+                ;;
+        esac
+
+        # --- v2_ibpb_mode ---
+        pr_info_nol "  * IBPB mode: "
+        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+            case "$ret_sys_interface_check_fullmsg" in
+                *"IBPB: always-on"*) v2_ibpb_mode=always-on ;;
+                *"IBPB: conditional"*) v2_ibpb_mode=conditional ;;
+                *"IBPB: disabled"*) v2_ibpb_mode=disabled ;;
+                *", IBPB"* | *"; IBPB"*) v2_ibpb_mode=conditional ;;
+                *) v2_ibpb_mode=disabled ;;
+            esac
+        elif [ "$opt_live" = 1 ]; then
+            case "$g_ibpb_enabled" in
+                2) v2_ibpb_mode=always-on ;;
+                1) v2_ibpb_mode=conditional ;;
+                0) v2_ibpb_mode=disabled ;;
+                *) v2_ibpb_mode=unknown ;;
+            esac
+        else
+            v2_ibpb_mode=unknown
+        fi
+        case "$v2_ibpb_mode" in
+            always-on) pstatus green YES "always-on" ;;
+            conditional) pstatus green YES "conditional" ;;
+            disabled) pstatus yellow NO "disabled" ;;
+            *) pstatus yellow UNKNOWN ;;
+        esac
+
+        # --- v2_stibp_status ---
+        pr_info_nol "  * STIBP status: "
+        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+            case "$ret_sys_interface_check_fullmsg" in
+                *"STIBP: always-on"*) v2_stibp_status=always-on ;;
+                *"STIBP: forced"*) v2_stibp_status=forced ;;
+                *"STIBP: conditional"*) v2_stibp_status=conditional ;;
+                *"STIBP: disabled"*) v2_stibp_status=disabled ;;
+                *", STIBP"* | *"; STIBP"*) v2_stibp_status=forced ;;
+                *)
+                    # No STIBP field: Intel eIBRS suppresses it (implicit cross-thread protection)
+                    case "$v2_base_mode" in
+                        eibrs | eibrs_lfence | eibrs_retpoline)
+                            if [ "$v2_is_autoibrs" != 1 ]; then
+                                v2_stibp_status=eibrs-implicit
+                            else
+                                v2_stibp_status=unknown
+                            fi
+                            ;;
+                        *) v2_stibp_status=unknown ;;
+                    esac
+                    ;;
+            esac
+        else
+            # No sysfs: use hardware capability + context to infer STIBP status
+            if [ "$smt_enabled" != 0 ]; then
+                # SMT disabled or unknown: STIBP is not needed
+                v2_stibp_status=not-needed
+            else
+                case "$v2_base_mode" in
+                    eibrs | eibrs_lfence | eibrs_retpoline)
+                        if [ "$v2_is_autoibrs" != 1 ]; then
+                            # Intel eIBRS provides implicit cross-thread protection
+                            v2_stibp_status=eibrs-implicit
+                        elif [ -n "$cap_stibp" ]; then
+                            # AMD AutoIBRS: CPU supports STIBP but can't confirm runtime state
+                            v2_stibp_status=unknown
+                        else
+                            # No STIBP support on this CPU
+                            v2_stibp_status=unavailable
+                        fi
+                        ;;
+                    *)
+                        if [ -n "$cap_stibp" ]; then
+                            # CPU supports STIBP but can't confirm runtime state without sysfs
+                            v2_stibp_status=unknown
+                        else
+                            # CPU does not support STIBP at all
+                            v2_stibp_status=unavailable
+                        fi
+                        ;;
+                esac
+            fi
+        fi
+        case "$v2_stibp_status" in
+            always-on) pstatus green YES "always-on" ;;
+            forced) pstatus green YES "forced" ;;
+            conditional) pstatus green YES "conditional" ;;
+            eibrs-implicit) pstatus green YES "implicit via eIBRS" ;;
+            not-needed) pstatus green YES "not needed (SMT disabled)" ;;
+            unavailable) pstatus red NO "CPU does not support STIBP" ;;
+            disabled) pstatus yellow NO "disabled" ;;
+            *) pstatus yellow UNKNOWN ;;
+        esac
+
+        # --- v2_pbrsb_status (only relevant for eIBRS) ---
+        case "$v2_base_mode" in
+            eibrs | eibrs_lfence | eibrs_retpoline)
+                pr_info_nol "  * PBRSB-eIBRS mitigation: "
+                if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                    case "$ret_sys_interface_check_fullmsg" in
+                        *"PBRSB-eIBRS: Not affected"*) v2_pbrsb_status=not-affected ;;
+                        *"PBRSB-eIBRS: SW sequence"*) v2_pbrsb_status=sw-sequence ;;
+                        *"PBRSB-eIBRS: Vulnerable"*) v2_pbrsb_status=vulnerable ;;
+                        *) v2_pbrsb_status=unknown ;;
+                    esac
+                elif [ "$opt_live" != 1 ] && [ -n "$g_kernel" ]; then
+                    if grep -q 'PBRSB-eIBRS' "$g_kernel" 2>/dev/null; then
+                        v2_pbrsb_status=sw-sequence
+                    else
+                        v2_pbrsb_status=unknown
+                    fi
+                else
+                    v2_pbrsb_status=unknown
+                fi
+                case "$v2_pbrsb_status" in
+                    not-affected) pstatus green "Not affected" ;;
+                    sw-sequence) pstatus green "SW sequence" ;;
+                    vulnerable) pstatus red "Vulnerable" ;;
+                    *) pstatus yellow UNKNOWN ;;
+                esac
+                ;;
+            *) v2_pbrsb_status=n/a ;;
+        esac
+
+        # --- v2_bhi_status ---
+        pr_info_nol "  * BHI mitigation: "
+        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+            case "$ret_sys_interface_check_fullmsg" in
+                *"BHI: Not affected"*) v2_bhi_status=not-affected ;;
+                *"BHI: BHI_DIS_S"*) v2_bhi_status=bhi_dis_s ;;
+                *"BHI: SW loop"*) v2_bhi_status=sw-loop ;;
+                *"BHI: Retpoline"*) v2_bhi_status=retpoline ;;
+                *"BHI: Vulnerable, KVM: SW loop"*) v2_bhi_status=vuln-kvm-loop ;;
+                *"BHI: Vulnerable"*) v2_bhi_status=vulnerable ;;
+                *) v2_bhi_status=unknown ;;
+            esac
+        elif [ "$opt_live" != 1 ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
+            if grep -q '^CONFIG_\(MITIGATION_\)\?SPECTRE_BHI' "$opt_config"; then
+                if [ "$cap_bhi" = 1 ]; then
+                    v2_bhi_status=bhi_dis_s
+                else
+                    v2_bhi_status=sw-loop
+                fi
+            else
+                v2_bhi_status=unknown
+            fi
+        else
+            v2_bhi_status=unknown
+        fi
+        case "$v2_bhi_status" in
+            not-affected) pstatus green "Not affected" ;;
+            bhi_dis_s) pstatus green "BHI_DIS_S (hardware)" ;;
+            sw-loop) pstatus green "SW loop" ;;
+            retpoline) pstatus green "Retpoline" ;;
+            vuln-kvm-loop) pstatus yellow "Vulnerable (KVM: SW loop)" ;;
+            vulnerable) pstatus red "Vulnerable" ;;
+            *) pstatus yellow UNKNOWN ;;
+        esac
+
+        # --- v2_vuln_module ---
+        if [ "$opt_live" = 1 ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
+            pr_info_nol "  * Non-retpoline module loaded: "
+            if echo "$ret_sys_interface_check_fullmsg" | grep -q 'vulnerable module loaded'; then
+                v2_vuln_module=1
+                pstatus red YES
+            else
+                v2_vuln_module=0
+                pstatus green NO
+            fi
+        fi
+
+        # --- SMT state (used in verdict) ---
+        is_cpu_smt_enabled
+        smt_enabled=$?
+        # smt_enabled: 0=enabled, 1=disabled, 2=unknown
+
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
         msg="/sys vulnerability interface use forced, but it's not available!"
@@ -4907,145 +5398,287 @@ check_CVE_2017_5715_linux() {
     if ! is_cpu_affected "$cve"; then
         # override status & msg in case CPU is not vulnerable after all
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
-    else
-        if [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ -n "$g_ibpb_enabled" ] && [ "$g_ibpb_enabled" -ge 1 ] && (! is_vulnerable_to_empty_rsb || [ "$rsb_filling" = 1 ]); then
-            pvulnstatus "$cve" OK "Full retpoline + IBPB are mitigating the vulnerability"
-        elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" != 0 ] && [ "$opt_paranoid" = 0 ] && (! is_vulnerable_to_empty_rsb || [ "$rsb_filling" = 1 ]); then
-            pvulnstatus "$cve" OK "Full retpoline is mitigating the vulnerability"
-            if [ -n "$cap_ibpb" ]; then
-                pr_warn "You should enable IBPB to complete retpoline as a Variant 2 mitigation"
-            else
-                pr_warn "IBPB is considered as a good addition to retpoline for Variant 2 mitigation, but your CPU microcode doesn't support it"
-            fi
-        elif [ -n "$g_ibrs_enabled" ] && [ -n "$g_ibpb_enabled" ] && [ "$g_ibrs_enabled" -ge 1 ] && [ "$g_ibpb_enabled" -ge 1 ]; then
-            if [ "$g_ibrs_enabled" = 4 ]; then
-                pvulnstatus "$cve" OK "Enhanced IBRS + IBPB are mitigating the vulnerability"
-            else
-                pvulnstatus "$cve" OK "IBRS + IBPB are mitigating the vulnerability"
-            fi
-        elif [ "$g_ibpb_enabled" = 2 ] && ! is_cpu_smt_enabled; then
-            pvulnstatus "$cve" OK "Full IBPB is mitigating the vulnerability"
-        elif [ -n "$bp_harden" ]; then
-            pvulnstatus "$cve" OK "Branch predictor hardening mitigates the vulnerability"
-        elif [ -z "$bp_harden" ] && [ "$cpu_vendor" = ARM ]; then
-            pvulnstatus "$cve" VULN "Branch predictor hardening is needed to mitigate the vulnerability"
-            explain "Your kernel has not been compiled with the CONFIG_UNMAP_KERNEL_AT_EL0 option, recompile it with this option enabled."
-        elif [ "$opt_live" != 1 ]; then
-            if [ "$retpoline" = 1 ] && [ -n "$g_ibpb_supported" ]; then
-                pvulnstatus "$cve" OK "offline mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
-            elif [ -n "$g_ibrs_supported" ] && [ -n "$g_ibpb_supported" ]; then
-                pvulnstatus "$cve" OK "offline mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
-            elif [ "$g_ibrs_can_tell" != 1 ]; then
-                pvulnstatus "$cve" UNK "offline mode: not enough information"
-                explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
-            fi
-        fi
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            # --- own logic using Phase 2 variables ---
+            # Helper: collect caveats for the verdict message
+            _v2_caveats=''
+            _v2_add_caveat() { _v2_caveats="${_v2_caveats:+$_v2_caveats; }$1"; }
 
-        # if we arrive here and didn't already call pvulnstatus, then it's VULN, let's explain why
-        if [ "$g_pvulnstatus_last_cve" != "$cve" ]; then
-            # explain what's needed for this CPU
-            if is_vulnerable_to_empty_rsb; then
-                pvulnstatus "$cve" VULN "IBRS+IBPB or retpoline+IBPB+RSB filling, is needed to mitigate the vulnerability"
-                explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. You also need a recent-enough kernel that supports RSB filling if you plan to use retpoline. For Skylake+ CPUs, the IBRS + IBPB approach is generally preferred as it guarantees complete protection, and the performance impact is not as high as with older CPUs in comparison with retpoline. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
-            elif is_zen_cpu || is_moksha_cpu; then
-                pvulnstatus "$cve" VULN "retpoline+IBPB is needed to mitigate the vulnerability"
-                explain "To mitigate this vulnerability, You need a kernel compiled with retpoline + IBPB support, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode."
-            elif is_intel || is_amd || is_hygon; then
-                pvulnstatus "$cve" VULN "IBRS+IBPB or retpoline+IBPB is needed to mitigate the vulnerability"
-                explain "To mitigate this vulnerability, you need either IBRS + IBPB, both requiring hardware support from your CPU microcode in addition to kernel support, or a kernel compiled with retpoline and IBPB, with retpoline requiring a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware) and IBPB requiring hardware support from your CPU microcode. The retpoline + IBPB approach is generally preferred as the performance impact is lower. More information about how to enable the missing bits for those two possible mitigations on your system follow. You only need to take one of the two approaches."
-            else
-                # in that case, we might want to trust sysfs if it's there
-                if [ -n "$msg" ]; then
-                    [ "$msg" = Vulnerable ] && msg="no known mitigation exists for your CPU vendor ($cpu_vendor)"
-                    pvulnstatus "$cve" "$status" "$msg"
+            # ARM branch predictor hardening (unchanged)
+            if [ -n "$bp_harden" ]; then
+                pvulnstatus "$cve" OK "Branch predictor hardening mitigates the vulnerability"
+            elif [ -z "$bp_harden" ] && [ "$cpu_vendor" = ARM ]; then
+                pvulnstatus "$cve" VULN "Branch predictor hardening is needed to mitigate the vulnerability"
+                explain "Your kernel has not been compiled with the CONFIG_UNMAP_KERNEL_AT_EL0 option, recompile it with this option enabled."
+
+            # LFENCE-only is always VULN (reclassified in v5.17)
+            elif [ "$v2_base_mode" = "lfence" ]; then
+                pvulnstatus "$cve" VULN "LFENCE alone is not a sufficient Spectre v2 mitigation"
+                explain "LFENCE-based indirect branch mitigation was reclassified as vulnerable starting with Linux v5.17. Use retpoline (spectre_v2=retpoline) or IBRS-based mitigations (spectre_v2=eibrs or spectre_v2=ibrs) instead. If your CPU supports Enhanced IBRS, that is the preferred option."
+
+            # eIBRS paths (eibrs / eibrs_lfence / eibrs_retpoline)
+            elif [ "$v2_base_mode" = "eibrs" ] || [ "$v2_base_mode" = "eibrs_lfence" ] || [ "$v2_base_mode" = "eibrs_retpoline" ]; then
+                _v2_caveats=''
+                _v2_ok=1
+
+                # BHI check: eIBRS alone doesn't protect against BHI
+                if [ "$v2_bhi_status" = "vulnerable" ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "BHI vulnerable"
+                elif [ "$v2_bhi_status" = "unknown" ] && is_intel; then
+                    if [ "$cap_bhi" = 0 ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "BHI vulnerable (no BHI_DIS_S hardware support, no kernel mitigation detected)"
+                    elif [ "$cap_rrsba" != 0 ]; then
+                        _v2_add_caveat "BHI status unknown (kernel may lack BHI mitigation)"
+                    fi
+                fi
+
+                # PBRSB check (only matters for VMM hosts)
+                if [ "$v2_pbrsb_status" = "vulnerable" ]; then
+                    if [ "$g_has_vmm" != 0 ] || [ "$opt_paranoid" = 1 ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "PBRSB-eIBRS vulnerable"
+                    fi
+                fi
+
+                # AutoIBRS: needs explicit STIBP (does NOT provide implicit cross-thread protection)
+                if [ "$v2_is_autoibrs" = 1 ] && [ "$smt_enabled" = 0 ]; then
+                    if [ "$v2_stibp_status" = "disabled" ] || [ "$v2_stibp_status" = "unavailable" ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "STIBP not active with SMT on AMD AutoIBRS"
+                    fi
+                fi
+
+                # Vulnerable module check
+                if [ "$v2_vuln_module" = 1 ]; then
+                    _v2_add_caveat "non-retpoline module loaded"
+                fi
+
+                # Paranoid mode
+                if [ "$opt_paranoid" = 1 ]; then
+                    if [ "$v2_ibpb_mode" != "always-on" ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "IBPB not always-on"
+                    fi
+                    if [ "$smt_enabled" = 0 ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "SMT enabled"
+                    fi
+                fi
+
+                # Build the base description
+                case "$v2_base_mode" in
+                    eibrs) _v2_desc="Enhanced / Automatic IBRS" ;;
+                    eibrs_lfence) _v2_desc="Enhanced / Automatic IBRS + LFENCE" ;;
+                    eibrs_retpoline) _v2_desc="Enhanced / Automatic IBRS + Retpolines" ;;
+                esac
+
+                if [ "$_v2_ok" = 1 ]; then
+                    if [ -n "$_v2_caveats" ]; then
+                        pvulnstatus "$cve" OK "$_v2_desc mitigates the vulnerability ($_v2_caveats)"
+                    else
+                        pvulnstatus "$cve" OK "$_v2_desc mitigates the vulnerability"
+                    fi
+                    # eBPF caveat: we cannot detect unprivileged eBPF status
+                    if [ "$v2_base_mode" = "eibrs" ] || [ "$v2_base_mode" = "eibrs_lfence" ]; then
+                        pr_info "    NOTE: eIBRS is considered vulnerable by the kernel when unprivileged eBPF is enabled."
+                        pr_info "    This script cannot detect unprivileged eBPF status. Check \`sysctl kernel.unprivileged_bpf_disabled\`."
+                    fi
                 else
-                    pvulnstatus "$cve" VULN "no known mitigation exists for your CPU vendor ($cpu_vendor)"
+                    pvulnstatus "$cve" VULN "$_v2_desc active but insufficient: $_v2_caveats"
+                    explain "Your system uses $_v2_desc but has gaps in sub-mitigations: $_v2_caveats. Update your kernel and microcode to the latest versions. If BHI is vulnerable, a kernel with CONFIG_MITIGATION_SPECTRE_BHI or BHI_DIS_S microcode support is needed. If PBRSB-eIBRS is vulnerable, update the kernel for RSB VM exit mitigation. If STIBP is disabled on AMD AutoIBRS with SMT, add \`spectre_v2_user=on\` or disable SMT with \`nosmt\`. In paranoid mode, disable SMT with \`nosmt\` and set \`spectre_v2_user=on\` for IBPB always-on."
                 fi
-            fi
-        fi
 
-        # if we are in live mode, we can check for a lot more stuff and explain further
-        if [ "$opt_live" = 1 ] && [ "$vulnstatus" != "OK" ]; then
-            explain_hypervisor="An updated CPU microcode will have IBRS/IBPB capabilities indicated in the Hardware Check section above. If you're running under a hypervisor (KVM, Xen, VirtualBox, VMware, ...), the hypervisor needs to be up to date to be able to export the new host CPU flags to the guest. You can run this script on the host to check if the host CPU is IBRS/IBPB. If it is, and it doesn't show up in the guest, upgrade the hypervisor. You may need to reconfigure your VM to use a CPU model that has IBRS capability; in Libvirt, such CPUs are listed with an IBRS suffix."
-            # IBPB (amd & intel)
-            if { [ -z "$g_ibpb_enabled" ] || [ "$g_ibpb_enabled" = 0 ]; } && { is_intel || is_amd || is_hygon; }; then
-                if [ -z "$cap_ibpb" ]; then
-                    explain "The microcode of your CPU needs to be upgraded to be able to use IBPB. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $explain_hypervisor"
+            # Kernel IBRS path
+            elif [ "$v2_base_mode" = "ibrs" ]; then
+                _v2_caveats=''
+                _v2_ok=1
+
+                # IBRS needs IBPB for cross-process protection
+                if [ "$v2_ibpb_mode" = "disabled" ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "IBPB disabled"
                 fi
-                if [ -z "$g_ibpb_supported" ]; then
-                    explain "Your kernel doesn't have IBPB support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
+
+                # IBRS needs STIBP or SMT-off for cross-thread protection
+                if [ "$smt_enabled" = 0 ] && { [ "$v2_stibp_status" = "disabled" ] || [ "$v2_stibp_status" = "unavailable" ]; }; then
+                    _v2_ok=0
+                    _v2_add_caveat "STIBP not active with SMT enabled"
                 fi
-                if [ -n "$cap_ibpb" ] && [ -n "$g_ibpb_supported" ]; then
-                    if [ -e "$g_specex_knob_dir/g_ibpb_enabled" ]; then
-                        # newer (April 2018) Red Hat kernels have g_ibpb_enabled as ro, and automatically enables it with retpoline
-                        if [ ! -w "$g_specex_knob_dir/g_ibpb_enabled" ] && [ -e "$g_specex_knob_dir/retp_enabled" ]; then
-                            explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You kernel should enable IBPB automatically if you enable retpoline. You may enable it with \`echo 1 > $g_specex_knob_dir/retp_enabled\`."
-                        else
-                            explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it with \`echo 1 > $g_specex_knob_dir/g_ibpb_enabled\`."
+
+                # RSB filling on Skylake+
+                if is_vulnerable_to_empty_rsb && [ "$rsb_filling" != 1 ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "RSB filling missing on Skylake+"
+                fi
+
+                # BHI check
+                if [ "$v2_bhi_status" = "vulnerable" ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "BHI vulnerable"
+                elif [ "$v2_bhi_status" = "unknown" ] && is_intel && [ "$cap_bhi" = 0 ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "BHI vulnerable (no BHI_DIS_S hardware support, no kernel mitigation detected)"
+                fi
+
+                # Vulnerable module check
+                if [ "$v2_vuln_module" = 1 ]; then
+                    _v2_add_caveat "non-retpoline module loaded"
+                fi
+
+                # Paranoid mode
+                if [ "$opt_paranoid" = 1 ]; then
+                    if [ "$v2_ibpb_mode" != "always-on" ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "IBPB not always-on"
+                    fi
+                    if [ "$smt_enabled" = 0 ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "SMT enabled"
+                    fi
+                fi
+
+                if [ "$_v2_ok" = 1 ]; then
+                    pvulnstatus "$cve" OK "IBRS mitigates the vulnerability"
+                else
+                    pvulnstatus "$cve" VULN "IBRS active but insufficient: $_v2_caveats"
+                    explain "Your system uses kernel IBRS but has gaps: $_v2_caveats. Ensure IBPB is enabled (spectre_v2_user=on or spectre_v2_user=prctl,ibpb). If STIBP is disabled with SMT, add spectre_v2_user=on or disable SMT with \`nosmt\`. If RSB filling is missing, update the kernel. If BHI is vulnerable, update kernel/microcode for BHI mitigation."
+                fi
+
+            # Retpoline path
+            elif [ "$v2_base_mode" = "retpoline" ]; then
+                _v2_caveats=''
+                _v2_ok=1
+
+                # Retpoline compiler check
+                if [ "$retpoline_compiler" = 0 ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "not compiled with retpoline-aware compiler"
+                fi
+
+                # Red Hat runtime disable check
+                if [ "$retp_enabled" = 0 ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "retpoline disabled at runtime"
+                fi
+
+                # RSB filling on Skylake+ (empty RSB falls back to BTB)
+                if is_vulnerable_to_empty_rsb && [ "$rsb_filling" != 1 ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "RSB filling missing on Skylake+"
+                fi
+
+                # BHI: retpoline only mitigates BHI if RRSBA is disabled
+                if [ "$v2_bhi_status" = "vulnerable" ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "BHI vulnerable"
+                elif [ "$v2_bhi_status" = "unknown" ] && is_intel; then
+                    if [ "$cap_bhi" = 0 ] && [ "$cap_rrsba" = 1 ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "BHI vulnerable (no BHI_DIS_S hardware support, RRSBA bypasses retpoline)"
+                    elif [ "$cap_rrsba" = 1 ]; then
+                        _v2_add_caveat "BHI status unknown with RRSBA"
+                    fi
+                fi
+
+                # Vulnerable module
+                if [ "$v2_vuln_module" = 1 ]; then
+                    _v2_ok=0
+                    _v2_add_caveat "non-retpoline module loaded"
+                fi
+
+                # IBPB check: retpoline without IBPB is weaker
+                if [ "$v2_ibpb_mode" = "disabled" ] || { [ -z "$g_ibpb_enabled" ] || [ "$g_ibpb_enabled" = 0 ]; }; then
+                    if [ "$opt_paranoid" = 1 ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "IBPB disabled"
+                    else
+                        _v2_add_caveat "IBPB disabled (recommended)"
+                    fi
+                fi
+
+                # Paranoid mode: require SMT off, IBPB always-on
+                if [ "$opt_paranoid" = 1 ]; then
+                    if [ "$v2_ibpb_mode" != "always-on" ] && [ "$v2_ibpb_mode" != "disabled" ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "IBPB not always-on"
+                    fi
+                    if [ "$smt_enabled" = 0 ]; then
+                        _v2_ok=0
+                        _v2_add_caveat "SMT enabled"
+                    fi
+                fi
+
+                if [ "$_v2_ok" = 1 ]; then
+                    if [ -n "$_v2_caveats" ]; then
+                        pvulnstatus "$cve" OK "Retpolines mitigate the vulnerability ($_v2_caveats)"
+                        if echo "$_v2_caveats" | grep -q 'IBPB'; then
+                            if [ -n "$cap_ibpb" ]; then
+                                pr_warn "You should enable IBPB to complete retpoline as a Variant 2 mitigation"
+                            else
+                                pr_warn "IBPB is considered as a good addition to retpoline for Variant 2 mitigation, but your CPU microcode doesn't support it"
+                            fi
                         fi
                     else
-                        explain "Both your CPU and your kernel have IBPB support, but it is currently disabled. You may enable it. Check in your distro's documentation on how to do this."
+                        pvulnstatus "$cve" OK "Retpolines + IBPB mitigate the vulnerability"
                     fi
+                else
+                    pvulnstatus "$cve" VULN "Retpoline active but insufficient: $_v2_caveats"
+                    explain "Your system uses retpoline but has gaps: $_v2_caveats. Ensure the kernel was compiled with a retpoline-aware compiler. Enable IBPB (spectre_v2_user=on). If RSB filling is missing on Skylake+, update the kernel. If BHI is vulnerable, update kernel/microcode. In paranoid mode, disable SMT with \`nosmt\` and set \`spectre_v2_user=on\`."
                 fi
-            elif [ "$g_ibpb_enabled" = 2 ] && is_cpu_smt_enabled; then
-                explain "You have g_ibpb_enabled set to 2, but it only offers sufficient protection when simultaneous multi-threading (aka SMT or HyperThreading) is disabled. You should reboot your system with the kernel parameter \`nosmt\`."
-            fi
-            # /IBPB
 
-            # IBRS (amd & intel)
-            if { [ -z "$g_ibrs_enabled" ] || [ "$g_ibrs_enabled" = 0 ]; } && { is_intel || is_amd || is_hygon; }; then
-                if [ -z "$cap_ibrs" ]; then
-                    explain "The microcode of your CPU needs to be upgraded to be able to use IBRS. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). $explain_hypervisor"
+            # Legacy fallback: IBRS+IBPB from debugfs on old systems without sysfs
+            elif [ -n "$g_ibrs_enabled" ] && [ "$g_ibrs_enabled" -ge 1 ] 2>/dev/null && [ -n "$g_ibpb_enabled" ] && [ "$g_ibpb_enabled" -ge 1 ] 2>/dev/null; then
+                if [ "$g_ibrs_enabled" = 4 ]; then
+                    pvulnstatus "$cve" OK "Enhanced IBRS + IBPB are mitigating the vulnerability"
+                else
+                    pvulnstatus "$cve" OK "IBRS + IBPB are mitigating the vulnerability"
                 fi
-                if [ -z "$g_ibrs_supported" ]; then
-                    explain "Your kernel doesn't have IBRS support, so you need to either upgrade your kernel (if you're using a distro) or recompiling a more recent kernel."
+            elif [ "$g_ibpb_enabled" = 2 ] && [ "$smt_enabled" != 0 ]; then
+                pvulnstatus "$cve" OK "Full IBPB is mitigating the vulnerability"
+
+            # Offline mode fallback
+            elif [ "$opt_live" != 1 ]; then
+                if [ "$retpoline" = 1 ] && [ -n "$g_ibpb_supported" ]; then
+                    pvulnstatus "$cve" OK "offline mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
+                elif [ -n "$g_ibrs_supported" ] && [ -n "$g_ibpb_supported" ]; then
+                    pvulnstatus "$cve" OK "offline mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
+                elif [ "$cap_ibrs_all" = 1 ] || [ "$cap_autoibrs" = 1 ]; then
+                    pvulnstatus "$cve" OK "offline mode: CPU supports Enhanced / Automatic IBRS"
+                elif [ "$g_ibrs_can_tell" != 1 ]; then
+                    pvulnstatus "$cve" UNK "offline mode: not enough information"
+                    explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
                 fi
-                if [ -n "$cap_ibrs" ] && [ -n "$g_ibrs_supported" ]; then
-                    if [ -e "$g_specex_knob_dir/g_ibrs_enabled" ]; then
-                        explain "Both your CPU and your kernel have IBRS support, but it is currently disabled. You may enable it with \`echo 1 > $g_specex_knob_dir/g_ibrs_enabled\`."
+            fi
+
+            # Catch-all: if no verdict was reached above, it's VULN
+            if [ "$g_pvulnstatus_last_cve" != "$cve" ]; then
+                if is_intel || is_amd || is_hygon; then
+                    pvulnstatus "$cve" VULN "Your CPU is affected and no sufficient mitigation was detected"
+                    explain "To mitigate this vulnerability, you need one of: (1) Enhanced IBRS / Automatic IBRS (eIBRS) -- requires CPU microcode support; preferred for modern CPUs. (2) Kernel IBRS (spectre_v2=ibrs) + IBPB -- requires IBRS-capable microcode. (3) Retpoline (spectre_v2=retpoline) + IBPB -- requires a retpoline-aware compiler and IBPB-capable microcode. For Skylake+ CPUs, options 1 or 2 are preferred as retpoline needs RSB filling. Update your kernel and CPU microcode to the latest versions."
+                else
+                    if [ "$sys_interface_available" = 1 ]; then
+                        pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
                     else
-                        explain "Both your CPU and your kernel have IBRS support, but it is currently disabled. You may enable it. Check in your distro's documentation on how to do this."
+                        pvulnstatus "$cve" VULN "no known mitigation exists for your CPU vendor ($cpu_vendor)"
                     fi
                 fi
             fi
-            # /IBRS
-            unset explain_hypervisor
-
-            # RETPOLINE (amd & intel &hygon )
-            if is_amd || is_intel || is_hygon; then
-                if [ "$retpoline" = 0 ]; then
-                    explain "Your kernel is not compiled with retpoline support, so you need to either upgrade your kernel (if you're using a distro) or recompile your kernel with the CONFIG_MITIGATION_RETPOLINE option enabled (was named CONFIG_RETPOLINE before kernel 6.9-rc1). You also need to compile your kernel with a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
-                elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 0 ]; then
-                    explain "Your kernel is compiled with retpoline, but without a retpoline-aware compiler (re-run this script with -v to know if your version of gcc is retpoline-aware)."
-                elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ] && [ "$retp_enabled" = 0 ]; then
-                    explain "Your kernel has retpoline support and has been compiled with a retpoline-aware compiler, but retpoline is disabled. You should enable it with \`echo 1 > $g_specex_knob_dir/retp_enabled\`."
-                fi
-            fi
-            # /RETPOLINE
+        else
+            # --sysfs-only: Phase 2 variables are unset, fall back to the
+            # raw sysfs result (status + fullmsg were set in Phase 1).
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
         fi
+    else
+        # msg was explicitly set by the "sysfs not available" elif above.
+        pvulnstatus "$cve" "$status" "$msg"
     fi
-    # sysfs msgs:
-    #1 "Vulnerable"
-    #2 "Vulnerable: Minimal generic ASM retpoline"
-    #2 "Vulnerable: Minimal AMD ASM retpoline"
-    # "Mitigation: Full generic retpoline"
-    # "Mitigation: Full AMD retpoline"
-    # $MITIGATION + ", IBPB"
-    # $MITIGATION + ", IBRS_FW"
-    #5 $MITIGATION + " - vulnerable module loaded"
-    # Red Hat only:
-    #2 "Vulnerable: Minimal ASM retpoline",
-    #3 "Vulnerable: Retpoline without IBPB",
-    #4 "Vulnerable: Retpoline on Skylake+",
-    #5 "Vulnerable: Retpoline with unsafe module(s)",
-    # "Mitigation: Full retpoline",
-    # "Mitigation: Full retpoline and IBRS (user space)",
-    # "Mitigation: IBRS (kernel)",
-    # "Mitigation: IBRS (kernel and user space)",
-    # "Mitigation: IBP disabled",
 }
 
 # CVE-2017-5715 Spectre Variant 2 (branch target injection) - BSD mitigation check
+# Sets: vulnstatus
 check_CVE_2017_5715_bsd() {
     local ibrs_disabled ibrs_active retpoline nb_thunks
     pr_info "* Mitigation 1"
@@ -5780,17 +6413,23 @@ check_CVE_2018_12207_linux() {
         pvulnstatus "$cve" OK "this system is not running a hypervisor"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ "$opt_live" = 1 ]; then
-            # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
-            pvulnstatus "$cve" VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
-        else
-            if [ -n "$kernel_itlbmh" ]; then
-                pvulnstatus "$cve" OK "Your kernel supports iTLB Multihit mitigation"
-            else
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$opt_live" = 1 ]; then
+                # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
                 pvulnstatus "$cve" VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
+            else
+                if [ -n "$kernel_itlbmh" ]; then
+                    pvulnstatus "$cve" OK "Your kernel supports iTLB Multihit mitigation"
+                else
+                    pvulnstatus "$cve" VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
+                fi
             fi
+        else
+            # --sysfs-only: sysfs was available (otherwise msg would be set), use its result
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
         fi
     else
+        # msg was set explicitly: either sysfs-not-available error, or a sysfs override
         pvulnstatus "$cve" "$status" "$msg"
     fi
 }
@@ -5932,16 +6571,22 @@ check_CVE_2018_3620_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ "$pteinv_supported" = 1 ]; then
-            if [ "$pteinv_active" = 1 ] || [ "$opt_live" != 1 ]; then
-                pvulnstatus "$cve" OK "PTE inversion mitigates the vulnerability"
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$pteinv_supported" = 1 ]; then
+                if [ "$pteinv_active" = 1 ] || [ "$opt_live" != 1 ]; then
+                    pvulnstatus "$cve" OK "PTE inversion mitigates the vulnerability"
+                else
+                    pvulnstatus "$cve" VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
+                fi
             else
-                pvulnstatus "$cve" VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
+                pvulnstatus "$cve" VULN "Your kernel doesn't support PTE inversion, update it"
             fi
         else
-            pvulnstatus "$cve" VULN "Your kernel doesn't support PTE inversion, update it"
+            # --sysfs-only: sysfs was available (otherwise msg would be set), use its result
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
         fi
     else
+        # msg was set explicitly: either sysfs-not-available error, or a sysfs override
         pvulnstatus "$cve" "$status" "$msg"
     fi
 }
@@ -6223,6 +6868,53 @@ check_CVE_2018_3646_linux() {
     if sys_interface_check "$VULN_SYSFS_BASE/l1tf" '.*' quiet; then
         # this kernel has the /sys interface, trust it over everything
         sys_interface_available=1
+        # quiet mode doesn't set ret_sys_interface_check_status, derive it ourselves.
+        #
+        # Complete sysfs message inventory for l1tf, traced via git blame
+        # on mainline (~/linux) and stable (~/linux-stable):
+        #
+        # all versions:
+        #   "Not affected"                          (cpu_show_common, d1059518b4789)
+        #   "Vulnerable"                            (cpu_show_common fallthrough, d1059518b4789)
+        #
+        # --- mainline ---
+        # 17dbca119312 (v4.18-rc1, initial l1tf sysfs):
+        #   "Mitigation: Page Table Inversion"
+        # 72c6d2db64fa (v4.18-rc1, renamed + added VMX reporting):
+        #   "Mitigation: PTE Inversion"                                  (no KVM_INTEL, or VMX=AUTO)
+        #   "Mitigation: PTE Inversion; VMX: SMT <smt>, L1D <flush>"    (KVM_INTEL enabled)
+        #     <flush>: auto | vulnerable | conditional cache flushes | cache flushes
+        # a7b9020b06ec (v4.18-rc1, added EPT disabled state):
+        #     <flush>: + EPT disabled
+        # ea156d192f52 (v4.18-rc7, reordered VMX/SMT fields):
+        #   "Mitigation: PTE Inversion; VMX: EPT disabled"              (no SMT part)
+        #   "Mitigation: PTE Inversion; VMX: vulnerable"                (NEVER + SMT active, no SMT part)
+        #   "Mitigation: PTE Inversion; VMX: <flush>, SMT <smt>"        (all other cases)
+        # 8e0b2b916662 (v4.18, added flush not necessary):
+        #     <flush>: + flush not necessary
+        # 130d6f946f6f (v4.20-rc4, no string change):
+        #     SMT detection changed from cpu_smt_control to sched_smt_active()
+        #
+        # --- stable backports ---
+        # 4.4.y: no VMX reporting (only "PTE Inversion" / "Vulnerable" / "Not affected").
+        #   initially backported as "Page Table Inversion" (bf0cca01b873),
+        #   renamed to "PTE Inversion" in stable-only commit 6db8c0882912 (May 2019).
+        # 4.9.y, 4.14.y: full VMX reporting, post-reorder format.
+        #   the pre-reorder format ("SMT <smt>, L1D <flush>") and the post-reorder
+        #   format ("VMX: <flush>, SMT <smt>") landed in the same stable release
+        #   (4.9.120, 4.14.63), so no stable release ever shipped the pre-reorder format.
+        #   sched_smt_active() backported (same strings, different runtime behavior).
+        # 4.17.y, 4.18.y: full VMX reporting, post-reorder format.
+        #   still uses cpu_smt_control (sched_smt_active() not backported to these EOL branches).
+        #
+        # <smt> is one of: vulnerable | disabled
+        #
+        # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
+        if echo "$ret_sys_interface_check_fullmsg" | grep -qEi '^(Not affected|Mitigation)'; then
+            status=OK
+        elif echo "$ret_sys_interface_check_fullmsg" | grep -qi '^Vulnerable'; then
+            status=VULN
+        fi
     fi
     l1d_mode=-1
     if [ "$opt_sysfs_only" != 1 ]; then
@@ -6352,40 +7044,48 @@ check_CVE_2018_3646_linux() {
     elif [ "$ret_sys_interface_check_fullmsg" = "Not affected" ]; then
         # just in case a very recent kernel knows better than we do
         pvulnstatus "$cve" OK "your kernel reported your CPU model as not affected"
-    elif [ "$g_has_vmm" = 0 ]; then
-        pvulnstatus "$cve" OK "this system is not running a hypervisor"
-    else
-        if [ "$ept_disabled" = 1 ]; then
-            pvulnstatus "$cve" OK "EPT is disabled which mitigates the vulnerability"
-        elif [ "$opt_paranoid" = 0 ]; then
-            if [ "$l1d_mode" -ge 1 ]; then
-                pvulnstatus "$cve" OK "L1D flushing is enabled and mitigates the vulnerability"
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$g_has_vmm" = 0 ]; then
+                pvulnstatus "$cve" OK "this system is not running a hypervisor"
+            elif [ "$ept_disabled" = 1 ]; then
+                pvulnstatus "$cve" OK "EPT is disabled which mitigates the vulnerability"
+            elif [ "$opt_paranoid" = 0 ]; then
+                if [ "$l1d_mode" -ge 1 ]; then
+                    pvulnstatus "$cve" OK "L1D flushing is enabled and mitigates the vulnerability"
+                else
+                    pvulnstatus "$cve" VULN "disable EPT or enable L1D flushing to mitigate the vulnerability"
+                fi
             else
-                pvulnstatus "$cve" VULN "disable EPT or enable L1D flushing to mitigate the vulnerability"
+                if [ "$l1d_mode" -ge 2 ]; then
+                    if [ "$smt_enabled" = 1 ]; then
+                        pvulnstatus "$cve" OK "L1D unconditional flushing and Hyper-Threading disabled are mitigating the vulnerability"
+                    else
+                        pvulnstatus "$cve" VULN "Hyper-Threading must be disabled to fully mitigate the vulnerability"
+                    fi
+                else
+                    if [ "$smt_enabled" = 1 ]; then
+                        pvulnstatus "$cve" VULN "L1D unconditional flushing should be enabled to fully mitigate the vulnerability"
+                    else
+                        pvulnstatus "$cve" VULN "enable L1D unconditional flushing and disable Hyper-Threading to fully mitigate the vulnerability"
+                    fi
+                fi
+            fi
+
+            if [ "$l1d_mode" -gt 3 ]; then
+                pr_warn
+                pr_warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
+                pr_warn "with a kernel which contains CVE-2018-3646 mitigations."
+                pr_warn
+                pr_warn "See https://www.suse.com/support/kb/doc/?id=7023078 and XSA-273 for details."
             fi
         else
-            if [ "$l1d_mode" -ge 2 ]; then
-                if [ "$smt_enabled" = 1 ]; then
-                    pvulnstatus "$cve" OK "L1D unconditional flushing and Hyper-Threading disabled are mitigating the vulnerability"
-                else
-                    pvulnstatus "$cve" VULN "Hyper-Threading must be disabled to fully mitigate the vulnerability"
-                fi
-            else
-                if [ "$smt_enabled" = 1 ]; then
-                    pvulnstatus "$cve" VULN "L1D unconditional flushing should be enabled to fully mitigate the vulnerability"
-                else
-                    pvulnstatus "$cve" VULN "enable L1D unconditional flushing and disable Hyper-Threading to fully mitigate the vulnerability"
-                fi
-            fi
+            # --sysfs-only: sysfs was available (otherwise msg would be set), use its result
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
         fi
-
-        if [ "$l1d_mode" -gt 3 ]; then
-            pr_warn
-            pr_warn "This host is a Xen Dom0. Please make sure that you are running your DomUs"
-            pr_warn "with a kernel which contains CVE-2018-3646 mitigations."
-            pr_warn
-            pr_warn "See https://www.suse.com/support/kb/doc/?id=7023078 and XSA-273 for details."
-        fi
+    else
+        # msg was set explicitly: either sysfs-not-available error, or a sysfs override
+        pvulnstatus "$cve" "$status" "$msg"
     fi
 }
 
@@ -6525,11 +7225,58 @@ check_CVE_2019_11135_linux() {
 
 # CVE-2019-11135 TAA (TSX asynchronous abort) - BSD mitigation check
 check_CVE_2019_11135_bsd() {
-    if ! is_cpu_affected "$cve"; then
-        # override status & msg in case CPU is not vulnerable after all
-        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    local taa_enable taa_state mds_disable kernel_taa kernel_mds
+    pr_info_nol "* Kernel supports TAA mitigation (machdep.mitigations.taa.enable): "
+    taa_enable=$(sysctl -n machdep.mitigations.taa.enable 2>/dev/null)
+    if [ -n "$taa_enable" ]; then
+        kernel_taa=1
+        case "$taa_enable" in
+            0) pstatus yellow YES "disabled" ;;
+            1) pstatus green YES "TSX disabled via MSR" ;;
+            2) pstatus green YES "VERW mitigation" ;;
+            3) pstatus green YES "auto" ;;
+            *) pstatus yellow YES "unknown value: $taa_enable" ;;
+        esac
     else
-        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+        kernel_taa=0
+        pstatus yellow NO
+    fi
+
+    pr_info_nol "* TAA mitigation state: "
+    taa_state=$(sysctl -n machdep.mitigations.taa.state 2>/dev/null)
+    if [ -n "$taa_state" ]; then
+        if echo "$taa_state" | grep -qi 'not.affected\|mitigation'; then
+            pstatus green YES "$taa_state"
+        else
+            pstatus yellow NO "$taa_state"
+        fi
+    else
+        # fallback: TAA is also mitigated by MDS VERW if enabled
+        mds_disable=$(sysctl -n hw.mds_disable 2>/dev/null)
+        if [ -z "$mds_disable" ]; then
+            mds_disable=$(sysctl -n machdep.mitigations.mds.disable 2>/dev/null)
+        fi
+        if [ -n "$mds_disable" ] && [ "$mds_disable" != 0 ]; then
+            kernel_mds=1
+            pstatus green YES "MDS VERW mitigation active (also covers TAA)"
+        else
+            kernel_mds=0
+            pstatus yellow NO "no TAA or MDS sysctl found"
+        fi
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ "$kernel_taa" = 1 ] && [ "$taa_enable" != 0 ]; then
+        pvulnstatus "$cve" OK "TAA mitigation is enabled"
+    elif [ "$kernel_mds" = 1 ]; then
+        pvulnstatus "$cve" OK "MDS VERW mitigation is active and also covers TAA"
+    elif [ "$kernel_taa" = 1 ] && [ "$taa_enable" = 0 ]; then
+        pvulnstatus "$cve" VULN "TAA mitigation is supported but disabled"
+        explain "To enable TAA mitigation, run \`sysctl machdep.mitigations.taa.enable=3' for auto mode.\n " \
+            "To make this persistent, add 'machdep.mitigations.taa.enable=3' to /etc/sysctl.conf."
+    else
+        pvulnstatus "$cve" VULN "your kernel doesn't support TAA mitigation, update it"
     fi
 }
 
@@ -6642,12 +7389,45 @@ check_CVE_2020_0543_linux() {
 }
 
 # CVE-2020-0543 SRBDS (special register buffer data sampling) - BSD mitigation check
+# FreeBSD uses the name "rngds" (Random Number Generator Data Sampling) for SRBDS
 check_CVE_2020_0543_bsd() {
-    if ! is_cpu_affected "$cve"; then
-        # override status & msg in case CPU is not vulnerable after all
-        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    local rngds_enable rngds_state kernel_rngds
+    pr_info_nol "* Kernel supports SRBDS mitigation (machdep.mitigations.rngds.enable): "
+    rngds_enable=$(sysctl -n machdep.mitigations.rngds.enable 2>/dev/null)
+    if [ -n "$rngds_enable" ]; then
+        kernel_rngds=1
+        case "$rngds_enable" in
+            0) pstatus yellow YES "optimized (RDRAND/RDSEED not locked, faster but vulnerable)" ;;
+            1) pstatus green YES "mitigated" ;;
+            *) pstatus yellow YES "unknown value: $rngds_enable" ;;
+        esac
     else
-        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+        kernel_rngds=0
+        pstatus yellow NO
+    fi
+
+    pr_info_nol "* SRBDS mitigation state: "
+    rngds_state=$(sysctl -n machdep.mitigations.rngds.state 2>/dev/null)
+    if [ -n "$rngds_state" ]; then
+        if echo "$rngds_state" | grep -qi 'not.affected\|mitigat'; then
+            pstatus green YES "$rngds_state"
+        else
+            pstatus yellow NO "$rngds_state"
+        fi
+    else
+        pstatus yellow NO "sysctl not available"
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ "$kernel_rngds" = 1 ] && [ "$rngds_enable" = 1 ]; then
+        pvulnstatus "$cve" OK "SRBDS mitigation is enabled"
+    elif [ "$kernel_rngds" = 1 ] && [ "$rngds_enable" = 0 ]; then
+        pvulnstatus "$cve" VULN "SRBDS mitigation is supported but set to optimized mode (disabled for RDRAND/RDSEED)"
+        explain "To enable full SRBDS mitigation, run \`sysctl machdep.mitigations.rngds.enable=1'.\n " \
+            "To make this persistent, add 'machdep.mitigations.rngds.enable=1' to /etc/sysctl.conf."
+    else
+        pvulnstatus "$cve" VULN "your kernel doesn't support SRBDS mitigation, update it"
     fi
 }
 
@@ -6753,6 +7533,15 @@ check_CVE_2022_40982_linux() {
     fi
 }
 
+# CVE-2022-40982 Downfall (gather data sampling) - BSD mitigation check
+check_CVE_2022_40982_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
 # >>>>>> vulns/CVE-2023-20569.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -6775,6 +7564,15 @@ check_CVE_2023_20569_linux() {
         # this kernel has the /sys interface, trust it over everything
         sys_interface_available=1
         status=$ret_sys_interface_check_status
+        # kernels before the fix from dc6306ad5b0d (v6.6-rc6, backported to v6.5.6)
+        # incorrectly reported "Mitigation: safe RET, no microcode" as mitigated,
+        # when in fact userspace is still vulnerable because IBPB doesn't flush
+        # branch type predictions without the extending microcode.
+        # override the sysfs status in that case.
+        if echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Mitigation:.*safe RET.*no microcode'; then
+            status=VULN
+            msg="Vulnerable: Safe RET, no microcode (your kernel incorrectly reports this as mitigated, it was fixed in more recent kernels)"
+        fi
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
@@ -6811,15 +7609,30 @@ check_CVE_2023_20569_linux() {
                 # if it's present, then SRSO is NOT compiled in
                 pstatus yellow NO "kernel not compiled with (CPU|MITIGATION)_SRSO"
             else
-                # if it's not present, then SRSO is compiled in IF kernel_sro==1, otherwise we're just
+                # if it's not present, then SRSO is compiled in IF kernel_sro is set, otherwise we're just
                 # in front of an old kernel that doesn't have the mitigation logic at all
-                if [ "$kernel_sro" = 1 ]; then
+                if [ -n "$kernel_sro" ]; then
                     kernel_srso="SRSO mitigation logic is compiled in the kernel"
                     pstatus green OK "$kernel_srso"
                 else
                     pstatus yellow NO "your kernel is too old and doesn't have the mitigation logic"
                 fi
             fi
+        fi
+
+        # check whether the running kernel has the corrected SRSO reporting
+        # (dc6306ad5b0d, v6.6-rc6, backported to v6.5.6): kernels with the fix
+        # contain the string "Vulnerable: Safe RET, no microcode" in their image,
+        # while older kernels only have "safe RET" (and append ", no microcode" dynamically).
+        pr_info_nol "* Kernel has accurate SRSO reporting: "
+        if [ -n "$g_kernel_err" ]; then
+            pstatus yellow UNKNOWN "$g_kernel_err"
+        elif grep -q 'Vulnerable: Safe RET, no microcode' "$g_kernel"; then
+            pstatus green YES
+        elif [ -n "$kernel_sro" ]; then
+            pstatus yellow NO "your kernel reports partial SRSO mitigations as fully mitigated, upgrade recommended"
+        else
+            pstatus yellow NO "your kernel is too old and doesn't have the SRSO mitigation logic"
         fi
 
         pr_info_nol "* Kernel compiled with IBPB_ENTRY support: "
@@ -6841,9 +7654,9 @@ check_CVE_2023_20569_linux() {
                 # if it's present, then IBPB_ENTRY is NOT compiled in
                 pstatus yellow NO "kernel not compiled with (CPU|MITIGATION)_IBPB_ENTRY"
             else
-                # if it's not present, then IBPB_ENTRY is compiled in IF kernel_sro==1, otherwise we're just
+                # if it's not present, then IBPB_ENTRY is compiled in IF kernel_sro is set, otherwise we're just
                 # in front of an old kernel that doesn't have the mitigation logic at all
-                if [ "$kernel_sro" = 1 ]; then
+                if [ -n "$kernel_sro" ]; then
                     kernel_ibpb_entry="IBPB_ENTRY mitigation logic is compiled in the kernel"
                     pstatus green OK "$kernel_ibpb_entry"
                 else
@@ -6891,38 +7704,60 @@ check_CVE_2023_20569_linux() {
         # override status & msg in case CPU is not vulnerable after all
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
-        # if msg is empty, sysfs check didn't fill it, so we rely on our own logic
-        # Zen/Zen2
-        if [ "$cpu_family" = $((0x17)) ]; then
-            if [ "$smt_enabled" = 0 ]; then
-                pvulnstatus "$cve" VULN "SMT is enabled on your Zen/Zen2 CPU, which makes mitigation ineffective"
-                explain "For Zen/Zen2 CPUs, proper mitigation needs an up to date microcode, and SMT needs to be disabled (this can be done by adding \`nosmt\` to your kernel command line)"
-            elif [ -z "$kernel_sro" ]; then
-                pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
-            elif [ -n "$cap_ibpb" ]; then
-                pvulnstatus "$cve" OK "SMT is disabled and both your kernel and microcode support mitigation"
+        # if msg is empty, sysfs check didn't fill it, rely on our own test
+        if [ "$opt_sysfs_only" != 1 ]; then
+            # Zen/Zen2
+            if [ "$cpu_family" = $((0x17)) ]; then
+                if [ "$smt_enabled" = 0 ]; then
+                    pvulnstatus "$cve" VULN "SMT is enabled on your Zen/Zen2 CPU, which makes mitigation ineffective"
+                    explain "For Zen/Zen2 CPUs, proper mitigation needs an up to date microcode, and SMT needs to be disabled (this can be done by adding \`nosmt\` to your kernel command line)"
+                elif [ -z "$kernel_sro" ]; then
+                    pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
+                elif [ -n "$cap_ibpb" ]; then
+                    pvulnstatus "$cve" OK "SMT is disabled and both your kernel and microcode support mitigation"
+                else
+                    pvulnstatus "$cve" VULN "Your microcode is too old"
+                fi
+            # Zen3/Zen4
+            elif [ "$cpu_family" = $((0x19)) ]; then
+                if [ -z "$kernel_sro" ]; then
+                    pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
+                elif [ -z "$kernel_srso" ] && [ -z "$kernel_ibpb_entry" ]; then
+                    pvulnstatus "$cve" VULN "Your kernel doesn't have either SRSO or IBPB_ENTRY compiled-in"
+                elif [ "$cap_sbpb" = 3 ]; then
+                    pvulnstatus "$cve" UNK "Couldn't verify if your microcode supports IBPB (rerun with --allow-msr-write)"
+                elif [ "$cap_sbpb" = 2 ]; then
+                    pvulnstatus "$cve" VULN "Your microcode doesn't support SBPB"
+                else
+                    pvulnstatus "$cve" OK "Your kernel and microcode both support mitigation"
+                fi
             else
-                pvulnstatus "$cve" VULN "Your microcode is too old"
-            fi
-        # Zen3/Zen4
-        elif [ "$cpu_family" = $((0x19)) ]; then
-            if [ -z "$kernel_sro" ]; then
-                pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
-            elif [ -z "$kernel_srso" ] && [ -z "$kernel_ibpb_entry" ]; then
-                pvulnstatus "$cve" VULN "Your kernel doesn't have either SRSO or IBPB_ENTRY compiled-in"
-            elif [ "$cap_sbpb" = 3 ]; then
-                pvulnstatus "$cve" UNK "Couldn't verify if your microcode supports IBPB (rerun with --allow-msr-write)"
-            elif [ "$cap_sbpb" = 2 ]; then
-                pvulnstatus "$cve" VULN "Your microcode doesn't support SBPB"
-            else
-                pvulnstatus "$cve" OK "Your kernel and microcode both support mitigation"
+                # not supposed to happen, as normally this CPU should not be affected and not run this code
+                pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
             fi
         else
-            # not supposed to happen, as normally this CPU should not be affected and not run this code
-            pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
         fi
     else
         pvulnstatus "$cve" "$status" "$msg"
+        if echo "$msg" | grep -qi 'your kernel incorrectly reports this as mitigated'; then
+            explain "Your kernel's /sys interface reports 'Mitigation: safe RET, no microcode' for the SRSO vulnerability.\n" \
+                "This was a bug in the kernel's reporting (fixed in v6.5.6/v6.6-rc6, commit dc6306ad5b0d):\n" \
+                "the Safe RET mitigation alone only protects the kernel from userspace attacks, but without\n" \
+                "the IBPB-extending microcode, userspace itself remains vulnerable because IBPB doesn't flush\n" \
+                "branch type predictions. Newer kernels correctly report this as 'Vulnerable: Safe RET, no microcode'.\n" \
+                "To fully mitigate, you need both the Safe RET kernel support AND an updated CPU microcode.\n" \
+                "Updating your kernel to v6.5.6+ or v6.6+ will also give you accurate vulnerability reporting."
+        fi
+    fi
+}
+
+# CVE-2023-20569 Inception (SRSO, speculative return stack overflow) - BSD mitigation check
+check_CVE_2023_20569_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
     fi
 }
 
@@ -7049,6 +7884,60 @@ check_CVE_2023_20593_linux() {
     fi
 }
 
+# CVE-2023-20593 Zenbleed (cross-process information leak via AVX2) - BSD mitigation check
+check_CVE_2023_20593_bsd() {
+    local zenbleed_enable zenbleed_state kernel_zenbleed
+    pr_info_nol "* Kernel supports Zenbleed mitigation (machdep.mitigations.zenbleed.enable): "
+    zenbleed_enable=$(sysctl -n machdep.mitigations.zenbleed.enable 2>/dev/null)
+    if [ -n "$zenbleed_enable" ]; then
+        kernel_zenbleed=1
+        case "$zenbleed_enable" in
+            0) pstatus yellow YES "force disabled" ;;
+            1) pstatus green YES "force enabled" ;;
+            2) pstatus green YES "automatic (default)" ;;
+            *) pstatus yellow YES "unknown value: $zenbleed_enable" ;;
+        esac
+    else
+        kernel_zenbleed=0
+        pstatus yellow NO
+    fi
+
+    pr_info_nol "* Zenbleed mitigation state: "
+    zenbleed_state=$(sysctl -n machdep.mitigations.zenbleed.state 2>/dev/null)
+    if [ -n "$zenbleed_state" ]; then
+        if echo "$zenbleed_state" | grep -qi 'not.applicable\|mitigation.enabled'; then
+            pstatus green YES "$zenbleed_state"
+        elif echo "$zenbleed_state" | grep -qi 'mitigation.disabled'; then
+            pstatus yellow NO "$zenbleed_state"
+        else
+            pstatus yellow UNKNOWN "$zenbleed_state"
+        fi
+    else
+        pstatus yellow NO "sysctl not available"
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ "$kernel_zenbleed" = 1 ] && [ "$zenbleed_enable" != 0 ]; then
+        if [ -n "$zenbleed_state" ] && echo "$zenbleed_state" | grep -qi 'mitigation.enabled'; then
+            pvulnstatus "$cve" OK "Zenbleed mitigation is enabled ($zenbleed_state)"
+        elif [ -n "$zenbleed_state" ] && echo "$zenbleed_state" | grep -qi 'not.applicable'; then
+            pvulnstatus "$cve" OK "Zenbleed mitigation not applicable to this CPU ($zenbleed_state)"
+        else
+            pvulnstatus "$cve" OK "Zenbleed mitigation is enabled"
+        fi
+    elif [ "$kernel_zenbleed" = 1 ] && [ "$zenbleed_enable" = 0 ]; then
+        pvulnstatus "$cve" VULN "Zenbleed mitigation is supported but force disabled"
+        explain "To re-enable Zenbleed mitigation, run \`sysctl machdep.mitigations.zenbleed.enable=2' for automatic mode.\n " \
+            "To make this persistent, add 'machdep.mitigations.zenbleed.enable=2' to /etc/sysctl.conf."
+    else
+        pvulnstatus "$cve" VULN "your kernel doesn't support Zenbleed mitigation, update it"
+        explain "Your CPU vendor may also have a new microcode for your CPU model that mitigates this issue.\n " \
+            "Updating to FreeBSD 14.0 or later will provide kernel-level Zenbleed mitigation via the\n " \
+            "machdep.mitigations.zenbleed sysctl."
+    fi
+}
+
 # >>>>>> vulns/CVE-2023-23583.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -7084,6 +7973,15 @@ check_CVE_2023_23583_linux() {
     fi
 }
 
+# CVE-2023-23583 Reptar (redundant prefix issue) - BSD mitigation check
+check_CVE_2023_23583_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
 # >>>>>> vulns/CVE-2024-36350.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -7097,7 +7995,7 @@ check_CVE_2024_36350() {
 
 # CVE-2024-36350 TSA-SQ (transient scheduler attack - store queue) - Linux mitigation check
 check_CVE_2024_36350_linux() {
-    local status sys_interface_available msg kernel_tsa kernel_tsa_err smt_enabled ret
+    local status sys_interface_available msg kernel_tsa kernel_tsa_err smt_enabled
     status=UNK
     sys_interface_available=0
     msg=''
@@ -7105,10 +8003,57 @@ check_CVE_2024_36350_linux() {
     if sys_interface_check "$VULN_SYSFS_BASE/tsa"; then
         # this kernel has the /sys interface, trust it over everything
         sys_interface_available=1
+        #
+        # Complete sysfs message inventory for tsa
+        #
+        # all versions:
+        #   "Not affected"                                                  (cpu_show_common, pre-existing)
+        #
+        # --- mainline ---
+        # d8010d4ba43e (v6.16-rc6, initial TSA sysfs):
+        #   "Vulnerable"                                                    (TSA_MITIGATION_NONE)
+        #   "Vulnerable: No microcode"                                      (TSA_MITIGATION_UCODE_NEEDED)
+        #   "Mitigation: Clear CPU buffers: user/kernel boundary"           (TSA_MITIGATION_USER_KERNEL)
+        #   "Mitigation: Clear CPU buffers: VM"                             (TSA_MITIGATION_VM)
+        #   "Mitigation: Clear CPU buffers"                                 (TSA_MITIGATION_FULL)
+        # 6b21d2f0dc73 (v6.17-rc1, attack vector controls):
+        #   no string changes; only mitigation selection logic changed
+        #   (AUTO can now resolve to USER_KERNEL or VM based on attack vector config)
+        #
+        # --- stable backports ---
+        # 6.16.y: d8010d4ba43e (same as mainline), same strings.
+        # 6.17.y: has 6b21d2f0dc73 (attack vector controls), same strings.
+        # 5.10.y (78192f511f40), 5.15.y (f2b75f1368af), 6.1.y (d12145e8454f),
+        # 6.6.y (90293047df18), 6.12.y (7a0395f6607a), 6.15.y (ab0f6573b211):
+        #   different UCODE_NEEDED string:
+        #   "Vulnerable: Clear CPU buffers attempted, no microcode"         (TSA_MITIGATION_UCODE_NEEDED)
+        #   all other strings identical to mainline.
+        #   default is FULL (no AUTO enum); USER_KERNEL/VM only via cmdline tsa=user/tsa=vm.
+        #   VM-forced mitigation: when UCODE_NEEDED and running in a VM, forces FULL
+        #   (stable-only logic, not in mainline).
+        #
+        # --- RHEL/CentOS ---
+        # rocky9 (5.14-based), rocky10 (6.12-based): same strings as mainline.
+        #   "Vulnerable: No microcode" for UCODE_NEEDED (matches mainline, NOT the stable variant).
+        # rocky8 (4.18-based), centos7 (3.10-based): no TSA support.
+        #
+        # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
         status=$ret_sys_interface_check_status
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
+        check_has_vmm
+        # Override: when running as a hypervisor, "user/kernel boundary" mode
+        # (tsa=user) leaves the VM exit boundary uncovered — guests can exploit
+        # TSA to leak host data.  The kernel correctly reports its own mode, but
+        # the script must flag this as insufficient for a VMM host.
+        if [ "$sys_interface_available" = 1 ] && [ "$g_has_vmm" != 0 ]; then
+            if echo "$ret_sys_interface_check_fullmsg" | grep -q 'user/kernel boundary'; then
+                status=VULN
+                msg="Vulnerable: TSA mitigation limited to user/kernel boundary (tsa=user), VM exit boundary is not covered"
+            fi
+        fi
+
         pr_info_nol "* Kernel supports TSA mitigation: "
         kernel_tsa=''
         kernel_tsa_err=''
@@ -7123,8 +8068,8 @@ check_CVE_2024_36350_linux() {
                 kernel_tsa="CONFIG_MITIGATION_TSA=y found in kernel config"
             fi
         fi
-        if [ -z "$kernel_tsa" ] && [ -n "$g_kernel_map" ]; then
-            if grep -q 'tsa_select_mitigation' "$g_kernel_map"; then
+        if [ -z "$kernel_tsa" ] && [ -n "$opt_map" ]; then
+            if grep -q 'tsa_select_mitigation' "$opt_map"; then
                 kernel_tsa="found tsa_select_mitigation in System.map"
             fi
         fi
@@ -7200,6 +8145,20 @@ check_CVE_2024_36350_linux() {
         fi
     else
         pvulnstatus "$cve" "$status" "$msg"
+        if echo "$msg" | grep -q 'VM exit boundary'; then
+            explain "This system runs a hypervisor but TSA mitigation only clears CPU buffers at\n " \
+                "user/kernel transitions (tsa=user). Guests can exploit TSA to leak host data\n " \
+                "across VM exit. Use \`tsa=on\` (or remove \`tsa=user\`) to cover both boundaries."
+        fi
+    fi
+}
+
+# CVE-2024-36350 TSA-SQ (transient scheduler attack - store queue) - BSD mitigation check
+check_CVE_2024_36350_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
     fi
 }
 
@@ -7216,7 +8175,7 @@ check_CVE_2024_36357() {
 
 # CVE-2024-36357 TSA-L1 (transient scheduler attack - L1 cache) - Linux mitigation check
 check_CVE_2024_36357_linux() {
-    local status sys_interface_available msg kernel_tsa kernel_tsa_err ret
+    local status sys_interface_available msg kernel_tsa kernel_tsa_err
     status=UNK
     sys_interface_available=0
     msg=''
@@ -7224,10 +8183,57 @@ check_CVE_2024_36357_linux() {
     if sys_interface_check "$VULN_SYSFS_BASE/tsa"; then
         # this kernel has the /sys interface, trust it over everything
         sys_interface_available=1
+        #
+        # Complete sysfs message inventory for tsa
+        #
+        # all versions:
+        #   "Not affected"                                                  (cpu_show_common, pre-existing)
+        #
+        # --- mainline ---
+        # d8010d4ba43e (v6.16-rc6, initial TSA sysfs):
+        #   "Vulnerable"                                                    (TSA_MITIGATION_NONE)
+        #   "Vulnerable: No microcode"                                      (TSA_MITIGATION_UCODE_NEEDED)
+        #   "Mitigation: Clear CPU buffers: user/kernel boundary"           (TSA_MITIGATION_USER_KERNEL)
+        #   "Mitigation: Clear CPU buffers: VM"                             (TSA_MITIGATION_VM)
+        #   "Mitigation: Clear CPU buffers"                                 (TSA_MITIGATION_FULL)
+        # 6b21d2f0dc73 (v6.17-rc1, attack vector controls):
+        #   no string changes; only mitigation selection logic changed
+        #   (AUTO can now resolve to USER_KERNEL or VM based on attack vector config)
+        #
+        # --- stable backports ---
+        # 6.16.y: d8010d4ba43e (same as mainline), same strings.
+        # 6.17.y: has 6b21d2f0dc73 (attack vector controls), same strings.
+        # 5.10.y (78192f511f40), 5.15.y (f2b75f1368af), 6.1.y (d12145e8454f),
+        # 6.6.y (90293047df18), 6.12.y (7a0395f6607a), 6.15.y (ab0f6573b211):
+        #   different UCODE_NEEDED string:
+        #   "Vulnerable: Clear CPU buffers attempted, no microcode"         (TSA_MITIGATION_UCODE_NEEDED)
+        #   all other strings identical to mainline.
+        #   default is FULL (no AUTO enum); USER_KERNEL/VM only via cmdline tsa=user/tsa=vm.
+        #   VM-forced mitigation: when UCODE_NEEDED and running in a VM, forces FULL
+        #   (stable-only logic, not in mainline).
+        #
+        # --- RHEL/CentOS ---
+        # rocky9 (5.14-based), rocky10 (6.12-based): same strings as mainline.
+        #   "Vulnerable: No microcode" for UCODE_NEEDED (matches mainline, NOT the stable variant).
+        # rocky8 (4.18-based), centos7 (3.10-based): no TSA support.
+        #
+        # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
         status=$ret_sys_interface_check_status
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
+        check_has_vmm
+        # Override: when running as a hypervisor, "user/kernel boundary" mode
+        # (tsa=user) leaves the VM exit boundary uncovered — guests can exploit
+        # TSA to leak host data.  The kernel correctly reports its own mode, but
+        # the script must flag this as insufficient for a VMM host.
+        if [ "$sys_interface_available" = 1 ] && [ "$g_has_vmm" != 0 ]; then
+            if echo "$ret_sys_interface_check_fullmsg" | grep -q 'user/kernel boundary'; then
+                status=VULN
+                msg="Vulnerable: TSA mitigation limited to user/kernel boundary (tsa=user), VM exit boundary is not covered"
+            fi
+        fi
+
         pr_info_nol "* Kernel supports TSA mitigation: "
         kernel_tsa=''
         kernel_tsa_err=''
@@ -7242,8 +8248,8 @@ check_CVE_2024_36357_linux() {
                 kernel_tsa="CONFIG_MITIGATION_TSA=y found in kernel config"
             fi
         fi
-        if [ -z "$kernel_tsa" ] && [ -n "$g_kernel_map" ]; then
-            if grep -q 'tsa_select_mitigation' "$g_kernel_map"; then
+        if [ -z "$kernel_tsa" ] && [ -n "$opt_map" ]; then
+            if grep -q 'tsa_select_mitigation' "$opt_map"; then
                 kernel_tsa="found tsa_select_mitigation in System.map"
             fi
         fi
@@ -7285,6 +8291,13 @@ check_CVE_2024_36357_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$opt_sysfs_only" != 1 ]; then
+            # No --paranoid SMT check here, unlike TSA-SQ (CVE-2024-36350).
+            # The kernel's cpu_bugs_smt_update() enables cpu_buf_idle_clear
+            # (VERW before idle) specifically for TSA-SQ cross-thread leakage,
+            # with the comment "TSA-SQ can potentially lead to info leakage
+            # between SMT threads" — TSA-L1 is not mentioned. Until the kernel
+            # flags TSA-L1 as having cross-thread SMT exposure, we follow its
+            # assessment and do not require SMT disabled in paranoid mode.
             if [ "$cap_verw_clear" = 1 ] && [ -n "$kernel_tsa" ]; then
                 pvulnstatus "$cve" OK "Both kernel and microcode mitigate the vulnerability"
             elif [ "$cap_verw_clear" = 1 ]; then
@@ -7305,6 +8318,20 @@ check_CVE_2024_36357_linux() {
         fi
     else
         pvulnstatus "$cve" "$status" "$msg"
+        if echo "$msg" | grep -q 'VM exit boundary'; then
+            explain "This system runs a hypervisor but TSA mitigation only clears CPU buffers at\n " \
+                "user/kernel transitions (tsa=user). Guests can exploit TSA to leak host data\n " \
+                "across VM exit. Use \`tsa=on\` (or remove \`tsa=user\`) to cover both boundaries."
+        fi
+    fi
+}
+
+# CVE-2024-36357 TSA-L1 (transient scheduler attack - L1 cache) - BSD mitigation check
+check_CVE_2024_36357_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
     fi
 }
 
