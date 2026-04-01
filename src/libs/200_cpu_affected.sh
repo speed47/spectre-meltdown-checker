@@ -479,7 +479,13 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    pr_debug "is_cpu_affected: final results are <$affected_variant1> <$affected_variant2> <$affected_variant3> <$affected_variant3a> <$affected_variant4> <$affected_variantl1tf>"
+    # shellcheck disable=SC2154  # affected_zenbleed/inception/tsa/downfall/reptar set via eval (_set_immune)
+    {
+        pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
+        pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
+        pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
+        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar"
+    }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
     [ "$cap_sgx" = 0 ] && _set_immune variantl1tf_sgx
