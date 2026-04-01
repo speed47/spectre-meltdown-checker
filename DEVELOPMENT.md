@@ -298,16 +298,16 @@ This is where the real detection lives. Check for mitigations at each layer:
     ```
     Guard with `if [ -n "$g_kernel_err" ]; then` first - the kernel image may be unavailable.
 
-  - **Kernel config** (`$g_kernel_config`): Look for the `CONFIG_*` option that enables the mitigation.
+  - **Kernel config** (`$opt_config`): Look for the `CONFIG_*` option that enables the mitigation.
     ```sh
-    if [ -n "$g_kernel_config" ] && grep -q '^CONFIG_MITIGATION_NAME=y' "$g_kernel_config"; then
+    if [ -n "$opt_config" ] && grep -q '^CONFIG_MITIGATION_NAME=y' "$opt_config"; then
         kernel_mitigated="found mitigation config option enabled"
     fi
     ```
 
-  - **System.map** (`$g_kernel_map`): Look for function names directly linked to the mitigation.
+  - **System.map** (`$opt_map`): Look for function names directly linked to the mitigation.
     ```sh
-    if [ -n "$g_kernel_map" ] && grep -q 'mitigation_function_name' "$g_kernel_map"; then
+    if [ -n "$opt_map" ] && grep -q 'mitigation_function_name' "$opt_map"; then
         kernel_mitigated="found mitigation function in System.map"
     fi
     ```
