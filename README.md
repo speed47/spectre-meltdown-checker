@@ -1,34 +1,79 @@
 Spectre & Meltdown Checker
 ==========================
 
-A shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018, and give you guidance as to how to mitigate them.
+A self-contained shell script to assess your system's resilience against the several [transient execution](https://en.wikipedia.org/wiki/Transient_execution_CPU_vulnerability) CVEs that were published since early 2018, and give you guidance as to how to mitigate them.
 
-CVE | Aliases | Impact | Mitigation | Perf. impact
---- | ------- | ------ | ---------- | ------------
-[CVE-2017-5753](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5753) | Spectre V1 | Kernel & all software | Recompile with LFENCE-inserting compiler | Negligible
-[CVE-2017-5715](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5715) | Spectre V2 | Kernel | Microcode (IBRS) and/or retpoline | Medium to high
-[CVE-2017-5754](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754) | Meltdown | Kernel | Kernel update (PTI/KPTI) | Low to medium
-[CVE-2018-3640](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3640) | Variant 3a | Kernel | Microcode update | Negligible
-[CVE-2018-3639](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3639) | Variant 4, SSB | JIT software | Microcode + kernel update | Low to medium
-[CVE-2018-3615](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3615) | Foreshadow (SGX) | SGX enclaves | Microcode update | Negligible
-[CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620) | Foreshadow-NG (OS/SMM) | Kernel & SMM | Kernel update (PTE inversion) | Negligible
-[CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646) | Foreshadow-NG (VMM) | VMM/hypervisors | Kernel update (L1d flush) or disable EPT/SMT | Low to significant
-[CVE-2018-12126](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12126) | MSBDS, Fallout | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | MFBDS, ZombieLoad | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | MLPDS, RIDL | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | MDSUM, RIDL | Kernel | Microcode + kernel update (MDS group) | Low to significant
-[CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TAA, ZombieLoad V2 | Kernel | Microcode + kernel update | Low to significant
-[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | iTLB Multihit, No eXcuses | VMM/hypervisors | Disable hugepages or update hypervisor | Low to significant
-[CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | SRBDS, CROSSTalk | All software (RDRAND/RDSEED) | Microcode + kernel update | Low
-[CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Downfall, GDS | Kernel & all software | Microcode update or disable AVX | Negligible to significant (AVX-heavy)
-[CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Inception, SRSO | Kernel & all software | Kernel + microcode update | Low to significant
-[CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Zenbleed | Kernel & all software | Kernel (MSR bit) or microcode update | Negligible
-[CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Reptar | All software | Microcode update | Low
-[CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | TSA-SQ | Kernel & all software (AMD) | Microcode + kernel update; SMT increases exposure | Low to medium
-[CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | TSA-L1 | Kernel & all software (AMD) | Microcode + kernel update | Low to medium
+## CVE list
+
+CVE | Name | Aliases
+--- | ---- | -------
+[CVE-2017-5753](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5753) | Bounds Check Bypass | Spectre V1
+[CVE-2017-5715](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5715) | Branch Target Injection | Spectre V2
+[CVE-2017-5754](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2017-5754) | Rogue Data Cache Load | Meltdown
+[CVE-2018-3640](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3640) | Rogue System Register Read | Variant 3a
+[CVE-2018-3639](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3639) | Speculative Store Bypass | Variant 4, SSB
+[CVE-2018-3615](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3615) | L1 Terminal Fault | Foreshadow (SGX)
+[CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620) | L1 Terminal Fault | Foreshadow-NG (OS/SMM)
+[CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646) | L1 Terminal Fault | Foreshadow-NG (VMM)
+[CVE-2018-12126](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12126) | Microarchitectural Store Buffer Data Sampling | MSBDS, Fallout
+[CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | Microarchitectural Fill Buffer Data Sampling | MFBDS, ZombieLoad
+[CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | Microarchitectural Load Port Data Sampling | MLPDS, RIDL
+[CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL
+[CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX Asynchronous Abort | TAA, ZombieLoad V2
+[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes | iTLB Multihit, No eXcuses
+[CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | Special Register Buffer Data Sampling | SRBDS, CROSSTalk
+[CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | Downfall, GDS
+[CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO
+[CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed
+[CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar
+[CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack, Store Queue | TSA-SQ
+[CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack, L1 | TSA-L1
+
+## Am I at risk?
+
+Depending on your situation, the table below answers whether an attacker in a given position can extract data from a given target.
+The "Userland → Kernel" column also applies within a VM (VM userland vs. VM kernel), since the same CPU mechanisms are at play regardless of virtualization.
+
+Vulnerability | Userland → Kernel | Userland → Userland | VM → Host | VM → VM | Mitigation
+------------ | :---------------: | :-----------------: | :-------: | :-----: | ----------
+CVE-2017-5753 (Spectre V1) | 💥 | 💥 | 💥 | 💥 | Recompile everything with LFENCE
+CVE-2017-5715 (Spectre V2) | 💥 | 💥 | 💥 | 💥 | Microcode + kernel update (or retpoline)
+CVE-2017-5754 (Meltdown) | 💥 | ✅ | ✅ | ✅ | Kernel update
+CVE-2018-3640 (Variant 3a) | 💥 | ✅ | ✅ | ✅ | Microcode update
+CVE-2018-3639 (Variant 4, SSB) | ✅ | 💥 | ✅ | ✅ | Microcode + kernel update
+CVE-2018-3615 (Foreshadow, SGX) | ✅ (3) | ✅ (3) | ✅ (3) | ✅ (3) | Microcode update
+CVE-2018-3620 (Foreshadow-NG, OS/SMM) | 💥 | ✅ | ✅ | ✅ | Kernel update
+CVE-2018-3646 (Foreshadow-NG, VMM) | ✅ | ✅ | 💥 | 💥 | Kernel update (or disable EPT/SMT)
+CVE-2018-12126 (MSBDS, Fallout) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2018-12130 (MFBDS, ZombieLoad) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2018-12127 (MLPDS, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2019-11091 (MDSUM, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2019-11135 (TAA, ZombieLoad V2) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2018-12207 (iTLB Multihit, No eXcuses) | ✅ | ✅ | ☠️ | ✅ | Hypervisor update (or disable hugepages)
+CVE-2020-0543 (SRBDS, CROSSTalk) | 💥 (2) | 💥 (2) | 💥 (2) | 💥 (2) | Microcode + kernel update
+CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (or disable AVX)
+CVE-2023-20569 (Inception, SRSO) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
+CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or kernel workaround)
+CVE-2023-23583 (Reptar) | ☠️ | ☠️ | ☠️ | ☠️ | Microcode update
+CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+
+> 💥 Data can be leaked across this boundary.
+
+> ✅ Not affected in this scenario.
+
+> ☠️ Denial of service (system crash or unpredictable behavior), no data leak.
+
+> (1) Cross-process leakage requires SMT (Hyper-Threading) to be active — attacker and victim must share a physical core.
+
+> (2) Only leaks RDRAND/RDSEED output, not arbitrary memory; still allows recovering cryptographic material from any victim.
+
+> (3) CVE-2018-3615 (Foreshadow SGX) inverts the normal trust model: the OS reads SGX enclave data. It is irrelevant unless the system runs SGX enclaves, and the attacker must already have OS-level access.
+
+## Detailed CVE descriptions
 
 <details>
-<summary>Detailed CVE descriptions</summary>
+<summary>Unfold for more detailed CVE descriptions</summary>
 
 **CVE-2017-5753 — Bounds Check Bypass (Spectre Variant 1)**
 
@@ -110,13 +155,15 @@ On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculative
 
 </details>
 
+## Scope
+
 Supported operating systems:
 - Linux (all versions, flavors and distros)
 - FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](FAQ.md#which-bsd-oses-are-supported))
 
 For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
 
-Other operating systems such as MacOS, Windows, ESXi, etc. [will most likely never be supported](FAQ.md#why-is-my-os-not-supported).
+Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](FAQ.md#why-is-my-os-not-supported).
 
 Supported architectures:
 - `x86` (32 bits)
@@ -126,15 +173,13 @@ Supported architectures:
 
 ## Frequently Asked Questions (FAQ)
 
-- What is the purpose of this tool?
-- Why was it written?
-- How can it be useful to me?
-- How does it work?
-- What can I expect from it?
+What is the purpose of this tool? Why was it written? How can it be useful to me? How does it work? What can I expect from it?
 
 All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
 
-## Easy way to run the script
+## Running the script
+
+### Direct way (recommended)
 
 - Get the latest version of the script using `curl` *or* `wget`
 
@@ -156,9 +201,12 @@ chmod +x spectre-meltdown-checker.sh
 sudo ./spectre-meltdown-checker.sh
 ```
 
-### Run the script in a docker container
+### Using a docker container
 
-#### With docker-compose
+<details>
+<summary>Unfold for instructions</summary>
+
+Using `docker compose`:
 
 ```shell
 docker compose build
@@ -168,12 +216,14 @@ docker compose run --rm spectre-meltdown-checker
 Note that on older versions of docker, `docker-compose` is a separate command, so you might
 need to replace the two `docker compose` occurences above by `docker-compose`.
 
-#### Without docker-compose
+Using `docker build` directly:
 
 ```shell
 docker build -t spectre-meltdown-checker .
 docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker
 ```
+
+</details>
 
 ## Example of script output
 
