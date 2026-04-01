@@ -663,6 +663,8 @@ check_cpu() {
         pr_info_nol "    * Indirect Predictor Disable feature is available: "
         read_cpuid 0x7 0x2 $EDX 1 1 1
         ret=$?
+        # cap_ipred is not yet used in verdict logic (no kernel sysfs/config to cross-reference)
+        # shellcheck disable=SC2034
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ipred=1
             pstatus green YES "IPRED_CTRL feature bit"
@@ -701,9 +703,6 @@ check_cpu() {
             cap_bhi=-1
             pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         fi
-
-        # make shellcheck happy while we're not yet using these new cpuid values in our checks
-        export cap_ipred cap_rrsba cap_bhi
     fi
 
     if is_intel; then
