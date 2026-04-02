@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.21.0402757'
+VERSION='26.21.0402815'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -492,6 +492,14 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
     fi
 
+    # NO_SPECTRE_V2: Centaur family 7 and Zhaoxin family 7 are immune to Spectre V2
+    # kernel commit 1e41a766c98b (v5.6-rc1): added NO_SPECTRE_V2 exemption
+    # Zhaoxin vendor_id is "  Shanghai  " in cpuinfo (parsed as "Shanghai" by awk)
+    if { [ "$cpu_vendor" = "CentaurHauls" ] || [ "$cpu_vendor" = "Shanghai" ]; } && [ "$cpu_family" = 7 ]; then
+        _infer_immune variant2
+        pr_debug "is_cpu_affected: Centaur/Zhaoxin family 7 immune to Spectre V2 (NO_SPECTRE_V2)"
+    fi
+
     if is_cpu_specex_free; then
         _set_immune variant1
         _set_immune variant2
@@ -896,6 +904,13 @@ is_cpu_specex_free() {
         elif [ "$cpu_family" = 5 ]; then
             return 0
         fi
+    fi
+    # Centaur family 5 and NSC family 5 are also non-speculative
+    if [ "$cpu_vendor" = "CentaurHauls" ] && [ "$cpu_family" = 5 ]; then
+        return 0
+    fi
+    if [ "$cpu_vendor" = "Geode by NSC" ] && [ "$cpu_family" = 5 ]; then
+        return 0
     fi
     [ "$cpu_family" = 4 ] && return 0
     return 1
@@ -4567,16 +4582,14 @@ check_mds_linux() {
 # >>>>>> vulns/CVE-2017-5715.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# SPECTRE 2 SECTION
+###############################
+# CVE-2017-5715, Spectre V2, Branch Target Injection
 
-# CVE-2017-5715 Spectre Variant 2 (branch target injection) - entry point
 # Sets: vulnstatus
 check_CVE_2017_5715() {
     check_cve 'CVE-2017-5715'
 }
 
-# CVE-2017-5715 Spectre Variant 2 (branch target injection) - Linux mitigation check
 # Sets: g_ibrs_can_tell, g_ibrs_supported, g_ibrs_enabled, g_ibrs_fw_enabled,
 #   g_ibpb_can_tell, g_ibpb_supported, g_ibpb_enabled, g_specex_knob_dir
 check_CVE_2017_5715_linux() {
@@ -4776,6 +4789,43 @@ check_CVE_2017_5715_linux() {
         # rocky9 (RHEL 9, kernel 5.14): matches mainline. Semicolons, BHI, all fields.
         # rocky10 (RHEL 10, kernel 6.12): matches mainline.
         #
+        #
+        # --- Kconfig symbols ---
+        # 76b043848fd2 (v4.15-rc8): CONFIG_RETPOLINE
+        # f43b9876e857 (v5.19-rc7): CONFIG_CPU_IBRS_ENTRY (kernel IBRS on entry)
+        # aefb2f2e619b (v6.9-rc1): renamed CONFIG_RETPOLINE => CONFIG_MITIGATION_RETPOLINE
+        # 1da8d2172ce5 (v6.9-rc1): renamed CONFIG_CPU_IBRS_ENTRY => CONFIG_MITIGATION_IBRS_ENTRY
+        # ec9404e40e8f (v6.9-rc4): CONFIG_SPECTRE_BHI_ON / CONFIG_SPECTRE_BHI_OFF
+        # 4f511739c54b (v6.9-rc4): replaced by CONFIG_MITIGATION_SPECTRE_BHI
+        # 72c70f480a70 (v6.12-rc1): CONFIG_MITIGATION_SPECTRE_V2 (top-level on/off)
+        # 8754e67ad4ac (v6.15-rc7): CONFIG_MITIGATION_ITS (indirect target selection)
+        # stable 5.4.y-6.6.y: CONFIG_RETPOLINE (pre-rename)
+        # stable 6.12.y: CONFIG_MITIGATION_RETPOLINE, CONFIG_MITIGATION_SPECTRE_V2
+        #
+        # --- kernel functions (for $opt_map / System.map) ---
+        # da285121560e (v4.15-rc8): spectre_v2_select_mitigation(),
+        #   spectre_v2_parse_cmdline(), nospectre_v2_parse_cmdline()
+        # 20ffa1caecca (v4.16-rc1): spectre_v2_module_string(), retpoline_module_ok()
+        # a8f76ae41cd6 (v4.20-rc5): spectre_v2_user_select_mitigation(),
+        #   spectre_v2_user_parse_cmdline()
+        # 7c693f54c873 (v5.19-rc7): spectre_v2_in_ibrs_mode(), spectre_v2_in_eibrs_mode()
+        # 44a3918c8245 (v5.17-rc8): spectre_v2_show_state()
+        # 480e803dacf8 (v6.16-rc1): split into spectre_v2_select_mitigation() +
+        #   spectre_v2_apply_mitigation() + spectre_v2_update_mitigation() +
+        #   spectre_v2_user_apply_mitigation() + spectre_v2_user_update_mitigation()
+        #
+        # --- CPU affection logic (for is_cpu_affected) ---
+        # X86_BUG_SPECTRE_V2 is set for ALL x86 CPUs except:
+        #   - CPUs matching NO_SPECULATION: family 4 (all vendors), Centaur/Intel/NSC/Vortex
+        #     family 5, Intel Atom Bonnell/Saltwell
+        #   - CPUs matching NO_SPECTRE_V2: Centaur family 7, Zhaoxin family 7
+        # 99c6fa2511d8 (v4.15-rc8): unconditional for all x86 CPUs
+        # 1e41a766c98b (v5.6-rc1): added NO_SPECTRE_V2 exemption for Centaur/Zhaoxin
+        # 98c7a713db91 (v6.15-rc1): added X86_BUG_SPECTRE_V2_USER as separate bit
+        # No MSR/CPUID immunity bits — purely whitelist-based.
+        # vendor scope: all x86 vendors affected (Intel, AMD, Hygon, etc.)
+        #   except Centaur family 7 and Zhaoxin family 7.
+        #
         # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
     fi
     if [ "$opt_sysfs_only" != 1 ]; then
@@ -4900,6 +4950,19 @@ check_CVE_2017_5715_linux() {
             if grep -q spec_ctrl "$opt_map"; then
                 g_ibrs_supported="found spec_ctrl in symbols file"
                 pr_debug "ibrs: found '*spec_ctrl*' symbol in $opt_map"
+            elif grep -q -e spectre_v2_select_mitigation -e spectre_v2_apply_mitigation "$opt_map"; then
+                # spectre_v2_select_mitigation exists since v4.15; split into
+                # spectre_v2_select_mitigation + spectre_v2_apply_mitigation in v6.16
+                g_ibrs_supported="found spectre_v2 mitigation function in symbols file"
+                pr_debug "ibrs: found spectre_v2_*_mitigation symbol in $opt_map"
+            fi
+        fi
+        # CONFIG_CPU_IBRS_ENTRY (v5.19) / CONFIG_MITIGATION_IBRS_ENTRY (v6.9): kernel IBRS on entry
+        if [ -z "$g_ibrs_supported" ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
+            g_ibrs_can_tell=1
+            if grep -q '^CONFIG_\(CPU_\|MITIGATION_\)IBRS_ENTRY=y' "$opt_config"; then
+                g_ibrs_supported="CONFIG_CPU_IBRS_ENTRY/CONFIG_MITIGATION_IBRS_ENTRY found in kernel config"
+                pr_debug "ibrs: found IBRS entry config option in $opt_config"
             fi
         fi
         # recent (4.15) vanilla kernels have IBPB but not IBRS, and without the debugfs tunables of Red Hat
@@ -5147,7 +5210,7 @@ check_CVE_2017_5715_linux() {
             rsb_filling=0
             if [ "$opt_live" = 1 ] && [ "$opt_no_sysfs" != 1 ]; then
                 # if we're live and we aren't denied looking into /sys, let's do it
-                if echo "$msg" | grep -qw RSB; then
+                if echo "$ret_sys_interface_check_fullmsg" | grep -qw RSB; then
                     rsb_filling=1
                     pstatus green YES
                 fi
@@ -5246,6 +5309,11 @@ check_CVE_2017_5715_linux() {
             disabled) pstatus yellow NO "disabled" ;;
             *) pstatus yellow UNKNOWN ;;
         esac
+
+        # --- SMT state (used in STIBP inference and verdict) ---
+        is_cpu_smt_enabled
+        smt_enabled=$?
+        # smt_enabled: 0=enabled, 1=disabled, 2=unknown
 
         # --- v2_stibp_status ---
         pr_info_nol "  * STIBP status: "
@@ -5389,11 +5457,6 @@ check_CVE_2017_5715_linux() {
             fi
         fi
 
-        # --- SMT state (used in verdict) ---
-        is_cpu_smt_enabled
-        smt_enabled=$?
-        # smt_enabled: 0=enabled, 1=disabled, 2=unknown
-
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
         msg="/sys vulnerability interface use forced, but it's not available!"
@@ -5408,6 +5471,8 @@ check_CVE_2017_5715_linux() {
             # --- own logic using Phase 2 variables ---
             # Helper: collect caveats for the verdict message
             _v2_caveats=''
+            # Append a caveat string to the _v2_caveats list
+            # Callers: check_CVE_2017_5715_linux (eIBRS, IBRS, retpoline verdict paths)
             _v2_add_caveat() { _v2_caveats="${_v2_caveats:+$_v2_caveats; }$1"; }
 
             # ARM branch predictor hardening (unchanged)
@@ -5675,6 +5740,9 @@ check_CVE_2017_5715_linux() {
                     pvulnstatus "$cve" OK "offline mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
                 elif [ "$cap_ibrs_all" = 1 ] || [ "$cap_autoibrs" = 1 ]; then
                     pvulnstatus "$cve" OK "offline mode: CPU supports Enhanced / Automatic IBRS"
+                # CONFIG_MITIGATION_SPECTRE_V2 (v6.12+): top-level on/off for all Spectre V2 mitigations
+                elif [ -n "$opt_config" ] && [ -r "$opt_config" ] && grep -q '^CONFIG_MITIGATION_SPECTRE_V2=y' "$opt_config"; then
+                    pvulnstatus "$cve" OK "offline mode: kernel has Spectre V2 mitigation framework enabled (CONFIG_MITIGATION_SPECTRE_V2)"
                 elif [ "$g_ibrs_can_tell" != 1 ]; then
                     pvulnstatus "$cve" UNK "offline mode: not enough information"
                     explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
@@ -5705,7 +5773,6 @@ check_CVE_2017_5715_linux() {
     fi
 }
 
-# CVE-2017-5715 Spectre Variant 2 (branch target injection) - BSD mitigation check
 # Sets: vulnstatus
 check_CVE_2017_5715_bsd() {
     local ibrs_disabled ibrs_active retpoline nb_thunks
@@ -5767,16 +5834,14 @@ check_CVE_2017_5715_bsd() {
 # >>>>>> vulns/CVE-2017-5753.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# SPECTRE 1 SECTION
+###############################
+# CVE-2017-5753, Spectre V1, Bounds Check Bypass
 
-# CVE-2017-5753 Spectre Variant 1 (bounds check bypass) - entry point
 # Sets: (none directly, delegates to check_cve)
 check_CVE_2017_5753() {
     check_cve 'CVE-2017-5753'
 }
 
-# CVE-2017-5753 Spectre Variant 1 (bounds check bypass) - Linux mitigation check
 # Sets: g_redhat_canonical_spectre (via check_redhat_canonical_spectre)
 check_CVE_2017_5753_linux() {
     local status sys_interface_available msg v1_kernel_mitigated v1_kernel_mitigated_err v1_mask_nospec ret explain_text
@@ -6047,7 +6112,6 @@ check_CVE_2017_5753_linux() {
     fi
 }
 
-# CVE-2017-5753 Spectre Variant 1 (bounds check bypass) - BSD mitigation check
 check_CVE_2017_5753_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
@@ -6059,8 +6123,8 @@ check_CVE_2017_5753_bsd() {
 # >>>>>> vulns/CVE-2017-5754.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-##################
-# MELTDOWN SECTION
+###############################
+# CVE-2017-5754, Meltdown, Rogue Data Cache Load
 
 # no security impact but give a hint to the user in verbose mode
 # about PCID/INVPCID cpuid features that must be present to avoid
@@ -6100,12 +6164,10 @@ pti_performance_check() {
     fi
 }
 
-# CVE-2017-5754 Meltdown (rogue data cache load) - entry point
 check_CVE_2017_5754() {
     check_cve 'CVE-2017-5754'
 }
 
-# CVE-2017-5754 Meltdown (rogue data cache load) - Linux mitigation check
 check_CVE_2017_5754_linux() {
     local status sys_interface_available msg kpti_support kpti_can_tell kpti_enabled dmesg_grep pti_xen_pv_domU xen_pv_domo xen_pv_domu explain_text
     status=UNK
@@ -6308,7 +6370,6 @@ check_CVE_2017_5754_linux() {
     fi
 }
 
-# CVE-2017-5754 Meltdown (rogue data cache load) - BSD mitigation check
 check_CVE_2017_5754_bsd() {
     local kpti_enabled
     pr_info_nol "* Kernel supports Page Table Isolation (PTI): "
@@ -6343,10 +6404,9 @@ check_CVE_2017_5754_bsd() {
 # >>>>>> vulns/CVE-2018-12126.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# MSBDS SECTION
+###############################
+# CVE-2018-12126, MSBDS, Fallout, Microarchitectural Store Buffer Data Sampling
 
-# CVE-2018-12126 MSBDS (microarchitectural store buffer data sampling) - entry point
 check_CVE_2018_12126() {
     check_cve 'CVE-2018-12126' check_mds
 }
@@ -6354,10 +6414,9 @@ check_CVE_2018_12126() {
 # >>>>>> vulns/CVE-2018-12127.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# MLPDS SECTION
+###############################
+# CVE-2018-12127, MLPDS, RIDL, Microarchitectural Load Port Data Sampling
 
-# CVE-2018-12127 MLPDS (microarchitectural load port data sampling) - entry point
 check_CVE_2018_12127() {
     check_cve 'CVE-2018-12127' check_mds
 }
@@ -6365,10 +6424,9 @@ check_CVE_2018_12127() {
 # >>>>>> vulns/CVE-2018-12130.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# MFBDS SECTION
+###############################
+# CVE-2018-12130, MFBDS, ZombieLoad, Microarchitectural Fill Buffer Data Sampling
 
-# CVE-2018-12130 MFBDS (microarchitectural fill buffer data sampling) - entry point
 check_CVE_2018_12130() {
     check_cve 'CVE-2018-12130' check_mds
 }
@@ -6376,15 +6434,13 @@ check_CVE_2018_12130() {
 # >>>>>> vulns/CVE-2018-12207.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-#######################
-# iTLB Multihit section
+###############################
+# CVE-2018-12207, iTLB Multihit, No eXcuses, Machine Check Exception on Page Size Changes
 
-# CVE-2018-12207 iTLB multihit (machine check exception on page size changes) - entry point
 check_CVE_2018_12207() {
     check_cve 'CVE-2018-12207'
 }
 
-# CVE-2018-12207 iTLB multihit (machine check exception on page size changes) - Linux mitigation check
 check_CVE_2018_12207_linux() {
     local status sys_interface_available msg kernel_itlbmh kernel_itlbmh_err
     status=UNK
@@ -6462,7 +6518,6 @@ check_CVE_2018_12207_linux() {
     fi
 }
 
-# CVE-2018-12207 iTLB multihit (machine check exception on page size changes) - BSD mitigation check
 check_CVE_2018_12207_bsd() {
     local kernel_2m_x_ept
     pr_info_nol "* Kernel supports disabling superpages for executable mappings under EPT: "
@@ -6496,10 +6551,9 @@ check_CVE_2018_12207_bsd() {
 # >>>>>> vulns/CVE-2018-3615.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###########################
-# L1TF / FORESHADOW SECTION
+###############################
+# CVE-2018-3615, Foreshadow (SGX), L1 Terminal Fault
 
-# CVE-2018-3615 Foreshadow (L1 terminal fault SGX) - entry point
 check_CVE_2018_3615() {
     local cve
     cve='CVE-2018-3615'
@@ -6535,12 +6589,13 @@ check_CVE_2018_3615() {
 # >>>>>> vulns/CVE-2018-3620.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-# CVE-2018-3620 Foreshadow-NG OS (L1 terminal fault OS) - entry point
+###############################
+# CVE-2018-3620, Foreshadow-NG (OS/SMM), L1 Terminal Fault
+
 check_CVE_2018_3620() {
     check_cve 'CVE-2018-3620'
 }
 
-# CVE-2018-3620 Foreshadow-NG OS (L1 terminal fault OS) - Linux mitigation check
 check_CVE_2018_3620_linux() {
     local status sys_interface_available msg pteinv_supported pteinv_active
     status=UNK
@@ -6619,7 +6674,6 @@ check_CVE_2018_3620_linux() {
     fi
 }
 
-# CVE-2018-3620 Foreshadow-NG OS (L1 terminal fault OS) - BSD mitigation check
 check_CVE_2018_3620_bsd() {
     local bsd_zero_reserved
     pr_info_nol "* Kernel reserved the memory page at physical address 0x0: "
@@ -6655,15 +6709,13 @@ check_CVE_2018_3620_bsd() {
 # >>>>>> vulns/CVE-2018-3639.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# VARIANT 4 SECTION
+###############################
+# CVE-2018-3639, Variant 4, SSB, Speculative Store Bypass
 
-# CVE-2018-3639 Variant 4 (speculative store bypass) - entry point
 check_CVE_2018_3639() {
     check_cve 'CVE-2018-3639'
 }
 
-# CVE-2018-3639 Variant 4 (speculative store bypass) - Linux mitigation check
 check_CVE_2018_3639_linux() {
     local status sys_interface_available msg kernel_ssb kernel_ssbd_enabled mitigated_processes
     status=UNK
@@ -6791,7 +6843,6 @@ check_CVE_2018_3639_linux() {
     fi
 }
 
-# CVE-2018-3639 Variant 4 (speculative store bypass) - BSD mitigation check
 check_CVE_2018_3639_bsd() {
     local kernel_ssb ssb_enabled ssb_active
     pr_info_nol "* Kernel supports speculation store bypass: "
@@ -6846,10 +6897,9 @@ check_CVE_2018_3639_bsd() {
 # >>>>>> vulns/CVE-2018-3640.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-####################
-# VARIANT 3A SECTION
+###############################
+# CVE-2018-3640, Variant 3a, Rogue System Register Read
 
-# CVE-2018-3640 Variant 3a (rogue system register read) - entry point
 check_CVE_2018_3640() {
     local status sys_interface_available msg cve
     cve='CVE-2018-3640'
@@ -6882,12 +6932,13 @@ check_CVE_2018_3640() {
 # >>>>>> vulns/CVE-2018-3646.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-# CVE-2018-3646 Foreshadow-NG VMM (L1 terminal fault VMM) - entry point
+###############################
+# CVE-2018-3646, Foreshadow-NG (VMM), L1 Terminal Fault
+
 check_CVE_2018_3646() {
     check_cve 'CVE-2018-3646'
 }
 
-# CVE-2018-3646 Foreshadow-NG VMM (L1 terminal fault VMM) - Linux mitigation check
 check_CVE_2018_3646_linux() {
     local status sys_interface_available msg l1d_mode ept_disabled l1d_kernel l1d_kernel_err l1d_xen_hardware l1d_xen_hypervisor l1d_xen_pv_domU smt_enabled
     status=UNK
@@ -7117,7 +7168,6 @@ check_CVE_2018_3646_linux() {
     fi
 }
 
-# CVE-2018-3646 Foreshadow-NG VMM (L1 terminal fault VMM) - BSD mitigation check
 check_CVE_2018_3646_bsd() {
     local kernel_l1d_supported kernel_l1d_enabled
     pr_info_nol "* Kernel supports L1D flushing: "
@@ -7154,10 +7204,9 @@ check_CVE_2018_3646_bsd() {
 # >>>>>> vulns/CVE-2019-11091.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# MDSUM SECTION
+###############################
+# CVE-2019-11091, MDSUM, RIDL, Microarchitectural Data Sampling Uncacheable Memory
 
-# CVE-2019-11091 MDSUM (microarchitectural data sampling uncacheable memory) - entry point
 check_CVE_2019_11091() {
     check_cve 'CVE-2019-11091' check_mds
 }
@@ -7165,15 +7214,13 @@ check_CVE_2019_11091() {
 # >>>>>> vulns/CVE-2019-11135.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# TAA SECTION
+###############################
+# CVE-2019-11135, TAA, ZombieLoad V2, TSX Asynchronous Abort
 
-# CVE-2019-11135 TAA (TSX asynchronous abort) - entry point
 check_CVE_2019_11135() {
     check_cve 'CVE-2019-11135'
 }
 
-# CVE-2019-11135 TAA (TSX asynchronous abort) - Linux mitigation check
 check_CVE_2019_11135_linux() {
     local status sys_interface_available msg kernel_taa kernel_taa_err
     status=UNK
@@ -7251,7 +7298,6 @@ check_CVE_2019_11135_linux() {
     fi
 }
 
-# CVE-2019-11135 TAA (TSX asynchronous abort) - BSD mitigation check
 check_CVE_2019_11135_bsd() {
     local taa_enable taa_state mds_disable kernel_taa kernel_mds
     pr_info_nol "* Kernel supports TAA mitigation (machdep.mitigations.taa.enable): "
@@ -7311,15 +7357,13 @@ check_CVE_2019_11135_bsd() {
 # >>>>>> vulns/CVE-2020-0543.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-###################
-# SRBDS SECTION
+###############################
+# CVE-2020-0543, SRBDS, CROSSTalk, Special Register Buffer Data Sampling
 
-# CVE-2020-0543 SRBDS (special register buffer data sampling) - entry point
 check_CVE_2020_0543() {
     check_cve 'CVE-2020-0543'
 }
 
-# CVE-2020-0543 SRBDS (special register buffer data sampling) - Linux mitigation check
 check_CVE_2020_0543_linux() {
     local status sys_interface_available msg kernel_srbds kernel_srbds_err
     status=UNK
@@ -7416,7 +7460,6 @@ check_CVE_2020_0543_linux() {
     fi
 }
 
-# CVE-2020-0543 SRBDS (special register buffer data sampling) - BSD mitigation check
 # FreeBSD uses the name "rngds" (Random Number Generator Data Sampling) for SRBDS
 check_CVE_2020_0543_bsd() {
     local rngds_enable rngds_state kernel_rngds
@@ -7462,15 +7505,13 @@ check_CVE_2020_0543_bsd() {
 # >>>>>> vulns/CVE-2022-40982.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-#########################
-# Downfall section
+###############################
+# CVE-2022-40982, Downfall, GDS, Gather Data Sampling
 
-# CVE-2022-40982 Downfall (gather data sampling) - entry point
 check_CVE_2022_40982() {
     check_cve 'CVE-2022-40982'
 }
 
-# CVE-2022-40982 Downfall (gather data sampling) - Linux mitigation check
 check_CVE_2022_40982_linux() {
     local status sys_interface_available msg kernel_gds kernel_gds_err kernel_avx_disabled dmesgret ret
     status=UNK
@@ -7565,13 +7606,6 @@ check_CVE_2022_40982_linux() {
         # all messages start with either "Not affected", "Vulnerable", "Mitigation",
         # or "Unknown"
         status=$ret_sys_interface_check_status
-        # Override: when the kernel says "Unknown: Dependent on hypervisor status", it
-        # gave up because it's running as a VM guest and can't read MCU_OPT_CTRL.
-        # We can often do better: the hypervisor may have exposed GDS_NO or GDS_CTRL
-        # to us via ARCH_CAPABILITIES, so let our own Phase 2 checks take over.
-        if echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Dependent on hypervisor'; then
-            status=UNK
-        fi
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
@@ -7673,13 +7707,6 @@ check_CVE_2022_40982_linux() {
                 pvulnstatus "$cve" VULN "Your microcode is up to date but mitigation is disabled"
                 explain "The GDS mitigation has been explicitly disabled (gather_data_sampling=off or mitigations=off).\n " \
                     "Remove the kernel parameter to re-enable it."
-            elif [ "$sys_interface_available" = 1 ] &&
-                echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Dependent on hypervisor'; then
-                # We're in a VM guest, the kernel gave up, and we couldn't read the
-                # GDS MSR bits either (cap_gds_ctrl != 1). We genuinely can't tell.
-                pvulnstatus "$cve" UNK "Running in a VM, mitigation depends on the hypervisor"
-                explain "This system is running as a virtual machine guest. GDS mitigation must be handled by\n " \
-                    "the host hypervisor. Contact your VM/cloud provider to verify that GDS is mitigated on the host."
             elif [ -z "$kernel_gds" ]; then
                 pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, and your kernel doesn't support mitigation"
                 explain "Update both your CPU microcode (via BIOS/firmware update from your OEM) and your kernel\n " \
@@ -7699,7 +7726,6 @@ check_CVE_2022_40982_linux() {
     fi
 }
 
-# CVE-2022-40982 Downfall (gather data sampling) - BSD mitigation check
 check_CVE_2022_40982_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
@@ -7711,15 +7737,13 @@ check_CVE_2022_40982_bsd() {
 # >>>>>> vulns/CVE-2023-20569.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-#######################
-# Inception section
+###############################
+# CVE-2023-20569, Inception, SRSO, Return Address Security
 
-# CVE-2023-20569 Inception (SRSO, speculative return stack overflow) - entry point
 check_CVE_2023_20569() {
     check_cve 'CVE-2023-20569'
 }
 
-# CVE-2023-20569 Inception (SRSO, speculative return stack overflow) - Linux mitigation check
 check_CVE_2023_20569_linux() {
     local status sys_interface_available msg kernel_sro kernel_sro_err kernel_srso kernel_ibpb_entry smt_enabled
     status=UNK
@@ -7918,7 +7942,6 @@ check_CVE_2023_20569_linux() {
     fi
 }
 
-# CVE-2023-20569 Inception (SRSO, speculative return stack overflow) - BSD mitigation check
 check_CVE_2023_20569_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
@@ -7930,15 +7953,13 @@ check_CVE_2023_20569_bsd() {
 # >>>>>> vulns/CVE-2023-20593.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-####################
-# Zenbleed section
+###############################
+# CVE-2023-20593, Zenbleed, Cross-Process Information Leak
 
-# CVE-2023-20593 Zenbleed (cross-process information leak via AVX2) - entry point
 check_CVE_2023_20593() {
     check_cve 'CVE-2023-20593'
 }
 
-# CVE-2023-20593 Zenbleed (cross-process information leak via AVX2) - Linux mitigation check
 check_CVE_2023_20593_linux() {
     local status sys_interface_available msg kernel_zenbleed kernel_zenbleed_err fp_backup_fix ucode_zenbleed zenbleed_print_vuln ret
     status=UNK
@@ -8050,7 +8071,6 @@ check_CVE_2023_20593_linux() {
     fi
 }
 
-# CVE-2023-20593 Zenbleed (cross-process information leak via AVX2) - BSD mitigation check
 check_CVE_2023_20593_bsd() {
     local zenbleed_enable zenbleed_state kernel_zenbleed
     pr_info_nol "* Kernel supports Zenbleed mitigation (machdep.mitigations.zenbleed.enable): "
@@ -8107,15 +8127,13 @@ check_CVE_2023_20593_bsd() {
 # >>>>>> vulns/CVE-2023-23583.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-#######################
-# Reptar section
+###############################
+# CVE-2023-23583, Reptar, Redundant Prefix Issue
 
-# CVE-2023-23583 Reptar (redundant prefix issue) - entry point
 check_CVE_2023_23583() {
     check_cve 'CVE-2023-23583'
 }
 
-# CVE-2023-23583 Reptar (redundant prefix issue) - Linux mitigation check
 check_CVE_2023_23583_linux() {
     local status sys_interface_available msg
     status=UNK
@@ -8139,7 +8157,6 @@ check_CVE_2023_23583_linux() {
     fi
 }
 
-# CVE-2023-23583 Reptar (redundant prefix issue) - BSD mitigation check
 check_CVE_2023_23583_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
@@ -8151,15 +8168,13 @@ check_CVE_2023_23583_bsd() {
 # >>>>>> vulns/CVE-2024-36350.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-####################
-# TSA-SQ section
+###############################
+# CVE-2024-36350, TSA-SQ, Transient Scheduler Attack Store Queue
 
-# CVE-2024-36350 TSA-SQ (transient scheduler attack - store queue) - entry point
 check_CVE_2024_36350() {
     check_cve 'CVE-2024-36350'
 }
 
-# CVE-2024-36350 TSA-SQ (transient scheduler attack - store queue) - Linux mitigation check
 check_CVE_2024_36350_linux() {
     local status sys_interface_available msg kernel_tsa kernel_tsa_err smt_enabled
     status=UNK
@@ -8319,7 +8334,6 @@ check_CVE_2024_36350_linux() {
     fi
 }
 
-# CVE-2024-36350 TSA-SQ (transient scheduler attack - store queue) - BSD mitigation check
 check_CVE_2024_36350_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
@@ -8331,15 +8345,13 @@ check_CVE_2024_36350_bsd() {
 # >>>>>> vulns/CVE-2024-36357.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-####################
-# TSA-L1 section
+###############################
+# CVE-2024-36357, TSA-L1, Transient Scheduler Attack L1
 
-# CVE-2024-36357 TSA-L1 (transient scheduler attack - L1 cache) - entry point
 check_CVE_2024_36357() {
     check_cve 'CVE-2024-36357'
 }
 
-# CVE-2024-36357 TSA-L1 (transient scheduler attack - L1 cache) - Linux mitigation check
 check_CVE_2024_36357_linux() {
     local status sys_interface_available msg kernel_tsa kernel_tsa_err
     status=UNK
@@ -8492,7 +8504,6 @@ check_CVE_2024_36357_linux() {
     fi
 }
 
-# CVE-2024-36357 TSA-L1 (transient scheduler attack - L1 cache) - BSD mitigation check
 check_CVE_2024_36357_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
