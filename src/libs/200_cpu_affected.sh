@@ -126,6 +126,14 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
     fi
 
+    # NO_SPECTRE_V2: Centaur family 7 and Zhaoxin family 7 are immune to Spectre V2
+    # kernel commit 1e41a766c98b (v5.6-rc1): added NO_SPECTRE_V2 exemption
+    # Zhaoxin vendor_id is "  Shanghai  " in cpuinfo (parsed as "Shanghai" by awk)
+    if { [ "$cpu_vendor" = "CentaurHauls" ] || [ "$cpu_vendor" = "Shanghai" ]; } && [ "$cpu_family" = 7 ]; then
+        _infer_immune variant2
+        pr_debug "is_cpu_affected: Centaur/Zhaoxin family 7 immune to Spectre V2 (NO_SPECTRE_V2)"
+    fi
+
     if is_cpu_specex_free; then
         _set_immune variant1
         _set_immune variant2
@@ -222,9 +230,12 @@ is_cpu_affected() {
             pr_debug "is_cpu_affected: downfall: not affected (GDS_NO)"
             _set_immune downfall
         elif [ "$cpu_family" = 6 ]; then
-            # list from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=64094e7e3118aff4b0be8ff713c242303e139834
+            # model blacklist from the kernel (arch/x86/kernel/cpu/common.c cpu_vuln_blacklist):
+            # 8974eb588283 (initial list) + c9f4c45c8ec3 (added Skylake/Skylake_L client)
             set -u
-            if [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+            if [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
@@ -239,10 +250,12 @@ is_cpu_affected() {
                 _set_vuln downfall
             elif [ "$cap_avx2" = 0 ] && [ "$cap_avx512" = 0 ]; then
                 pr_debug "is_cpu_affected: downfall: no avx; immune"
+                _infer_immune downfall
             else
-                # old Intel CPU (not in their DB), not listed as being affected by the Linux kernel,
-                # but with AVX2 or AVX512: unclear for now
-                pr_debug "is_cpu_affected: downfall: unclear, defaulting to non-affected for now"
+                # Intel family 6 CPU with AVX2 or AVX512, not in the known-affected list
+                # and GDS_NO not set: assume affected (whitelist principle)
+                pr_debug "is_cpu_affected: downfall: unknown AVX-capable CPU, defaulting to affected"
+                _infer_vuln downfall
             fi
             set +u
         fi

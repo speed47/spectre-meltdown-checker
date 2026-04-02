@@ -27,6 +27,13 @@ is_cpu_specex_free() {
             return 0
         fi
     fi
+    # Centaur family 5 and NSC family 5 are also non-speculative
+    if [ "$cpu_vendor" = "CentaurHauls" ] && [ "$cpu_family" = 5 ]; then
+        return 0
+    fi
+    if [ "$cpu_vendor" = "Geode by NSC" ] && [ "$cpu_family" = 5 ]; then
+        return 0
+    fi
     [ "$cpu_family" = 4 ] && return 0
     return 1
 }
