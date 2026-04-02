@@ -91,11 +91,13 @@ jobs:
     - name: create a pull request to ${{ github.ref_name }}-build
       run: |
         tmpdir=$(mktemp -d)
-        mv ./dist/* $tmpdir/
+        mv ./dist/* .github $tmpdir/
         rm -rf ./dist
         git fetch origin ${{ github.ref_name }}-build
         git checkout -f ${{ github.ref_name }}-build
         mv $tmpdir/* .
+        mkdir -p .github
+        rsync -vaP --delete $tmpdir/.github/ .github/
         git add --all
         echo =#=#= DIFF CACHED
         git diff --cached
