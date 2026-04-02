@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.21.0402751'
+VERSION='26.21.0402757'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -7565,6 +7565,13 @@ check_CVE_2022_40982_linux() {
         # all messages start with either "Not affected", "Vulnerable", "Mitigation",
         # or "Unknown"
         status=$ret_sys_interface_check_status
+        # Override: when the kernel says "Unknown: Dependent on hypervisor status", it
+        # gave up because it's running as a VM guest and can't read MCU_OPT_CTRL.
+        # We can often do better: the hypervisor may have exposed GDS_NO or GDS_CTRL
+        # to us via ARCH_CAPABILITIES, so let our own Phase 2 checks take over.
+        if echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Dependent on hypervisor'; then
+            status=UNK
+        fi
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
@@ -7666,6 +7673,13 @@ check_CVE_2022_40982_linux() {
                 pvulnstatus "$cve" VULN "Your microcode is up to date but mitigation is disabled"
                 explain "The GDS mitigation has been explicitly disabled (gather_data_sampling=off or mitigations=off).\n " \
                     "Remove the kernel parameter to re-enable it."
+            elif [ "$sys_interface_available" = 1 ] &&
+                echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Dependent on hypervisor'; then
+                # We're in a VM guest, the kernel gave up, and we couldn't read the
+                # GDS MSR bits either (cap_gds_ctrl != 1). We genuinely can't tell.
+                pvulnstatus "$cve" UNK "Running in a VM, mitigation depends on the hypervisor"
+                explain "This system is running as a virtual machine guest. GDS mitigation must be handled by\n " \
+                    "the host hypervisor. Contact your VM/cloud provider to verify that GDS is mitigated on the host."
             elif [ -z "$kernel_gds" ]; then
                 pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, and your kernel doesn't support mitigation"
                 explain "Update both your CPU microcode (via BIOS/firmware update from your OEM) and your kernel\n " \
