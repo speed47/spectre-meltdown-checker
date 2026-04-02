@@ -222,24 +222,29 @@ Before writing code, verify the CVE meets the inclusion criteria (see "CVE Inclu
 
 ### Step 1: Create the Vulnerability File
 
-Create `src/vulns/CVE-YYYY-NNNNN.sh`. The file must contain exactly three functions:
+Create `src/vulns/CVE-YYYY-NNNNN.sh`. The file header must follow this exact format:
+
+- **Line 1**: vim modeline (`# vim: set ts=4 sw=4 sts=4 et:`)
+- **Line 2**: 31 `#` characters (`###############################`)
+- **Line 3**: `# CVE-YYYY-NNNNN, Alias1, Alias2, Complete Name` — the CVE number followed by
+  all known aliases and the complete name as listed in the `dist/README.md` top table.
+- **Line 4**: empty
+
+The file must contain exactly three functions:
 
 ```sh
 # vim: set ts=4 sw=4 sts=4 et:
-####################
-# SHORT_NAME section
+###############################
+# CVE-YYYY-NNNNN, Short Name, Complete Name
 
-# CVE-YYYY-NNNNN SHORT_NAME (one-line description) - entry point
 check_CVE_YYYY_NNNNN() {
 	check_cve 'CVE-YYYY-NNNNN'
 }
 
-# CVE-YYYY-NNNNN SHORT_NAME (one-line description) - Linux mitigation check
 check_CVE_YYYY_NNNNN_linux() {
 	# ... (see Step 3)
 }
 
-# CVE-YYYY-NNNNN SHORT_NAME (one-line description) - BSD mitigation check
 check_CVE_YYYY_NNNNN_bsd() {
 	if ! is_cpu_affected "$cve"; then
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
@@ -409,24 +414,67 @@ reports vulnerable. Additionally, in Phase 2, add a kernel-image grep to inform 
 whether their kernel has the corrected reporting (the post-fix kernel will contain the new
 vulnerability string in its image).
 
-**Sysfs message inventory:** Before writing Phase 1 (and any sysfs overrides), audit **every
-version** of the sysfs message that the kernel has ever produced for this vulnerability. The
-script may run on any kernel - from early release candidates that first introduced the sysfs
-file, through every stable release, up to the latest mainline. The inventory must catalogue
-every string variant, including:
+**Kernel source inventory:** Before writing any code, audit the kernel source history for
+four categories of information that the script consumes in different modes:
 
-- Messages that only existed briefly between two commits in the same release cycle.
-- Format changes (e.g. field reordering, renamed labels).
+1. **Sysfs messages** — every version of the string the kernel has ever produced for
+   `/sys/devices/system/cpu/vulnerabilities/<name>`. Used in live mode to parse the
+   kernel's own assessment, and in offline mode to grep for known strings in `$g_kernel`.
+2. **Kconfig option names** — every `CONFIG_*` symbol that enables or controls the
+   mitigation. Used in offline mode to check `$opt_config`. Kconfig names change over
+   time (e.g. `CONFIG_GDS_FORCE_MITIGATION` → `CONFIG_MITIGATION_GDS_FORCE` →
+   `CONFIG_MITIGATION_GDS`), and vendor kernels may use their own names, so all variants
+   must be catalogued.
+3. **Kernel function names** — functions introduced specifically for the mitigation (e.g.
+   `gds_select_mitigation`, `gds_apply_mitigation`, `l1tf_select_mitigation`). Used in
+   offline mode to check `$opt_map` (System.map): the presence of a mitigation function
+   proves the kernel was compiled with the mitigation code, even if the config file is
+   unavailable.
+4. **CPU affection logic** — the complete algorithm the kernel uses to decide whether a
+   CPU is affected by the vulnerability (i.e. whether it sets the `X86_BUG_*` flag). This
+   is what the script must replicate in `is_cpu_affected()`. The kernel typically uses a
+   combination of:
+   - **Model blacklists/whitelists**: explicit lists of CPU vendor/family/model/stepping
+     values (e.g. `cpu_vuln_blacklist[]` in `arch/x86/kernel/cpu/common.c`). These lists
+     can change between kernel versions — models may be added when new errata surface
+     (e.g. client Skylake was initially missing from GDS and added in a follow-up commit).
+   - **MSR/CPUID immunity bits**: hardware bits that the CPU vendor defines to declare
+     "this hardware is not affected" (e.g. `ARCH_CAP_GDS_NO`, `ARCH_CAP_RDCL_NO`). These
+     bits are already read in `check_cpu()` and stored as `cap_*_no` globals.
+   - **Feature dependencies**: some vulnerabilities only apply when a specific CPU feature
+     is present (e.g. GDS requires AVX because GATHER instructions need it; TAA requires
+     TSX). If the feature is absent or disabled, the CPU is immune.
+   - **Vendor scoping**: most vulnerabilities are vendor-specific (Intel-only, AMD-only),
+     but some span multiple vendors. Document which vendors are checked.
+
+   The inventory must trace how this logic evolved across kernel versions, because models
+   are sometimes added in follow-up commits (as with Skylake for GDS) and the script must
+   include the most complete and up-to-date list. Document every commit that changed the
+   model list or the affection conditions.
+
+The script may run on any kernel — from early release candidates that first introduced
+support, through every stable release, up to the latest mainline, as well as vendor kernels
+(RHEL, SUSE, Ubuntu, etc.). The inventory must catalogue every variant across all of these,
+including:
+
+- Messages/configs/functions that only existed briefly between two commits in the same
+  release cycle.
+- Format changes (e.g. field reordering, renamed labels, renamed Kconfig symbols).
 - New states added in later kernels (e.g. new flush modes, new mitigation strategies).
 - Reporting corrections where a later kernel changed its assessment of what counts as
   mitigated (e.g. a message that said `"Mitigation: ..."` in kernel A is reclassified as
   `"Vulnerable: ..."` in kernel B under the same conditions).
+- Functions that were added, renamed, or split across commits (e.g. a single
+  `gds_mitigation_update()` later split into `gds_select_mitigation()` +
+  `gds_apply_mitigation()`).
+- CPU model list changes (models added or removed from the vulnerability blacklist in
+  follow-up commits or stable backports).
 
 Document all discovered variants as comments in the CVE file, grouped by the kernel commit
 that introduced or changed them, so future readers can understand the evolution at a glance.
 See `src/vulns/CVE-2018-3646.sh` (Phase 1 comment block) for a reference example.
 
-This inventory matters because later kernels may have a different - and more accurate - view
+This inventory matters because later kernels may have a different — and more accurate — view
 of what is vulnerable versus mitigated for a given vulnerability, as understanding progresses
 over time. The script must be able to reach the same conclusions as the most recent kernel,
 even when running under an old kernel that misreports a vulnerability as mitigated. This is
@@ -437,17 +485,35 @@ corrected reporting.
 
 **How to build the inventory - git blame walkback method:**
 
-The goal is to find every commit that changed the sysfs output strings for a given
-vulnerability. The method uses `git blame` iteratively, walking backwards through history
-until the vulnerability's sysfs reporting no longer exists.
+The goal is to find every commit that changed the sysfs output strings, Kconfig symbols,
+mitigation function names, or CPU affection logic for a given vulnerability. The method uses
+`git blame` iteratively, walking backwards through history until the vulnerability's support
+no longer exists.
 
-1. **Locate the output function.** Most vulnerability sysfs files are generated from
-   `arch/x86/kernel/cpu/bugs.c`. Find the `*_show_state()` function for the vulnerability
-   (e.g. `l1tf_show_state()`, `mds_show_state()`) and the corresponding `case X86_BUG_*`
-   in `cpu_show_common()`. Both paths can produce messages: the show_state function handles
-   the mitigated cases, while `cpu_show_common()` handles `"Not affected"` (common to all
-   bugs) and `"Vulnerable"` (fallthrough). Some vulnerabilities also use string arrays
-   (e.g. `l1tf_vmx_states[]`, `spectre_v1_strings[]`) - include those in the audit.
+1. **Locate the relevant code.** Most vulnerability code lives in two files:
+   `arch/x86/kernel/cpu/bugs.c` (mitigation logic and sysfs reporting) and
+   `arch/x86/kernel/cpu/common.c` (CPU affection detection). Find:
+   - The `*_show_state()` function for the vulnerability (e.g. `l1tf_show_state()`,
+     `mds_show_state()`) and the corresponding `case X86_BUG_*` in `cpu_show_common()`.
+     Both paths can produce messages: the show_state function handles the mitigated cases,
+     while `cpu_show_common()` handles `"Not affected"` (common to all bugs) and
+     `"Vulnerable"` (fallthrough). Some vulnerabilities also use string arrays (e.g.
+     `l1tf_vmx_states[]`, `spectre_v1_strings[]`) — include those in the audit.
+   - The `*_select_mitigation()` and `*_apply_mitigation()` functions (or a single
+     `*_update_mitigation()` in older code). These are the function names that appear in
+     System.map and can be checked via `$opt_map`.
+   - The `Kconfig` entries: search `arch/x86/Kconfig` (and `arch/x86/Kconfig.cpu` or
+     similar) for `CONFIG_*` symbols related to the mitigation. Note every name variant
+     across kernel versions.
+   - The **CPU affection detection** in `arch/x86/kernel/cpu/common.c`: find where
+     `X86_BUG_<name>` is set. This typically involves a lookup in `cpu_vuln_blacklist[]`
+     (or `cpu_vuln_whitelist[]`) combined with checks on `IA32_ARCH_CAPABILITIES` MSR
+     bits and CPU feature flags. Document:
+     - The complete model list (vendor, family, model, stepping ranges).
+     - Which `ARCH_CAP_*` bits grant immunity (e.g. `ARCH_CAP_GDS_NO`).
+     - Which CPU features are prerequisites (e.g. AVX for GDS, TSX for TAA).
+     - Any other conditions (hypervisor detection, microcode version checks, etc.).
+     - How this logic evolved: models added/removed in follow-up commits.
 
 2. **Blame the current code.** Run `git blame` on the relevant line range:
 
@@ -535,12 +601,13 @@ until the vulnerability's sysfs reporting no longer exists.
 
 The inventory comment goes in Phase 1, right after `sys_interface_check` returns successfully.
 Group entries chronologically by commit, newest last. For each commit, show the hash, the
-kernel version it appeared in, and the exact message(s) it introduced or changed. Use `+` to
-indicate incremental additions to an enum or format. Example:
+kernel version it appeared in, and the exact message(s)/config(s)/function(s) it introduced
+or changed. Use `+` to indicate incremental additions to an enum or format. Example:
 
 ```sh
-    # Complete sysfs message inventory for <vuln>, traced via git blame:
+    # Kernel source inventory for <vuln>, traced via git blame:
     #
+    # --- sysfs messages ---
     # all versions:
     #   "Not affected"                (cpu_show_common, <commit>)
     #   "Vulnerable"                  (cpu_show_common fallthrough, <commit>)
@@ -554,10 +621,30 @@ indicate incremental additions to an enum or format. Example:
     #     <field>: + value4
     #
     # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
+    #
+    # --- Kconfig symbols ---
+    # <commit> (<version>): CONFIG_ORIGINAL_NAME (y/n)
+    # <commit> (<version>): renamed to CONFIG_NEW_NAME
+    # <commit> (<version>): replaced by CONFIG_ANOTHER_NAME (on/off, no force)
+    # vendor kernels: CONFIG_VENDOR_SPECIFIC_NAME (RHEL 8.x)
+    #
+    # --- kernel functions (for $opt_map / System.map) ---
+    # <commit> (<version>): <vuln>_mitigation_update()
+    # <commit> (<version>): split into <vuln>_select_mitigation() + <vuln>_apply_mitigation()
+    #
+    # --- CPU affection logic (for is_cpu_affected) ---
+    # <commit> (<version>, initial model list):
+    #   Intel: MODEL_A, MODEL_B, MODEL_C (all steppings)
+    #   Intel: MODEL_D (stepping 0x0 - 0x5 only)
+    # <commit> (<version>, added missing models):
+    #   Intel: + MODEL_E, MODEL_F
+    # immunity: ARCH_CAP_<NAME>_NO (bit NN of IA32_ARCH_CAPABILITIES)
+    # feature dependency: requires <FEATURE> (if absent, CPU is immune)
+    # vendor scope: Intel only (no AMD/Hygon/other entries)
 ```
 
-The final line (`all messages start with ...`) is a summary that helps verify the grep
-patterns used to derive `status` from the message are complete.
+The final line of the sysfs section (`all messages start with ...`) is a summary that helps
+verify the grep patterns used to derive `status` from the message are complete.
 
 ### Cross-Cutting Features
 
@@ -654,6 +741,7 @@ Every function must have a documentation header immediately above its definition
 - The `# Callers:` line is required for all `_`-prefixed functions. It documents which functions depend on this helper, making it safe to refactor.
 - Keep descriptions to one line when possible. If more context is needed, add continuation comment lines before the structured lines.
 - Parameter documentation uses `$1=name` format. Append `(optional, default X)` for optional parameters.
+- **Exception**: `check_CVE_*` functions (`check_CVE_YYYY_NNNNN`, `_linux`, `_bsd`) are exempt from the documentation header requirement. They are self-explanatory, take no arguments, and live in dedicated `src/vulns/CVE-YYYY-NNNNN.sh` files whose line-3 header already describes the vulnerability.
 
 **Full example:**
 

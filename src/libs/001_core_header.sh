@@ -46,6 +46,6 @@ exit_cleanup() {
 
 # if we were git clone'd, adjust VERSION
 if [ -d "$(dirname "$0")/.git" ] && command -v git >/dev/null 2>&1; then
-    g_describe=$(git -C "$(dirname "$0")" describe --tags --dirty 2>/dev/null)
-    [ -n "$g_describe" ] && VERSION=$(echo "$g_describe" | sed -e s/^v//)
+    g_commit=$(git -C "$(dirname "$0")" describe --always --dirty --abbrev=7 --match=- 2>/dev/null)
+    [ -n "$g_commit" ] && VERSION="$VERSION-git$g_commit"
 fi
