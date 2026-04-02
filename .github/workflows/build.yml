@@ -1,12 +1,13 @@
-name: test-build
+name: build
 
 on:
   push:
     branches:
       - test
+      - source
 
 jobs:
-  test-build:
+  build:
 
     runs-on: ubuntu-latest
 
@@ -87,13 +88,13 @@ jobs:
           echo "Left temporary files!"
           exit 1
         fi
-    - name: push artifact to the test-build branch
+    - name: create a pull request to ${{ github.ref_name }}-build
       run: |
         tmpdir=$(mktemp -d)
         mv ./dist/* $tmpdir/
         rm -rf ./dist
-        git fetch origin test-build
-        git checkout -f test-build
+        git fetch origin ${{ github.ref_name }}-build
+        git checkout -f ${{ github.ref_name }}-build
         mv $tmpdir/* .
         git add *
         echo =#=#= DIFF CACHED
