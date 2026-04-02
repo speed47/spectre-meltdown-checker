@@ -102,18 +102,28 @@ pvulnstatus() {
     shift 2
     pr_info_nol "> \033[46m\033[30mSTATUS:\033[0m "
     : "${g_final_summary:=}"
+    : "${g_final_summary_count:=0}"
+    g_final_summary_count=$((g_final_summary_count + 1))
+    # wrap to a new line every 4 entries for readability
+    if [ "$g_final_summary_count" -gt 1 ] && [ $((g_final_summary_count % 4)) -eq 1 ]; then
+        g_final_summary="$g_final_summary\n          "
+    fi
+    # pad entry to fixed width so columns align despite varying CVE ID lengths
     case "$vulnstatus" in
         UNK)
             pstatus yellow 'UNKNOWN' "$@"
-            g_final_summary="$g_final_summary \033[43m\033[30m$g_pvulnstatus_last_cve:??\033[0m"
+            _summary_label=$(printf "%-17s" "$g_pvulnstatus_last_cve:??")
+            g_final_summary="$g_final_summary \033[43m\033[30m$_summary_label\033[0m"
             ;;
         VULN)
             pstatus red 'VULNERABLE' "$@"
-            g_final_summary="$g_final_summary \033[41m\033[30m$g_pvulnstatus_last_cve:KO\033[0m"
+            _summary_label=$(printf "%-17s" "$g_pvulnstatus_last_cve:KO")
+            g_final_summary="$g_final_summary \033[41m\033[30m$_summary_label\033[0m"
             ;;
         OK)
             pstatus green 'NOT VULNERABLE' "$@"
-            g_final_summary="$g_final_summary \033[42m\033[30m$g_pvulnstatus_last_cve:OK\033[0m"
+            _summary_label=$(printf "%-17s" "$g_pvulnstatus_last_cve:OK")
+            g_final_summary="$g_final_summary \033[42m\033[30m$_summary_label\033[0m"
             ;;
         *)
             echo "$0: error: unknown status '$vulnstatus' passed to pvulnstatus()" >&2
