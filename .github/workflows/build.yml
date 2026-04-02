@@ -96,7 +96,7 @@ jobs:
         git fetch origin ${{ github.ref_name }}-build
         git checkout -f ${{ github.ref_name }}-build
         mv $tmpdir/* .
-        git add *
+        git add --all
         echo =#=#= DIFF CACHED
         git diff --cached
         echo =#=#= STATUS
