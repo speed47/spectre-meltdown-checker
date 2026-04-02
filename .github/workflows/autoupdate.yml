@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: '42 9 * * *'
 
+permissions:
+  pull-requests: write
+
 jobs:
   autoupdate:
     runs-on: ubuntu-latest
@@ -25,7 +28,6 @@ jobs:
         if: steps.diff.outputs.nbdiff != '0'
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.SMC_PR_PAT }}
           branch: autoupdate-fwdb
           commit-message: "update: fwdb from ${{ steps.diff.outputs.change }}, ${{ steps.diff.outputs.nbdiff }} microcode changes"
           title: "[Auto] Update fwdb from ${{ steps.diff.outputs.change }}"

@@ -3,6 +3,16 @@ name: 'Manage stale issues and PRs'
 on:
   schedule:
     - cron: '37 7 * * *'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "dry-run"
+        required: true
+        default: "dryrun"
+        type: choice
+        options:
+          - dryrun
+          - apply
 
 permissions:
   issues: write
@@ -20,4 +30,4 @@ jobs:
           days-before-close: 7
           stale-issue-label: stale
           remove-stale-when-updated: true
-          debug-only: true
+          debug-only: ${{ case(inputs.action == 'apply', false, true) }}
