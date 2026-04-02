@@ -237,17 +237,14 @@ The file must contain exactly three functions:
 ###############################
 # CVE-YYYY-NNNNN, Short Name, Complete Name
 
-# CVE-YYYY-NNNNN SHORT_NAME (one-line description) - entry point
 check_CVE_YYYY_NNNNN() {
 	check_cve 'CVE-YYYY-NNNNN'
 }
 
-# CVE-YYYY-NNNNN SHORT_NAME (one-line description) - Linux mitigation check
 check_CVE_YYYY_NNNNN_linux() {
 	# ... (see Step 3)
 }
 
-# CVE-YYYY-NNNNN SHORT_NAME (one-line description) - BSD mitigation check
 check_CVE_YYYY_NNNNN_bsd() {
 	if ! is_cpu_affected "$cve"; then
 		pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
@@ -744,6 +741,7 @@ Every function must have a documentation header immediately above its definition
 - The `# Callers:` line is required for all `_`-prefixed functions. It documents which functions depend on this helper, making it safe to refactor.
 - Keep descriptions to one line when possible. If more context is needed, add continuation comment lines before the structured lines.
 - Parameter documentation uses `$1=name` format. Append `(optional, default X)` for optional parameters.
+- **Exception**: `check_CVE_*` functions (`check_CVE_YYYY_NNNNN`, `_linux`, `_bsd`) are exempt from the documentation header requirement. They are self-explanatory, take no arguments, and live in dedicated `src/vulns/CVE-YYYY-NNNNN.sh` files whose line-3 header already describes the vulnerability.
 
 **Full example:**
 
