@@ -17,6 +17,8 @@ jobs:
         persist-credentials: true
     - name: install prerequisites
       run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt jq sqlite3 iucode-tool make
+    - name: update Intel model list
+      run: ./scripts/update_intel_models.sh
     - name: build and check
       run: |
         make build fmt-check shellcheck
