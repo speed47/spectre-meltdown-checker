@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.21.0402699'
+VERSION='26.21.0402751'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -588,9 +588,12 @@ is_cpu_affected() {
             pr_debug "is_cpu_affected: downfall: not affected (GDS_NO)"
             _set_immune downfall
         elif [ "$cpu_family" = 6 ]; then
-            # list from https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=64094e7e3118aff4b0be8ff713c242303e139834
+            # model blacklist from the kernel (arch/x86/kernel/cpu/common.c cpu_vuln_blacklist):
+            # 8974eb588283 (initial list) + c9f4c45c8ec3 (added Skylake/Skylake_L client)
             set -u
-            if [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+            if [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
@@ -605,10 +608,12 @@ is_cpu_affected() {
                 _set_vuln downfall
             elif [ "$cap_avx2" = 0 ] && [ "$cap_avx512" = 0 ]; then
                 pr_debug "is_cpu_affected: downfall: no avx; immune"
+                _infer_immune downfall
             else
-                # old Intel CPU (not in their DB), not listed as being affected by the Linux kernel,
-                # but with AVX2 or AVX512: unclear for now
-                pr_debug "is_cpu_affected: downfall: unclear, defaulting to non-affected for now"
+                # Intel family 6 CPU with AVX2 or AVX512, not in the known-affected list
+                # and GDS_NO not set: assume affected (whitelist principle)
+                pr_debug "is_cpu_affected: downfall: unknown AVX-capable CPU, defaulting to affected"
+                _infer_vuln downfall
             fi
             set +u
         fi
@@ -7475,6 +7480,90 @@ check_CVE_2022_40982_linux() {
     if sys_interface_check "$VULN_SYSFS_BASE/gather_data_sampling"; then
         # this kernel has the /sys interface, trust it over everything
         sys_interface_available=1
+        #
+        # Kernel source inventory for gather_data_sampling (GDS/Downfall)
+        #
+        # --- sysfs messages ---
+        # all versions:
+        #   "Not affected"                                  (cpu_show_common, pre-existing)
+        #
+        # --- mainline ---
+        # 8974eb588283 (v6.5-rc6, initial GDS sysfs):
+        #   "Vulnerable"                                    (GDS_MITIGATION_OFF)
+        #   "Vulnerable: No microcode"                      (GDS_MITIGATION_UCODE_NEEDED)
+        #   "Mitigation: Microcode"                         (GDS_MITIGATION_FULL)
+        #   "Mitigation: Microcode (locked)"                (GDS_MITIGATION_FULL_LOCKED)
+        #   "Unknown: Dependent on hypervisor status"       (GDS_MITIGATION_HYPERVISOR)
+        # 553a5c03e90a (v6.5-rc6, added force option):
+        #   "Mitigation: AVX disabled, no microcode"        (GDS_MITIGATION_FORCE)
+        # 53cf5797f114 (v6.5-rc6, added CONFIG_GDS_FORCE_MITIGATION):
+        #   no string changes; default becomes FORCE when Kconfig enabled
+        # 81ac7e5d7417 (v6.5-rc6, KVM GDS_NO plumbing):
+        #   no string changes
+        # be83e809ca67 (v6.9-rc1, Kconfig rename):
+        #   no string changes; CONFIG_GDS_FORCE_MITIGATION => CONFIG_MITIGATION_GDS_FORCE
+        # 03267a534bb3 (v6.12-rc1, removed force Kconfig):
+        #   no string changes; CONFIG_MITIGATION_GDS_FORCE removed
+        # 225f2bd064c3 (v6.12-rc1, added on/off Kconfig):
+        #   no string changes; added CONFIG_MITIGATION_GDS (default y)
+        # 9dcad2fb31bd (v6.16-rc1, restructured select/apply):
+        #   no string changes; added GDS_MITIGATION_AUTO (internal, resolved before display)
+        #   split gds_select_mitigation() + gds_apply_mitigation()
+        # d4932a1b148b (v6.17-rc3, bug fix):
+        #   no string changes; CPUs without ARCH_CAP_GDS_CTRL were incorrectly classified
+        #   as OFF ("Vulnerable") instead of UCODE_NEEDED ("Vulnerable: No microcode"),
+        #   and locked-mitigation detection was skipped.
+        #   NOT backported to any stable or RHEL branch as of 2026-04.
+        #
+        # --- stable backports ---
+        # 5.4.y, 5.10.y, 5.15.y, 6.1.y, 6.6.y: same 7 strings as mainline.
+        #   use CONFIG_GDS_FORCE_MITIGATION; no GDS_MITIGATION_AUTO enum;
+        #   missing d4932a1b148b bug fix (UCODE_NEEDED vs OFF misclassification).
+        # 6.12.y: same 7 strings as mainline.
+        #   uses CONFIG_MITIGATION_GDS; no GDS_MITIGATION_AUTO enum;
+        #   missing d4932a1b148b bug fix.
+        #
+        # --- RHEL/CentOS ---
+        # centos7 (3.10), rocky8 (4.18): same 7 strings; CONFIG_GDS_FORCE_MITIGATION.
+        #   centos7 uses sprintf (not sysfs_emit) and __read_mostly.
+        # rocky9 (5.14): same 7 strings; CONFIG_MITIGATION_GDS (skipped FORCE rename).
+        # rocky10 (6.12): same 7 strings; CONFIG_MITIGATION_GDS; has gds_apply_mitigation().
+        #
+        # --- Kconfig symbols ---
+        # 53cf5797f114 (v6.5-rc6): CONFIG_GDS_FORCE_MITIGATION (default n)
+        # be83e809ca67 (v6.9-rc1): renamed to CONFIG_MITIGATION_GDS_FORCE
+        # 03267a534bb3 (v6.12-rc1): CONFIG_MITIGATION_GDS_FORCE removed
+        # 225f2bd064c3 (v6.12-rc1): CONFIG_MITIGATION_GDS (default y)
+        # vendor kernels: rocky9 uses CONFIG_MITIGATION_GDS on 5.14-based kernel
+        #
+        # --- kernel functions (for $opt_map / System.map) ---
+        # 8974eb588283 (v6.5-rc6): gds_select_mitigation(), update_gds_msr(),
+        #   gds_parse_cmdline(), gds_show_state()
+        # 81ac7e5d7417 (v6.5-rc6): gds_ucode_mitigated() (exported for KVM)
+        # 9dcad2fb31bd (v6.16-rc1): split into gds_select_mitigation() + gds_apply_mitigation()
+        # stable 5.4.y-6.12.y: same 5 functions (no gds_apply_mitigation)
+        # rocky10 (6.12): has gds_apply_mitigation()
+        #
+        # --- CPU affection logic (for is_cpu_affected) ---
+        # X86_BUG_GDS is set when ALL three conditions are true:
+        #   1. CPU matches model blacklist (cpu_vuln_blacklist[] in common.c)
+        #   2. ARCH_CAP_GDS_NO (bit 26 of IA32_ARCH_CAPABILITIES) is NOT set
+        #   3. X86_FEATURE_AVX is present (GATHER instructions require AVX)
+        # 8974eb588283 (v6.5-rc6, initial model list):
+        #   Intel: SKYLAKE_X, KABYLAKE_L, KABYLAKE, ICELAKE_L, ICELAKE_D,
+        #          ICELAKE_X, COMETLAKE, COMETLAKE_L, TIGERLAKE_L, TIGERLAKE,
+        #          ROCKETLAKE (all steppings)
+        # c9f4c45c8ec3 (v6.5-rc6, added missing client Skylake):
+        #   Intel: + SKYLAKE_L, SKYLAKE
+        # 159013a7ca18 (v6.10-rc1, ITS stepping splits):
+        #   no GDS model changes; some entries split by stepping for ITS but
+        #   GDS flag remains on all stepping ranges for these models
+        # immunity: ARCH_CAP_GDS_NO (bit 26 of IA32_ARCH_CAPABILITIES)
+        # feature dependency: requires AVX (if AVX absent, CPU is immune)
+        # vendor scope: Intel only
+        #
+        # all messages start with either "Not affected", "Vulnerable", "Mitigation",
+        # or "Unknown"
         status=$ret_sys_interface_check_status
     fi
 
@@ -7482,14 +7571,33 @@ check_CVE_2022_40982_linux() {
         pr_info_nol "* GDS is mitigated by microcode: "
         if [ "$cap_gds_ctrl" = 1 ] && [ "$cap_gds_mitg_dis" = 0 ]; then
             pstatus green OK "microcode mitigation is supported and enabled"
+        elif [ "$cap_gds_ctrl" = 1 ] && [ "$cap_gds_mitg_dis" = 1 ]; then
+            pstatus yellow NO "microcode mitigation is supported but disabled"
+        elif [ "$cap_gds_ctrl" = 0 ]; then
+            pstatus yellow NO "microcode doesn't support GDS mitigation"
         else
-            pstatus yellow NO
+            pstatus yellow UNKNOWN "couldn't read MSR for GDS capability"
         fi
+
         pr_info_nol "* Kernel supports software mitigation by disabling AVX: "
+        kernel_gds=''
+        kernel_gds_err=''
         if [ -n "$g_kernel_err" ]; then
             kernel_gds_err="$g_kernel_err"
         elif grep -q 'gather_data_sampling' "$g_kernel"; then
             kernel_gds="found gather_data_sampling in kernel image"
+        fi
+        if [ -z "$kernel_gds" ] && [ -r "$opt_config" ]; then
+            if grep -q '^CONFIG_GDS_FORCE_MITIGATION=y' "$opt_config" ||
+                grep -q '^CONFIG_MITIGATION_GDS_FORCE=y' "$opt_config" ||
+                grep -q '^CONFIG_MITIGATION_GDS=y' "$opt_config"; then
+                kernel_gds="GDS mitigation config option found enabled in kernel config"
+            fi
+        fi
+        if [ -z "$kernel_gds" ] && [ -n "$opt_map" ]; then
+            if grep -q 'gds_select_mitigation' "$opt_map"; then
+                kernel_gds="found gds_select_mitigation in System.map"
+            fi
         fi
         if [ -n "$kernel_gds" ]; then
             pstatus green YES "$kernel_gds"
@@ -7502,30 +7610,34 @@ check_CVE_2022_40982_linux() {
         if [ -n "$kernel_gds" ]; then
             pr_info_nol "* Kernel has disabled AVX as a mitigation: "
 
-            # Check dmesg message to see whether AVX has been disabled
-            dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'
-            dmesgret=$?
-            if [ "$dmesgret" -eq 0 ]; then
-                kernel_avx_disabled="AVX disabled by the kernel (dmesg)"
-                pstatus green YES "$kernel_avx_disabled"
-            elif [ "$cap_avx2" = 0 ]; then
-                # Find out by ourselves
-                # cpuinfo says we don't have AVX2, query
-                # the CPU directly about AVX2 support
-                read_cpuid 0x7 0x0 "$EBX" 5 1 1
-                ret=$?
-                if [ "$ret" -eq "$READ_CPUID_RET_OK" ]; then
-                    kernel_avx_disabled="AVX disabled by the kernel (cpuid)"
+            if [ "$opt_live" = 1 ]; then
+                # Check dmesg message to see whether AVX has been disabled
+                dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'
+                dmesgret=$?
+                if [ "$dmesgret" -eq 0 ]; then
+                    kernel_avx_disabled="AVX disabled by the kernel (dmesg)"
                     pstatus green YES "$kernel_avx_disabled"
-                elif [ "$ret" -eq "$READ_CPUID_RET_KO" ]; then
-                    pstatus yellow NO "CPU doesn't support AVX"
-                elif [ "$dmesgret" -eq 2 ]; then
-                    pstatus yellow UNKNOWN "dmesg truncated, can't tell whether mitigation is active, please reboot and relaunch this script"
+                elif [ "$cap_avx2" = 0 ]; then
+                    # Find out by ourselves
+                    # cpuinfo says we don't have AVX2, query
+                    # the CPU directly about AVX2 support
+                    read_cpuid 0x7 0x0 "$EBX" 5 1 1
+                    ret=$?
+                    if [ "$ret" -eq "$READ_CPUID_RET_OK" ]; then
+                        kernel_avx_disabled="AVX disabled by the kernel (cpuid)"
+                        pstatus green YES "$kernel_avx_disabled"
+                    elif [ "$ret" -eq "$READ_CPUID_RET_KO" ]; then
+                        pstatus yellow NO "CPU doesn't support AVX"
+                    elif [ "$dmesgret" -eq 2 ]; then
+                        pstatus yellow UNKNOWN "dmesg truncated, can't tell whether mitigation is active, please reboot and relaunch this script"
+                    else
+                        pstatus yellow UNKNOWN "No sign of mitigation in dmesg and couldn't read cpuid info"
+                    fi
                 else
-                    pstatus yellow UNKNOWN "No sign of mitigation in dmesg and couldn't read cpuid info"
+                    pstatus yellow NO "AVX support is enabled"
                 fi
             else
-                pstatus yellow NO "AVX support is enabled"
+                pstatus blue N/A "not testable in offline mode"
             fi
         fi
 
@@ -7540,16 +7652,33 @@ check_CVE_2022_40982_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ "$cap_gds_ctrl" = 1 ] && [ "$cap_gds_mitg_dis" = 0 ]; then
-            pvulnstatus "$cve" OK "Your microcode is up to date and mitigation is enabled"
-        elif [ "$cap_gds_ctrl" = 1 ] && [ "$cap_gds_mitg_dis" = 1 ]; then
-            pvulnstatus "$cve" VULN "Your microcode is up to date but mitigation is disabled"
-        elif [ -z "$kernel_gds" ]; then
-            pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, and your kernel doesn't support mitigation"
-        elif [ -z "$kernel_avx_disabled" ]; then
-            pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, your kernel support the mitigation but the script did not detect AVX as disabled by the kernel"
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$cap_gds_ctrl" = 1 ] && [ "$cap_gds_mitg_dis" = 0 ]; then
+                if [ "$opt_paranoid" = 1 ] && [ "$cap_gds_mitg_lock" != 1 ]; then
+                    pvulnstatus "$cve" VULN "Microcode mitigation is enabled but not locked"
+                    explain "In paranoid mode, the GDS mitigation must be locked to prevent a privileged attacker\n " \
+                        "(e.g. in a guest VM) from disabling it. Check your firmware/BIOS for an option to lock the\n " \
+                        "GDS mitigation, or update your microcode."
+                else
+                    pvulnstatus "$cve" OK "Your microcode is up to date and mitigation is enabled"
+                fi
+            elif [ "$cap_gds_ctrl" = 1 ] && [ "$cap_gds_mitg_dis" = 1 ]; then
+                pvulnstatus "$cve" VULN "Your microcode is up to date but mitigation is disabled"
+                explain "The GDS mitigation has been explicitly disabled (gather_data_sampling=off or mitigations=off).\n " \
+                    "Remove the kernel parameter to re-enable it."
+            elif [ -z "$kernel_gds" ]; then
+                pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, and your kernel doesn't support mitigation"
+                explain "Update both your CPU microcode (via BIOS/firmware update from your OEM) and your kernel\n " \
+                    "to a version that supports GDS mitigation (Linux 6.5+, or check if your distro has a backport)."
+            elif [ -z "$kernel_avx_disabled" ]; then
+                pvulnstatus "$cve" VULN "Your microcode doesn't mitigate the vulnerability, your kernel supports the mitigation but AVX was not disabled"
+                explain "Update your CPU microcode (via BIOS/firmware update from your OEM). If no microcode update\n " \
+                    "is available, use gather_data_sampling=force on the kernel command line to disable AVX as a workaround."
+            else
+                pvulnstatus "$cve" OK "Your microcode doesn't mitigate the vulnerability, but your kernel has disabled AVX support"
+            fi
         else
-            pvulnstatus "$cve" OK "Your microcode doesn't mitigate the vulnerability, but your kernel has disabled AVX support"
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
         fi
     else
         pvulnstatus "$cve" "$status" "$msg"
