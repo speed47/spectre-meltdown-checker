@@ -55,6 +55,17 @@ A backporting mistake in Linux stable/longterm kernel versions (4.4.x through 4.
 
 **Why out of scope:** This is a kernel bug (bad backport), not a hardware vulnerability. The flawed code is not detectable on a running kernel without hardcoding kernel version ranges, which is against this tool's design principles. As the tool author noted: "it's going to be almost impossible to detect it on a running kernel."
 
+## CVE-2020-12965 — Transient Execution of Non-Canonical Accesses (SLAM)
+
+- **Issue:** [#478](https://github.com/speed47/spectre-meltdown-checker/issues/478)
+- **Bulletin:** [AMD-SB-1010](https://www.amd.com/en/corporate/product-security/bulletin/amd-sb-1010)
+- **Research paper:** [SLAM (VUSec)](https://www.vusec.net/projects/slam/)
+- **CVSS:** 7.5 (High)
+
+AMD CPUs may transiently execute non-canonical loads and stores using only the lower 48 address bits, potentially resulting in data leakage. The SLAM research (2023) demonstrated that this could be exploited on existing AMD Zen+/Zen2 CPUs and could also affect future CPUs with Intel LAM, AMD UAI, or ARM TBI features.
+
+**Why out of scope:** AMD's mitigation guidance is for software vendors to "analyze their code for any potential vulnerabilities" and insert LFENCE or use existing speculation mitigation techniques in their own code. No microcode or kernel-level mitigations have been issued. The responsibility falls on individual software, not on the kernel or firmware, leaving nothing for this script to check.
+
 ## CVE-2024-36348 — AMD Transient Scheduler Attack (UMIP bypass)
 
 - **Bulletin:** [AMD-SB-7029](https://www.amd.com/en/resources/product-security/bulletin/amd-sb-7029.html)
