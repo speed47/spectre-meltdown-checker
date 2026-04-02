@@ -23,7 +23,7 @@ jobs:
       run: |
         make build fmt-check shellcheck
         mv spectre-meltdown-checker.sh dist/
-        git checkout -f src/
+        rm -rf src/
     - name: check direct execution
       run: |
         expected=$(cat .github/workflows/expected_cve_count)
