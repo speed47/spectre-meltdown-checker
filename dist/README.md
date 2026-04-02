@@ -167,6 +167,13 @@ On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculative
 
 </details>
 
+## Unsupported CVEs
+
+Several transient execution CVEs are not covered by this tool, for various reasons (duplicates, only
+affecting non-supported hardware or OS, theoretical with no known exploitation, etc.).
+The complete list along with the reason for each exclusion is available in the
+[UNSUPPORTED_CVE_LIST.md](https://github.com/speed47/spectre-meltdown-checker/blob/source/UNSUPPORTED_CVE_LIST.md) file.
+
 ## Scope
 
 Supported operating systems:

@@ -1,6 +1,6 @@
 # Unsupported CVEs
 
-This document lists transient execution CVEs that have been evaluated and determined to be **out of scope** for this tool. See the "CVE Inclusion Criteria" section in [DEVELOPMENT.md](DEVELOPMENT.md) for the general policy.
+This document lists transient execution CVEs that have been evaluated and determined to be **out of scope** for this tool. See the [Which rules are governing the support of a CVE in this tool?](dist/FAQ.md#which-rules-are-governing-the-support-of-a-cve-in-this-tool) section in the FAQ for the general policy.
 
 ## CVE-2024-36348 — AMD Transient Scheduler Attack (UMIP bypass)
 
