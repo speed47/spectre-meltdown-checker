@@ -22,6 +22,8 @@ CVE | Name | Aliases
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX Asynchronous Abort | TAA, ZombieLoad V2
 [CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes | iTLB Multihit, No eXcuses
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | Special Register Buffer Data Sampling | SRBDS, CROSSTalk
+[CVE-2022-29900](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29900) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (AMD)
+[CVE-2022-29901](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29901) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (Intel), RSBA
 [CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | Downfall, GDS
 [CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed
@@ -51,6 +53,8 @@ CVE-2019-11091 (MDSUM, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + k
 CVE-2019-11135 (TAA, ZombieLoad V2) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2018-12207 (iTLB Multihit, No eXcuses) | ✅ | ✅ | ☠️ | ✅ | Hypervisor update (or disable hugepages)
 CVE-2020-0543 (SRBDS, CROSSTalk) | 💥 (2) | 💥 (2) | 💥 (2) | 💥 (2) | Microcode + kernel update
+CVE-2022-29900 (Retbleed AMD) | 💥 | ✅ | 💥 | ✅ | Kernel update (+ microcode for IBPB)
+CVE-2022-29901 (Retbleed Intel, RSBA) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update (eIBRS or IBRS)
 CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (or disable AVX)
 CVE-2023-20569 (Inception, SRSO) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
 CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or kernel workaround)
@@ -128,6 +132,14 @@ A malicious guest VM can trigger a machine check exception (MCE) — crashing th
 **CVE-2020-0543 — Special Register Buffer Data Sampling (SRBDS, CROSSTalk)**
 
 Certain special CPU instructions (RDRAND, RDSEED, EGETKEY) read data through a shared staging buffer that is accessible across all cores via speculative execution. An attacker running code on any core can observe the output of these instructions from a victim on a different core, including extracting cryptographic keys from SGX enclaves (a complete ECDSA key was demonstrated). This is notable as one of the first cross-core speculative execution attacks. Mitigation requires a microcode update that serializes access to the staging buffer, plus a kernel update to manage the mitigation. Performance impact is low, mainly affecting workloads that heavily use RDRAND/RDSEED.
+
+**CVE-2022-29900 — Arbitrary Speculative Code Execution with Return Instructions (Retbleed AMD)**
+
+On AMD processors from families 0x15 through 0x17 (Bulldozer through Zen 2) and Hygon family 0x18, an attacker can exploit return instructions to redirect speculative execution and leak kernel memory, bypassing retpoline mitigations that were effective against Spectre V2. Unlike Spectre V2 which targets indirect jumps and calls, Retbleed specifically targets return instructions, which were previously considered safe. Mitigation requires a kernel update providing either the untrained return thunk (safe RET) or IBPB-on-entry mechanism, plus a microcode update providing IBPB support on Zen 1/2. On Zen 1/2, SMT should be disabled for full protection when using IBPB-based mitigation. Performance impact is medium.
+
+**CVE-2022-29901 — Arbitrary Speculative Code Execution with Return Instructions (Retbleed Intel, RSBA)**
+
+On Intel Skylake through Rocket Lake processors with RSB Alternate Behavior (RSBA), return instructions can be speculatively redirected via the Branch Target Buffer when the Return Stack Buffer underflows, bypassing retpoline mitigations. Mitigation requires either Enhanced IBRS (eIBRS, via microcode update) or a kernel compiled with IBRS-on-entry support (Linux 5.19+). Call depth tracking (stuffing) is an alternative mitigation available from Linux 6.2+. Plain retpoline does NOT mitigate this vulnerability on RSBA-capable CPUs. Performance impact is medium to high.
 
 **CVE-2022-40982 — Gather Data Sampling (GDS, Downfall)**
 

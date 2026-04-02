@@ -104,6 +104,8 @@ is_cpu_affected() {
     _set_immune inception
     # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
     _set_immune tsa
+    # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
+    _set_immune retbleed
     # Downfall & Reptar are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
@@ -203,7 +205,7 @@ is_cpu_affected() {
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_MID" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID2" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_NP" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
@@ -314,6 +316,27 @@ is_cpu_affected() {
             fi
         done
 
+        # Retbleed (Intel, CVE-2022-29901): Skylake through Rocket Lake, or any CPU with RSBA
+        # kernel cpu_vuln_blacklist for RETBLEED (6b80b59b3555, 6ad0ad2bf8a6, f54d45372c6a)
+        # plus ARCH_CAP_RSBA catch-all (bit 2 of IA32_ARCH_CAPABILITIES)
+        if [ "$cap_rsba" = 1 ]; then
+            _set_vuln retbleed
+        elif [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_CANNONLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LAKEFIELD" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ]; then
+                _set_vuln retbleed
+            fi
+        fi
+
     elif is_amd || is_hygon; then
         # AMD revised their statement about affected_variant2 => affected
         # https://www.amd.com/en/corporate/speculative-execution
@@ -348,6 +371,11 @@ is_cpu_affected() {
             _set_immune tsa
         elif [ "$cpu_family" = $((0x19)) ]; then
             _set_vuln tsa
+        fi
+
+        # Retbleed (AMD, CVE-2022-29900): families 0x15-0x17 (kernel X86_BUG_RETBLEED)
+        if [ "$cpu_family" = $((0x15)) ] || [ "$cpu_family" = $((0x16)) ] || [ "$cpu_family" = $((0x17)) ]; then
+            _set_vuln retbleed
         fi
 
     elif [ "$cpu_vendor" = CAVIUM ]; then
@@ -473,7 +501,7 @@ is_cpu_affected() {
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT_MID" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID2" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
@@ -492,12 +520,12 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/tsa/downfall/reptar set via eval (_set_immune)
+    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar set via eval (_set_immune)
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar"
+        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow

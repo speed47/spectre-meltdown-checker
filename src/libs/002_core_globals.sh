@@ -155,6 +155,8 @@ CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception 
 CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)
 CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
 CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
+CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)
+CVE-2022-29901|RETBLEED INTEL|retbleed|Retbleed, arbitrary speculative code execution with return instructions (Intel)
 CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)
 CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue
 CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
