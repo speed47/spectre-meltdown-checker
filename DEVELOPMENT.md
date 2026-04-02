@@ -222,12 +222,20 @@ Before writing code, verify the CVE meets the inclusion criteria (see "CVE Inclu
 
 ### Step 1: Create the Vulnerability File
 
-Create `src/vulns/CVE-YYYY-NNNNN.sh`. The file must contain exactly three functions:
+Create `src/vulns/CVE-YYYY-NNNNN.sh`. The file header must follow this exact format:
+
+- **Line 1**: vim modeline (`# vim: set ts=4 sw=4 sts=4 et:`)
+- **Line 2**: 31 `#` characters (`###############################`)
+- **Line 3**: `# CVE-YYYY-NNNNN, Alias1, Alias2, Complete Name` — the CVE number followed by
+  all known aliases and the complete name as listed in the `dist/README.md` top table.
+- **Line 4**: empty
+
+The file must contain exactly three functions:
 
 ```sh
 # vim: set ts=4 sw=4 sts=4 et:
-####################
-# SHORT_NAME section
+###############################
+# CVE-YYYY-NNNNN, Short Name, Complete Name
 
 # CVE-YYYY-NNNNN SHORT_NAME (one-line description) - entry point
 check_CVE_YYYY_NNNNN() {
