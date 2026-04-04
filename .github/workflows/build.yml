@@ -17,6 +17,8 @@ jobs:
         persist-credentials: true
     - name: install prerequisites
       run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt jq sqlite3 iucode-tool make
+    - name: update Intel model list
+      run: ./scripts/update_intel_models.sh
     - name: build and check
       run: |
         make build fmt-check shellcheck
@@ -96,6 +98,7 @@ jobs:
         git fetch origin ${{ github.ref_name }}-build
         git checkout -f ${{ github.ref_name }}-build
         mv $tmpdir/* .
+        rm -rf src/
         mkdir -p .github
         rsync -vaP --delete $tmpdir/.github/ .github/
         git add --all
