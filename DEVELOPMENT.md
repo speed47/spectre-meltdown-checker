@@ -710,7 +710,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 - **Always handle both live and offline modes** - use `$opt_live` to branch, and print `N/A "not testable in offline mode"` for runtime-only checks when offline.
 - **Use `explain()`** when reporting VULN to give actionable remediation advice (see "Cross-Cutting Features" above).
 - **Handle `--paranoid` and `--vmm`** when the CVE has stricter mitigation tiers or VMM-specific aspects (see "Cross-Cutting Features" above).
-- **All indentation must use tabs** (CI enforces this).
+- **All indentation must use 4 spaces** (CI enforces this via `fmt-check`; the vim modeline `et` enables expandtab).
 - **Stay POSIX-compatible** - no bashisms, no GNU-only flags in portable code paths.
 
 ## Function documentation headers

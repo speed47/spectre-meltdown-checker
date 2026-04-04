@@ -30,6 +30,7 @@ CVE | Name | Aliases
 [CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar
 [CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack, Store Queue | TSA-SQ
 [CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack, L1 | TSA-L1
+[CVE-2024-28956](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-28956) | Indirect Target Selection | ITS
 
 ## Am I at risk?
 
@@ -61,6 +62,7 @@ CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or ker
 CVE-2023-23583 (Reptar) | ☠️ | ☠️ | ☠️ | ☠️ | Microcode update
 CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2024-28956 (ITS) | 💥 | ✅ | 💥 (4) | ✅ | Microcode + kernel update
 
 > 💥 Data can be leaked across this boundary.
 
@@ -73,6 +75,8 @@ CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel
 > (2) Only leaks RDRAND/RDSEED output, not arbitrary memory; still allows recovering cryptographic material from any victim.
 
 > (3) CVE-2018-3615 (Foreshadow SGX) inverts the normal trust model: the OS reads SGX enclave data. It is irrelevant unless the system runs SGX enclaves, and the attacker must already have OS-level access.
+
+> (4) VM→Host leakage applies only to certain affected CPU models (Skylake-X, Kaby Lake, Comet Lake). Ice Lake, Tiger Lake, and Rocket Lake are only affected for native (user-to-kernel) attacks, not guest-to-host.
 
 ## Detailed CVE descriptions
 
@@ -164,6 +168,10 @@ On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculative
 **CVE-2024-36357 — Transient Scheduler Attack, L1 (TSA-L1)**
 
 On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculatively retrieve stale data from the L1 data cache during certain timing windows, allowing an attacker to infer data in the L1D cache across privilege boundaries. Mitigation requires the same microcode and kernel updates as TSA-SQ: a microcode update exposing VERW_CLEAR and a kernel update (CONFIG_MITIGATION_TSA, Linux 6.16+) that clears CPU buffers via VERW on privilege transitions. Performance impact is low to medium.
+
+**CVE-2024-28956 — Indirect Target Selection (ITS)**
+
+On certain Intel processors (Skylake-X stepping 6+, Kaby Lake, Comet Lake, Ice Lake, Tiger Lake, Rocket Lake), an attacker can train the indirect branch predictor to speculatively execute a targeted gadget in the kernel, bypassing eIBRS protections. The Branch Target Buffer (BTB) uses only partial address bits to index indirect branch targets, allowing user-space code to influence kernel-space speculative execution. Some affected CPUs (Ice Lake, Tiger Lake, Rocket Lake) are only vulnerable to native user-to-kernel attacks, not guest-to-host (VMX) attacks. Mitigation requires both a microcode update (IPU 2025.1 / microcode-20250512+, which fixes IBPB to fully flush indirect branch predictions) and a kernel update (CONFIG_MITIGATION_ITS, Linux 6.15+) that aligns branch/return thunks or uses RSB stuffing. Performance impact is low.
 
 </details>
 
