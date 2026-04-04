@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.26.0404660'
+VERSION='26.26.0404679'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -1831,7 +1831,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi"
                 exit 0
                 ;;
             1)
@@ -1892,6 +1892,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             downfall)
                 opt_cve_list="$opt_cve_list CVE-2022-40982"
+                opt_cve_all=0
+                ;;
+            retbleed)
+                opt_cve_list="$opt_cve_list CVE-2022-29900 CVE-2022-29901"
                 opt_cve_all=0
                 ;;
             inception)
