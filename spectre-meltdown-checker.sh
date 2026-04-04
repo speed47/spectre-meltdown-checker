@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.23.0404516'
+VERSION='26.26.0404546'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -215,6 +215,9 @@ CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)
 CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue
 CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
 CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
+CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)
+CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
+CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
 '
 
 # Derive the supported CVE list from the registry
@@ -582,9 +585,13 @@ is_cpu_affected() {
     _set_immune tsa
     # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
     _set_immune retbleed
-    # Downfall & Reptar are Intel specific, look for "is_intel" below:
+    # Downfall, Reptar, ITS & BPI are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
+    _set_immune its
+    _set_immune bpi
+    # VMScape affects Intel, AMD and Hygon — set immune, overridden below:
+    _set_immune vmscape
 
     if is_cpu_mds_free; then
         _infer_immune msbds
@@ -737,6 +744,32 @@ is_cpu_affected() {
             fi
             set +u
         fi
+        # ITS (Indirect Target Selection, CVE-2024-28956)
+        # kernel vulnerable_to_its() + cpu_vuln_blacklist (159013a7ca18)
+        # immunity: ARCH_CAP_ITS_NO (bit 62 of IA32_ARCH_CAPABILITIES)
+        # immunity: X86_FEATURE_BHI_CTRL (none of the affected CPUs have this)
+        # vendor scope: Intel only (family 6), with stepping constraints on some models
+        if [ "$cap_its_no" = 1 ]; then
+            pr_debug "is_cpu_affected: its: not affected (ITS_NO)"
+            _set_immune its
+        elif [ "$cpu_family" = 6 ]; then
+            set -u
+            if { [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] && [ "$cpu_stepping" -gt 5 ]; } ||
+                { [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -gt 11 ]; } ||
+                { [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -gt 12 ]; } ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ]; then
+                pr_debug "is_cpu_affected: its: affected"
+                _set_vuln its
+            fi
+            set +u
+        fi
         # Reptar
         # the only way to know whether a CPU is vuln, is to check whether there is a known ucode update for it,
         # as the mitigation is only ucode-based and there's no flag exposed by the kernel or by an updated ucode.
@@ -813,6 +846,94 @@ is_cpu_affected() {
             fi
         fi
 
+        # VMScape (CVE-2025-40300): Intel model blacklist
+        # kernel cpu_vuln_blacklist VMSCAPE (a508cec6e521 + 8a68d64bb103)
+        # immunity: no ARCH_CAP bits (purely blacklist-based)
+        # note: kernel only sets bug on bare metal (!X86_FEATURE_HYPERVISOR)
+        # vendor scope: Intel + AMD + Hygon (AMD/Hygon handled below)
+        if [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_SANDYBRIDGE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SANDYBRIDGE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_G" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_G" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_CANNONLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_METEORLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_H" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_U" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LUNARLAKE_M" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SAPPHIRERAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_GRANITERAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_EMERALDRAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_CRESTMONT_X" ]; then
+                pr_debug "is_cpu_affected: vmscape: affected"
+                _set_vuln vmscape
+            fi
+            set +u
+        fi
+
+        # BPI (Branch Privilege Injection, CVE-2024-45332)
+        # microcode-only fix (intel-microcode 20250512+), no kernel X86_BUG flag
+        # Intel affected processor list: Coffee Lake through Arrow Lake/Lunar Lake,
+        # plus some server parts (Cooper Lake, Sapphire/Emerald Rapids, Grand Ridge)
+        # immunity: no ARCH_CAP bits
+        # vendor scope: Intel only (family 6)
+        if [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_METEORLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_H" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_U" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LUNARLAKE_M" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SAPPHIRERAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_EMERALDRAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_CRESTMONT" ]; then
+                pr_debug "is_cpu_affected: bpi: affected"
+                _set_vuln bpi
+            fi
+            set +u
+        fi
+
     elif is_amd || is_hygon; then
         # AMD revised their statement about affected_variant2 => affected
         # https://www.amd.com/en/corporate/speculative-execution
@@ -852,6 +973,20 @@ is_cpu_affected() {
         # Retbleed (AMD, CVE-2022-29900): families 0x15-0x17 (kernel X86_BUG_RETBLEED)
         if [ "$cpu_family" = $((0x15)) ] || [ "$cpu_family" = $((0x16)) ] || [ "$cpu_family" = $((0x17)) ]; then
             _set_vuln retbleed
+        fi
+
+        # VMScape (CVE-2025-40300): AMD families 0x17/0x19/0x1a, Hygon family 0x18
+        # kernel cpu_vuln_blacklist VMSCAPE (a508cec6e521)
+        if is_amd; then
+            if [ "$cpu_family" = $((0x17)) ] || [ "$cpu_family" = $((0x19)) ] || [ "$cpu_family" = $((0x1a)) ]; then
+                pr_debug "is_cpu_affected: vmscape: AMD family $cpu_family affected"
+                _set_vuln vmscape
+            fi
+        elif is_hygon; then
+            if [ "$cpu_family" = $((0x18)) ]; then
+                pr_debug "is_cpu_affected: vmscape: Hygon family $cpu_family affected"
+                _set_vuln vmscape
+            fi
         fi
 
     elif [ "$cpu_vendor" = CAVIUM ]; then
@@ -996,12 +1131,13 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar set via eval (_set_immune)
+    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its/vmscape/bpi set via eval (_set_immune)
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar"
+        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
+        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
@@ -1606,7 +1742,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, inception, reptar, tsa, tsa-sq, tsa-l1"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi"
                 exit 0
                 ;;
             1)
@@ -1687,6 +1823,18 @@ while [ -n "${1:-}" ]; do
                 ;;
             tsa-l1)
                 opt_cve_list="$opt_cve_list CVE-2024-36357"
+                opt_cve_all=0
+                ;;
+            its)
+                opt_cve_list="$opt_cve_list CVE-2024-28956"
+                opt_cve_all=0
+                ;;
+            vmscape)
+                opt_cve_list="$opt_cve_list CVE-2025-40300"
+                opt_cve_all=0
+                ;;
+            bpi)
+                opt_cve_list="$opt_cve_list CVE-2024-45332"
                 opt_cve_all=0
                 ;;
             *)
@@ -3880,6 +4028,7 @@ check_cpu() {
         cap_tsx_ctrl_msr=-1
         cap_gds_ctrl=-1
         cap_gds_no=-1
+        cap_its_no=-1
         if [ "$cap_arch_capabilities" = -1 ]; then
             pstatus yellow UNKNOWN
         elif [ "$cap_arch_capabilities" != 1 ]; then
@@ -3894,6 +4043,7 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_its_no=0
             pstatus yellow NO
         else
             read_msr $MSR_IA32_ARCH_CAPABILITIES
@@ -3909,6 +4059,7 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_its_no=0
             if [ $ret = $READ_MSR_RET_OK ]; then
                 capabilities=$ret_read_msr_value
                 # https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/msr-index.h#n82
@@ -3924,7 +4075,8 @@ check_cpu() {
                 [ $((ret_read_msr_value_lo >> 8 & 1)) -eq 1 ] && cap_taa_no=1
                 [ $((ret_read_msr_value_lo >> 25 & 1)) -eq 1 ] && cap_gds_ctrl=1
                 [ $((ret_read_msr_value_lo >> 26 & 1)) -eq 1 ] && cap_gds_no=1
-                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no"
+                [ $((ret_read_msr_value_hi >> 30 & 1)) -eq 1 ] && cap_its_no=1
+                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no its_no=$cap_its_no"
                 if [ "$cap_ibrs_all" = 1 ]; then
                     pstatus green YES
                 else
@@ -8660,6 +8812,172 @@ check_CVE_2023_23583_bsd() {
     fi
 }
 
+# >>>>>> vulns/CVE-2024-28956.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2024-28956, ITS, Indirect Target Selection
+
+check_CVE_2024_28956() {
+    check_cve 'CVE-2024-28956'
+}
+
+check_CVE_2024_28956_linux() {
+    local status sys_interface_available msg kernel_its kernel_its_err ret
+    status=UNK
+    sys_interface_available=0
+    msg=''
+
+    if sys_interface_check "$VULN_SYSFS_BASE/indirect_target_selection"; then
+        # this kernel has the /sys interface, trust it over everything
+        sys_interface_available=1
+        #
+        # Kernel source inventory for indirect_target_selection (ITS)
+        #
+        # --- sysfs messages ---
+        # all versions:
+        #   "Not affected"                                       (cpu_show_common, pre-existing)
+        #
+        # --- mainline ---
+        # f4818881c47f (v6.15-rc2, initial ITS sysfs):
+        #   "Vulnerable"                                         (ITS_MITIGATION_OFF)
+        #   "Mitigation: Aligned branch/return thunks"           (ITS_MITIGATION_ALIGNED_THUNKS)
+        #   "Mitigation: Retpolines, Stuffing RSB"               (ITS_MITIGATION_RETPOLINE_STUFF)
+        # 2665281a07e1 (v6.15-rc2, added vmexit option):
+        #   "Mitigation: Vulnerable, KVM: Not affected"          (ITS_MITIGATION_VMEXIT_ONLY)
+        # facd226f7e0c (v6.15-rc2, added stuff cmdline option):
+        #   no string changes; added "stuff" boot param value
+        # 61ab72c2c6bf (v6.16-rc1, restructured select/update/apply):
+        #   no string changes; added ITS_MITIGATION_AUTO (internal, resolved before display)
+        #   split into its_select_mitigation() + its_update_mitigation() + its_apply_mitigation()
+        # 0cdd2c4f35cf (v6.18-rc1, attack vector controls):
+        #   no string changes; added per-vector on/off control
+        #
+        # --- stable backports ---
+        # 5.10.y, 5.15.y, 6.1.y: 3 strings only (no VMEXIT_ONLY, no RETPOLINE_STUFF
+        #   in 5.10/5.15/6.1). Uses CONFIG_RETPOLINE/CONFIG_RETHUNK (not CONFIG_MITIGATION_*).
+        # 6.6.y, 6.12.y, 6.14.y, 6.15.y: all 4 strings, full vmexit+stuff support.
+        # 6.16.y+: restructured 3-phase select/update/apply.
+        # Not backported to: 5.4.y, 6.11.y, 6.13.y.
+        #
+        # --- RHEL/CentOS ---
+        # rocky9 (5.14): all 4 strings, restructured 3-phase version.
+        # rocky10 (6.12): all 4 strings, restructured 3-phase version.
+        # Not backported to: centos7, rocky8.
+        #
+        # --- Kconfig symbols ---
+        # f4818881c47f (v6.15-rc2): CONFIG_MITIGATION_ITS (default y)
+        #   depends on CPU_SUP_INTEL && X86_64 && MITIGATION_RETPOLINE && MITIGATION_RETHUNK
+        # stable 5.10.y, 5.15.y, 6.1.y: CONFIG_MITIGATION_ITS
+        #   depends on CONFIG_RETPOLINE && CONFIG_RETHUNK (pre-rename names)
+        #
+        # --- kernel functions (for $opt_map / System.map) ---
+        # f4818881c47f (v6.15-rc2): its_select_mitigation(), its_parse_cmdline(),
+        #   its_show_state()
+        # 61ab72c2c6bf (v6.16-rc1): split into its_select_mitigation() +
+        #   its_update_mitigation() + its_apply_mitigation()
+        # stable 5.10.y-6.15.y: its_select_mitigation() (no split)
+        # rocky9, rocky10: its_select_mitigation() + its_update_mitigation() +
+        #   its_apply_mitigation()
+        #
+        # --- CPU affection logic (for is_cpu_affected) ---
+        # X86_BUG_ITS is set when ALL conditions are true:
+        #   1. Intel vendor, family 6
+        #   2. CPU matches model blacklist (with stepping constraints)
+        #   3. ARCH_CAP_ITS_NO (bit 62 of IA32_ARCH_CAPABILITIES) is NOT set
+        #   4. X86_FEATURE_BHI_CTRL is NOT present
+        # 159013a7ca18 (v6.15-rc2, initial model list):
+        #   Intel: SKYLAKE_X (stepping > 5), KABYLAKE_L (stepping > 0xb),
+        #          KABYLAKE (stepping > 0xc), ICELAKE_L, ICELAKE_D, ICELAKE_X,
+        #          COMETLAKE, COMETLAKE_L, TIGERLAKE_L, TIGERLAKE, ROCKETLAKE
+        #          (all steppings unless noted)
+        # ITS_NATIVE_ONLY flag (X86_BUG_ITS_NATIVE_ONLY): set for
+        #   ICELAKE_L, ICELAKE_D, ICELAKE_X, TIGERLAKE_L, TIGERLAKE, ROCKETLAKE
+        #   These CPUs are affected for user-to-kernel but NOT guest-to-host (VMX)
+        # immunity: ARCH_CAP_ITS_NO (bit 62 of IA32_ARCH_CAPABILITIES)
+        # immunity: X86_FEATURE_BHI_CTRL (none of the affected CPUs have this)
+        # vendor scope: Intel only
+        #
+        # all messages start with either "Not affected", "Vulnerable", or "Mitigation"
+        status=$ret_sys_interface_check_status
+    fi
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        pr_info_nol "* Kernel supports ITS mitigation: "
+        kernel_its=''
+        kernel_its_err=''
+        if [ -n "$g_kernel_err" ]; then
+            kernel_its_err="$g_kernel_err"
+        elif grep -q 'indirect_target_selection' "$g_kernel"; then
+            kernel_its="found indirect_target_selection in kernel image"
+        fi
+        if [ -z "$kernel_its" ] && [ -r "$opt_config" ]; then
+            if grep -q '^CONFIG_MITIGATION_ITS=y' "$opt_config"; then
+                kernel_its="ITS mitigation config option found enabled in kernel config"
+            fi
+        fi
+        if [ -z "$kernel_its" ] && [ -n "$opt_map" ]; then
+            if grep -q 'its_select_mitigation' "$opt_map"; then
+                kernel_its="found its_select_mitigation in System.map"
+            fi
+        fi
+        if [ -n "$kernel_its" ]; then
+            pstatus green YES "$kernel_its"
+        elif [ -n "$kernel_its_err" ]; then
+            pstatus yellow UNKNOWN "$kernel_its_err"
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "* CPU explicitly indicates not being affected by ITS (ITS_NO): "
+        if [ "$cap_its_no" = -1 ]; then
+            pstatus yellow UNKNOWN
+        elif [ "$cap_its_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+    elif [ "$sys_interface_available" = 0 ]; then
+        # we have no sysfs but were asked to use it only!
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        # override status & msg in case CPU is not vulnerable after all
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        # if msg is empty, sysfs check didn't fill it, rely on our own test
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$cap_its_no" = 1 ]; then
+                pvulnstatus "$cve" OK "CPU is not affected (ITS_NO)"
+            elif [ -n "$kernel_its" ]; then
+                pvulnstatus "$cve" OK "Kernel mitigates the vulnerability"
+            elif [ -z "$kernel_its" ] && [ -z "$kernel_its_err" ]; then
+                pvulnstatus "$cve" VULN "Your kernel doesn't support ITS mitigation"
+                explain "Update your kernel to a version that includes ITS mitigation (Linux 6.15+, or check\n" \
+                    "if your distro has a backport). Also update your CPU microcode to ensure IBPB fully\n" \
+                    "flushes indirect branch predictions (microcode-20250512+)."
+            else
+                pvulnstatus "$cve" UNK "couldn't determine mitigation status: $kernel_its_err"
+            fi
+        else
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2024_28956_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
 # >>>>>> vulns/CVE-2024-36350.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -9000,6 +9318,199 @@ check_CVE_2024_36357_linux() {
 }
 
 check_CVE_2024_36357_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-2024-45332.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2024-45332, BPI, Branch Privilege Injection
+
+check_CVE_2024_45332() {
+    check_cve 'CVE-2024-45332'
+}
+
+check_CVE_2024_45332_linux() {
+    local status sys_interface_available msg
+    status=UNK
+    sys_interface_available=0
+    msg=''
+
+    # There is no dedicated sysfs file for this vulnerability, and no kernel
+    # mitigation code.  The fix is purely a microcode update (intel-microcode
+    # 20250512+) that corrects the asynchronous branch predictor update timing
+    # so that eIBRS and IBPB work as originally intended.  There is no new
+    # CPUID bit, MSR bit, or ARCH_CAP flag to detect the fix.  The only
+    # reliable indicator is the microcode version, which we cannot check
+    # without violating design principle 3 (never hardcode microcode versions).
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "the microcode fix for this vulnerability cannot be detected (no CPUID/MSR indicator); ensure you have intel-microcode 20250512 or later installed"
+        explain "CVE-2024-45332 (Branch Privilege Injection) is a race condition in the branch predictor\n" \
+            "that undermines eIBRS and IBPB protections. The fix is a microcode update only (intel-microcode\n" \
+            "20250512+). No kernel changes are required. Verify your microcode version with: grep microcode\n" \
+            "/proc/cpuinfo. Contact your OS vendor to ensure the latest Intel microcode package is installed."
+    fi
+}
+
+check_CVE_2024_45332_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-2025-40300.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2025-40300, VMScape, VM-Exit Stale Branch Prediction
+
+check_CVE_2025_40300() {
+    check_cve 'CVE-2025-40300'
+}
+
+check_CVE_2025_40300_linux() {
+    local status sys_interface_available msg kernel_vmscape kernel_vmscape_err
+    status=UNK
+    sys_interface_available=0
+    msg=''
+
+    if sys_interface_check "$VULN_SYSFS_BASE/vmscape"; then
+        # this kernel has the /sys interface, trust it over everything
+        sys_interface_available=1
+        #
+        # Kernel source inventory for vmscape, traced via git blame:
+        #
+        # --- sysfs messages ---
+        # all versions:
+        #   "Not affected"                              (cpu_show_common, pre-existing)
+        #
+        # --- mainline ---
+        # a508cec6e521 (v6.17-rc6, initial vmscape sysfs):
+        #   "Vulnerable"                                (VMSCAPE_MITIGATION_NONE)
+        #   "Mitigation: IBPB before exit to userspace" (VMSCAPE_MITIGATION_IBPB_EXIT_TO_USER)
+        # 2f8f17341 (v6.17-rc6, vmscape_update_mitigation):
+        #   "Mitigation: IBPB on VMEXIT"                (VMSCAPE_MITIGATION_IBPB_ON_VMEXIT)
+        #     (when retbleed uses IBPB or srso uses IBPB_ON_VMEXIT)
+        #
+        # --- stable backports ---
+        # 6.16.x (v6.16.7): identical to mainline (d83e6111337f)
+        # 6.12.x (v6.12.47): identical to mainline (7c62c442b6eb)
+        # 6.6.x (v6.6.106): identical to mainline (813cb831439c)
+        # 6.1.x (v6.1.152): identical strings; uses VULNBL_INTEL_STEPPINGS macro,
+        #   missing ARROWLAKE_U, ATOM_CRESTMONT_X, AMD 0x1a.
+        #   Uses ALDERLAKE_N instead of type-specific ALDERLAKE split. (304d1fb275af)
+        #
+        # --- RHEL/CentOS ---
+        # Not yet backported.
+        #
+        # --- Kconfig symbols ---
+        # a508cec6e521 (v6.17-rc6): CONFIG_MITIGATION_VMSCAPE (default y)
+        #   depends on KVM
+        #
+        # --- kernel functions (for $opt_map / System.map) ---
+        # a508cec6e521 (v6.17-rc6): vmscape_select_mitigation(),
+        #   vmscape_update_mitigation(), vmscape_apply_mitigation(),
+        #   vmscape_parse_cmdline(), vmscape_show_state()
+        #
+        # --- CPU affection logic (for is_cpu_affected) ---
+        # X86_BUG_VMSCAPE is set when ALL conditions are true:
+        #   1. CPU matches model blacklist
+        #   2. X86_FEATURE_HYPERVISOR is NOT set (bare metal only)
+        # a508cec6e521 (v6.17-rc6, initial model list):
+        #   Intel: SKYLAKE_X, SKYLAKE_L, SKYLAKE, KABYLAKE_L, KABYLAKE,
+        #          CANNONLAKE_L, COMETLAKE, COMETLAKE_L, ALDERLAKE,
+        #          ALDERLAKE_L, RAPTORLAKE, RAPTORLAKE_P, RAPTORLAKE_S,
+        #          METEORLAKE_L, ARROWLAKE_H, ARROWLAKE, ARROWLAKE_U,
+        #          LUNARLAKE_M, SAPPHIRERAPIDS_X, GRANITERAPIDS_X,
+        #          EMERALDRAPIDS_X, ATOM_GRACEMONT, ATOM_CRESTMONT_X
+        #   AMD: family 0x17 (Zen 1/+/2), family 0x19 (Zen 3/4),
+        #        family 0x1a (Zen 5)
+        #   Hygon: family 0x18
+        # 8a68d64bb103 (v6.17-rc6, added old Intel CPUs):
+        #   Intel: + SANDYBRIDGE_X, SANDYBRIDGE, IVYBRIDGE_X, IVYBRIDGE,
+        #          HASWELL, HASWELL_L, HASWELL_G, HASWELL_X,
+        #          BROADWELL_D, BROADWELL_X, BROADWELL_G, BROADWELL
+        # Intel NOT affected: ICELAKE_*, TIGERLAKE_*, LAKEFIELD, ROCKETLAKE,
+        #   ATOM_TREMONT_*, ATOM_GOLDMONT_*
+        # immunity: no ARCH_CAP bits — determination is purely via blacklist
+        # note: bare metal only (X86_FEATURE_HYPERVISOR excludes guests)
+        # vendor scope: Intel + AMD + Hygon
+        #
+        # all messages start with either "Not affected", "Vulnerable", or "Mitigation"
+        status=$ret_sys_interface_check_status
+    fi
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        check_has_vmm
+        pr_info_nol "* Kernel supports VMScape mitigation: "
+        kernel_vmscape=''
+        kernel_vmscape_err=''
+        if [ -n "$g_kernel_err" ]; then
+            kernel_vmscape_err="$g_kernel_err"
+        elif grep -q 'vmscape' "$g_kernel"; then
+            kernel_vmscape="found vmscape in kernel image"
+        fi
+        if [ -z "$kernel_vmscape" ] && [ -r "$opt_config" ]; then
+            if grep -q '^CONFIG_MITIGATION_VMSCAPE=y' "$opt_config"; then
+                kernel_vmscape="VMScape mitigation config option found enabled in kernel config"
+            fi
+        fi
+        if [ -z "$kernel_vmscape" ] && [ -n "$opt_map" ]; then
+            if grep -q 'vmscape_select_mitigation' "$opt_map"; then
+                kernel_vmscape="found vmscape_select_mitigation in System.map"
+            fi
+        fi
+        if [ -n "$kernel_vmscape" ]; then
+            pstatus green YES "$kernel_vmscape"
+        elif [ -n "$kernel_vmscape_err" ]; then
+            pstatus yellow UNKNOWN "$kernel_vmscape_err"
+        else
+            pstatus yellow NO
+        fi
+
+    elif [ "$sys_interface_available" = 0 ]; then
+        # we have no sysfs but were asked to use it only!
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        # override status & msg in case CPU is not vulnerable after all
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        # if msg is empty, sysfs check didn't fill it, rely on our own test
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$g_has_vmm" = 0 ]; then
+                pvulnstatus "$cve" OK "this system is not running a hypervisor"
+            elif [ -n "$kernel_vmscape" ]; then
+                pvulnstatus "$cve" OK "Kernel mitigates the vulnerability"
+            elif [ -z "$kernel_vmscape" ] && [ -z "$kernel_vmscape_err" ]; then
+                pvulnstatus "$cve" VULN "Your kernel doesn't support VMScape mitigation"
+                explain "Update your kernel to a version that includes the VMScape mitigation (Linux 6.18+, or check\n" \
+                    "if your distro has a backport). The mitigation issues IBPB before returning to userspace\n" \
+                    "after a VM exit, preventing stale guest branch predictions from leaking host kernel memory."
+            else
+                pvulnstatus "$cve" UNK "couldn't determine mitigation status: $kernel_vmscape_err"
+            fi
+        else
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2025_40300_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     else
