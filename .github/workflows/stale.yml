@@ -30,4 +30,4 @@ jobs:
           days-before-close: 7
           stale-issue-label: stale
           remove-stale-when-updated: true
-          debug-only: ${{ case(inputs.action == 'apply', false, true) }}
+          debug-only: ${{ case(inputs.action == 'dryrun', true, false) }}
