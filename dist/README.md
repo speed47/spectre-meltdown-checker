@@ -16,11 +16,11 @@ CVE | Name | Aliases
 [CVE-2018-3620](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3620) | L1 Terminal Fault | Foreshadow-NG (OS/SMM)
 [CVE-2018-3646](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-3646) | L1 Terminal Fault | Foreshadow-NG (VMM)
 [CVE-2018-12126](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12126) | Microarchitectural Store Buffer Data Sampling | MSBDS, Fallout
-[CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | Microarchitectural Fill Buffer Data Sampling | MFBDS, ZombieLoad
 [CVE-2018-12127](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12127) | Microarchitectural Load Port Data Sampling | MLPDS, RIDL
+[CVE-2018-12130](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12130) | Microarchitectural Fill Buffer Data Sampling | MFBDS, ZombieLoad
+[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes | iTLB Multihit, No eXcuses
 [CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX Asynchronous Abort | TAA, ZombieLoad V2
-[CVE-2018-12207](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-12207) | Machine Check Exception on Page Size Changes | iTLB Multihit, No eXcuses
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | Special Register Buffer Data Sampling | SRBDS, CROSSTalk
 [CVE-2022-29900](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29900) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (AMD)
 [CVE-2022-29901](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29901) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (Intel), RSBA
@@ -28,9 +28,9 @@ CVE | Name | Aliases
 [CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed
 [CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar
+[CVE-2024-28956](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-28956) | Indirect Target Selection | ITS
 [CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack, Store Queue | TSA-SQ
 [CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack, L1 | TSA-L1
-[CVE-2024-28956](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-28956) | Indirect Target Selection | ITS
 [CVE-2025-40300](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-40300) | VM-Exit Stale Branch Prediction | VMScape
 [CVE-2024-45332](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-45332) | Branch Privilege Injection | BPI
 
@@ -50,11 +50,11 @@ CVE-2018-3615 (Foreshadow, SGX) | ✅ (3) | ✅ (3) | ✅ (3) | ✅ (3) | Microc
 CVE-2018-3620 (Foreshadow-NG, OS/SMM) | 💥 | ✅ | ✅ | ✅ | Kernel update
 CVE-2018-3646 (Foreshadow-NG, VMM) | ✅ | ✅ | 💥 | 💥 | Kernel update (or disable EPT/SMT)
 CVE-2018-12126 (MSBDS, Fallout) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
-CVE-2018-12130 (MFBDS, ZombieLoad) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2018-12127 (MLPDS, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2018-12130 (MFBDS, ZombieLoad) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2018-12207 (iTLB Multihit, No eXcuses) | ✅ | ✅ | ☠️ | ✅ | Hypervisor update (or disable hugepages)
 CVE-2019-11091 (MDSUM, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2019-11135 (TAA, ZombieLoad V2) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
-CVE-2018-12207 (iTLB Multihit, No eXcuses) | ✅ | ✅ | ☠️ | ✅ | Hypervisor update (or disable hugepages)
 CVE-2020-0543 (SRBDS, CROSSTalk) | 💥 (2) | 💥 (2) | 💥 (2) | 💥 (2) | Microcode + kernel update
 CVE-2022-29900 (Retbleed AMD) | 💥 | ✅ | 💥 | ✅ | Kernel update (+ microcode for IBPB)
 CVE-2022-29901 (Retbleed Intel, RSBA) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update (eIBRS or IBRS)
@@ -62,9 +62,9 @@ CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (o
 CVE-2023-20569 (Inception, SRSO) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
 CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or kernel workaround)
 CVE-2023-23583 (Reptar) | ☠️ | ☠️ | ☠️ | ☠️ | Microcode update
+CVE-2024-28956 (ITS) | 💥 | ✅ | 💥 (4) | ✅ | Microcode + kernel update
 CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
-CVE-2024-28956 (ITS) | 💥 | ✅ | 💥 (4) | ✅ | Microcode + kernel update
 CVE-2025-40300 (VMScape) | ✅ | ✅ | 💥 | ✅ | Kernel update (IBPB on VM-exit)
 CVE-2024-45332 (BPI) | 💥 | ✅ | 💥 | ✅ | Microcode update
 
@@ -121,21 +121,21 @@ A guest VM can exploit L1TF to read memory belonging to the host or other guests
 
 **CVE-2018-12126 — Microarchitectural Store Buffer Data Sampling (MSBDS, Fallout)**
 
-**CVE-2018-12130 — Microarchitectural Fill Buffer Data Sampling (MFBDS, ZombieLoad)**
-
 **CVE-2018-12127 — Microarchitectural Load Port Data Sampling (MLPDS, RIDL)**
+
+**CVE-2018-12130 — Microarchitectural Fill Buffer Data Sampling (MFBDS, ZombieLoad)**
 
 **CVE-2019-11091 — Microarchitectural Data Sampling Uncacheable Memory (MDSUM, RIDL)**
 
 These four CVEs are collectively known as "MDS" (Microarchitectural Data Sampling) vulnerabilities. They exploit different CPU internal buffers — store buffer, fill buffer, load ports, and uncacheable memory paths — that can leak recently accessed data across privilege boundaries during speculative execution. An unprivileged attacker can observe data recently processed by the kernel or other processes. Mitigation requires a microcode update (providing the MD_CLEAR mechanism) plus a kernel update that uses VERW to clear affected buffers on privilege transitions. Disabling Hyper-Threading (SMT) provides additional protection because sibling threads share these buffers. The performance impact is low to significant, depending on the frequency of kernel transitions and whether SMT is disabled.
 
-**CVE-2019-11135 — TSX Asynchronous Abort (TAA, ZombieLoad V2)**
-
-On CPUs with Intel TSX, a transactional abort can leave data from the line fill buffers in a state observable through side channels, similar to the MDS vulnerabilities but triggered through TSX. Mitigation requires a microcode update plus kernel support to either clear affected buffers or disable TSX entirely (via the TSX_CTRL MSR). The performance impact is low to significant, similar to MDS, with the option to eliminate the attack surface entirely by disabling TSX at the cost of losing transactional memory support.
-
 **CVE-2018-12207 — Machine Check Exception on Page Size Changes (iTLB Multihit, No eXcuses)**
 
 A malicious guest VM can trigger a machine check exception (MCE) — crashing the entire host — by creating specific conditions in the instruction TLB involving page size changes. This is a denial-of-service vulnerability affecting hypervisors running untrusted guests. Mitigation requires either disabling hugepage use in the hypervisor or updating the hypervisor to avoid the problematic iTLB configurations. The performance impact ranges from low to significant depending on the approach: disabling hugepages can substantially impact memory-intensive workloads.
+
+**CVE-2019-11135 — TSX Asynchronous Abort (TAA, ZombieLoad V2)**
+
+On CPUs with Intel TSX, a transactional abort can leave data from the line fill buffers in a state observable through side channels, similar to the MDS vulnerabilities but triggered through TSX. Mitigation requires a microcode update plus kernel support to either clear affected buffers or disable TSX entirely (via the TSX_CTRL MSR). The performance impact is low to significant, similar to MDS, with the option to eliminate the attack surface entirely by disabling TSX at the cost of losing transactional memory support.
 
 **CVE-2020-0543 — Special Register Buffer Data Sampling (SRBDS, CROSSTalk)**
 
@@ -165,6 +165,10 @@ A bug in AMD Zen 2 processors causes the VZEROUPPER instruction to incorrectly z
 
 A bug in Intel processors causes unexpected behavior when executing instructions with specific redundant REX prefixes. Depending on the circumstances, this can result in a system crash (MCE), unpredictable behavior, or potentially privilege escalation. Any software running on an affected CPU can trigger the bug. Mitigation requires a microcode update. Performance impact is low.
 
+**CVE-2024-28956 — Indirect Target Selection (ITS)**
+
+On certain Intel processors (Skylake-X stepping 6+, Kaby Lake, Comet Lake, Ice Lake, Tiger Lake, Rocket Lake), an attacker can train the indirect branch predictor to speculatively execute a targeted gadget in the kernel, bypassing eIBRS protections. The Branch Target Buffer (BTB) uses only partial address bits to index indirect branch targets, allowing user-space code to influence kernel-space speculative execution. Some affected CPUs (Ice Lake, Tiger Lake, Rocket Lake) are only vulnerable to native user-to-kernel attacks, not guest-to-host (VMX) attacks. Mitigation requires both a microcode update (IPU 2025.1 / microcode-20250512+, which fixes IBPB to fully flush indirect branch predictions) and a kernel update (CONFIG_MITIGATION_ITS, Linux 6.15+) that aligns branch/return thunks or uses RSB stuffing. Performance impact is low.
+
 **CVE-2024-36350 — Transient Scheduler Attack, Store Queue (TSA-SQ)**
 
 On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculatively retrieve stale data from the store queue during certain timing windows, allowing an attacker to infer data from previous store operations across privilege boundaries. The attack can also leak data between SMT sibling threads. Mitigation requires both a microcode update (exposing the VERW_CLEAR capability) and a kernel update (CONFIG_MITIGATION_TSA, Linux 6.16+) that uses the VERW instruction to clear CPU buffers on user/kernel transitions and before VMRUN. The kernel also clears buffers on idle when SMT is active. Performance impact is low to medium.
@@ -172,10 +176,6 @@ On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculative
 **CVE-2024-36357 — Transient Scheduler Attack, L1 (TSA-L1)**
 
 On AMD Zen 3 and Zen 4 processors, the CPU's transient scheduler may speculatively retrieve stale data from the L1 data cache during certain timing windows, allowing an attacker to infer data in the L1D cache across privilege boundaries. Mitigation requires the same microcode and kernel updates as TSA-SQ: a microcode update exposing VERW_CLEAR and a kernel update (CONFIG_MITIGATION_TSA, Linux 6.16+) that clears CPU buffers via VERW on privilege transitions. Performance impact is low to medium.
-
-**CVE-2024-28956 — Indirect Target Selection (ITS)**
-
-On certain Intel processors (Skylake-X stepping 6+, Kaby Lake, Comet Lake, Ice Lake, Tiger Lake, Rocket Lake), an attacker can train the indirect branch predictor to speculatively execute a targeted gadget in the kernel, bypassing eIBRS protections. The Branch Target Buffer (BTB) uses only partial address bits to index indirect branch targets, allowing user-space code to influence kernel-space speculative execution. Some affected CPUs (Ice Lake, Tiger Lake, Rocket Lake) are only vulnerable to native user-to-kernel attacks, not guest-to-host (VMX) attacks. Mitigation requires both a microcode update (IPU 2025.1 / microcode-20250512+, which fixes IBPB to fully flush indirect branch predictions) and a kernel update (CONFIG_MITIGATION_ITS, Linux 6.15+) that aligns branch/return thunks or uses RSB stuffing. Performance impact is low.
 
 **CVE-2025-40300 — VM-Exit Stale Branch Prediction (VMScape)**
 
