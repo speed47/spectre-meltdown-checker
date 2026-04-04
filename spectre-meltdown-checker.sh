@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.26.0404593'
+VERSION='26.26.0404605'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
