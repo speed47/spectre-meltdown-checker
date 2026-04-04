@@ -106,9 +106,10 @@ is_cpu_affected() {
     _set_immune tsa
     # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
     _set_immune retbleed
-    # Downfall & Reptar are Intel specific, look for "is_intel" below:
+    # Downfall, Reptar & ITS are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
+    _set_immune its
 
     if is_cpu_mds_free; then
         _infer_immune msbds
@@ -258,6 +259,32 @@ is_cpu_affected() {
                 # and GDS_NO not set: assume affected (whitelist principle)
                 pr_debug "is_cpu_affected: downfall: unknown AVX-capable CPU, defaulting to affected"
                 _infer_vuln downfall
+            fi
+            set +u
+        fi
+        # ITS (Indirect Target Selection, CVE-2024-28956)
+        # kernel vulnerable_to_its() + cpu_vuln_blacklist (159013a7ca18)
+        # immunity: ARCH_CAP_ITS_NO (bit 62 of IA32_ARCH_CAPABILITIES)
+        # immunity: X86_FEATURE_BHI_CTRL (none of the affected CPUs have this)
+        # vendor scope: Intel only (family 6), with stepping constraints on some models
+        if [ "$cap_its_no" = 1 ]; then
+            pr_debug "is_cpu_affected: its: not affected (ITS_NO)"
+            _set_immune its
+        elif [ "$cpu_family" = 6 ]; then
+            set -u
+            if { [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] && [ "$cpu_stepping" -gt 5 ]; } ||
+                { [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -gt 11 ]; } ||
+                { [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -gt 12 ]; } ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ]; then
+                pr_debug "is_cpu_affected: its: affected"
+                _set_vuln its
             fi
             set +u
         fi
@@ -520,12 +547,12 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar set via eval (_set_immune)
+    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its set via eval (_set_immune)
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar"
+        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
