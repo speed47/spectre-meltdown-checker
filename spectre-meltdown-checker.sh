@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.23.0402913'
+VERSION='26.23.0404514'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -3427,7 +3427,7 @@ pr_info
 # Sets: ret_sys_interface_check_fullmsg
 # Returns: 0 if file matched, 1 otherwise
 sys_interface_check() {
-    local file regex mode msg mockvarname
+    local file regex mode mockvarname
     file="$1"
     regex="${2:-}"
     mode="${3:-}"
