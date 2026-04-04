@@ -123,9 +123,11 @@ It must always be okay to run this script in a production environment.
 
 Never look at the kernel version string to determine whether it supports a mitigation. This would defeat the script's purpose: it must detect mitigations in unknown, vendor-patched, or backported kernels. Similarly, do not blindly trust what `sysfs` reports when it is possible to verify directly.
 
-### 3. Never hardcode microcode versions
+### 3. Never hardcode microcode versions (with one exception)
 
 Never look at the microcode version to determine whether it has the proper mitigation mechanisms. Instead, probe for the mechanisms themselves (CPUID bits, MSR values), as the kernel would.
+
+**Exception**: When a vulnerability is fixed purely by a microcode update and the fix exposes **no** detectable CPUID bit, MSR bit, or ARCH\_CAP flag, then we must hardcode the known-fixing microcode versions for each affected CPU stepping. In this case, build a `<vuln>_ucode_list` table of `FF-MM-SS/platformid_mask,fixed_ucode_version` tuples (sourced from the Intel affected processor list and the Intel-Linux-Processor-Microcode-Data-Files release notes), match against `cpu_cpuid` + `cpu_platformid` in `is_cpu_affected()`, and store the required version in a `g_<vuln>_fixed_ucode_version` global. The CVE check then compares `cpu_ucode` against this threshold. Because Intel never lists EOL CPUs, the microcode list may be incomplete: keep a model blacklist as a fallback so that affected CPUs without a known fix are still flagged as affected (the CVE check should handle the empty `g_<vuln>_fixed_ucode_version` case by reporting VULN with "no microcode update available"). See Reptar (`g_reptar_fixed_ucode_version`) and BPI (`g_bpi_fixed_ucode_version`) for reference implementations.
 
 ### 4. Assume affected unless proven otherwise (whitelist approach)
 
@@ -705,7 +707,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 
 ### Key Rules to Remember
 
-- **Never hardcode kernel or microcode versions** - detect capabilities directly (design principles 2 and 3).
+- **Never hardcode kernel or microcode versions** - detect capabilities directly (design principles 2 and 3). Exception: when a microcode fix has no detectable indicator, hardcode fixing versions per CPU (see principle 3).
 - **Assume affected by default** - only mark a CPU as unaffected when there is positive evidence (design principle 4).
 - **Always handle both live and offline modes** - use `$opt_live` to branch, and print `N/A "not testable in offline mode"` for runtime-only checks when offline.
 - **Use `explain()`** when reporting VULN to give actionable remediation advice (see "Cross-Cutting Features" above).

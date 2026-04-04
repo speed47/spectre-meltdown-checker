@@ -42,7 +42,7 @@ _is_cpu_affected_cached() {
 # Args: $1=cve_id (one of the $g_supported_cve_list items)
 # Returns: 0 if affected, 1 if not affected
 is_cpu_affected() {
-    local result cpuid_hex reptar_ucode_list tuple fixed_ucode_ver affected_fmspi affected_fms ucode_platformid_mask affected_cpuid i cpupart cpuarch
+    local result cpuid_hex reptar_ucode_list bpi_ucode_list tuple fixed_ucode_ver affected_fmspi affected_fms ucode_platformid_mask affected_cpuid i cpupart cpuarch
 
     # if CPU is Intel and is in our dump of the Intel official affected CPUs page, use it:
     if is_intel; then
@@ -296,16 +296,17 @@ is_cpu_affected() {
         # as the mitigation is only ucode-based and there's no flag exposed by the kernel or by an updated ucode.
         # we have to hardcode the truthtable of affected CPUs vs updated ucodes...
         # https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/redundant-prefix-issue.html
-        # list taken from:
+        # list initially taken from:
         # https://github.com/intel/Intel-Linux-Processor-Microcode-Data-Files/commit/ece0d294a29a1375397941a4e6f2f7217910bc89#diff-e6fad0f2abbac6c9603b2e8f88fe1d151a83de708aeca1c1d93d881c958ecba4R26
-        # both pages have a lot of inconsistencies, I've tried to fix the errors the best I could, the logic being: if it's not in the
-        # blog page, then the microcode update in the commit is not related to reptar, if microcode versions differ, then the one in github is correct,
-        # if a stepping exists in the blog page but not in the commit, then the blog page is right
+        # updated 2026-04 with Intel affected processor list + releasenote.md:
+        # added 06-9a-04/40 (AZB), 06-bd-01/80 (Lunar Lake, post-dates Reptar: first ucode already includes fix)
+        g_reptar_fixed_ucode_version=''
         reptar_ucode_list='
 06-97-02/07,00000032
 06-97-05/07,00000032
 06-9a-03/80,00000430
 06-9a-04/80,00000430
+06-9a-04/40,00000005
 06-6c-01/10,01000268
 06-6a-06/87,0d0003b9
 06-7e-05/80,000000c2
@@ -326,6 +327,7 @@ is_cpu_affected() {
 06-8d-01/c2,0000004e
 06-8d-00/c2,0000004e
 06-8c-02/c2,00000034
+06-bd-01/80,0000011f
 '
         for tuple in $reptar_ucode_list; do
             fixed_ucode_ver=$((0x$(echo "$tuple" | cut -d, -f2)))
@@ -339,12 +341,35 @@ is_cpu_affected() {
                     0x"$(echo "$affected_fms" | cut -d- -f3)"
             )
             if [ "$cpu_cpuid" = "$affected_cpuid" ] && [ $((cpu_platformid & ucode_platformid_mask)) -gt 0 ]; then
-                # this is not perfect as Intel never tells about their EOL CPUs, so more CPUs might be affected but there's no way to tell
                 _set_vuln reptar
                 g_reptar_fixed_ucode_version=$fixed_ucode_ver
                 break
             fi
         done
+        # if we didn't match the ucode list above, also check the model blacklist:
+        # Intel never tells about their EOL CPUs, so more CPUs might be affected
+        # than the ones that received a microcode update (e.g. steppings with
+        # different platform IDs that were dropped before the Reptar fix).
+        if [ -z "$g_reptar_fixed_ucode_version" ] && [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SAPPHIRERAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LUNARLAKE_M" ]; then
+                pr_debug "is_cpu_affected: reptar: affected (model match, no known fixing ucode)"
+                _set_vuln reptar
+            fi
+            set +u
+        fi
 
         # Retbleed (Intel, CVE-2022-29901): Skylake through Rocket Lake, or any CPU with RSBA
         # kernel cpu_vuln_blacklist for RETBLEED (6b80b59b3555, 6ad0ad2bf8a6, f54d45372c6a)
@@ -416,12 +441,76 @@ is_cpu_affected() {
         fi
 
         # BPI (Branch Privilege Injection, CVE-2024-45332)
-        # microcode-only fix (intel-microcode 20250512+), no kernel X86_BUG flag
-        # Intel affected processor list: Coffee Lake through Arrow Lake/Lunar Lake,
-        # plus some server parts (Cooper Lake, Sapphire/Emerald Rapids, Grand Ridge)
-        # immunity: no ARCH_CAP bits
-        # vendor scope: Intel only (family 6)
-        if [ "$cpu_family" = 6 ]; then
+        # microcode-only fix, no kernel X86_BUG flag, no CPUID/MSR indicator for the fix.
+        # We have to hardcode the truthtable of affected CPUs vs fixing ucodes,
+        # same approach as Reptar (see above).
+        # https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/indirect-branch-predictor-delayed-updates.html
+        # list taken from Intel affected processor list + Intel-Linux-Processor-Microcode-Data-Files releasenote.md
+        # format: FF-MM-SS/platformid_mask,fixed_ucode_version
+        g_bpi_fixed_ucode_version=''
+        bpi_ucode_list='
+06-9e-0d/22,00000104
+06-8e-0a/c0,000000f6
+06-8e-0b/d0,000000f6
+06-8e-0c/94,00000100
+06-a5-02/20,00000100
+06-a5-03/22,00000100
+06-a5-05/22,00000100
+06-a6-00/80,00000102
+06-a6-01/80,00000100
+06-a7-01/02,00000065
+06-7e-05/80,000000cc
+06-6a-06/87,0d000421
+06-6c-01/10,010002f1
+06-8c-01/80,000000be
+06-8c-02/c2,0000003e
+06-8d-01/c2,00000058
+06-97-02/07,0000003e
+06-97-05/07,0000003e
+06-9a-03/80,0000043b
+06-9a-04/80,0000043b
+06-9a-04/40,0000000c
+06-be-00/19,00000021
+06-b7-01/32,00000133
+06-ba-02/e0,00006134
+06-ba-03/e0,00006134
+06-bf-02/07,0000003e
+06-bf-05/07,0000003e
+06-aa-04/e6,00000028
+06-b5-00/80,0000000d
+06-c5-02/82,0000011b
+06-c6-02/82,0000011b
+06-bd-01/80,00000125
+06-55-0b/bf,07002b01
+06-8f-07/87,2b000661
+06-8f-08/87,2b000661
+06-8f-08/10,2c000421
+06-cf-02/87,210002d3
+06-7a-08/01,00000026
+'
+        for tuple in $bpi_ucode_list; do
+            fixed_ucode_ver=$((0x$(echo "$tuple" | cut -d, -f2)))
+            affected_fmspi=$(echo "$tuple" | cut -d, -f1)
+            affected_fms=$(echo "$affected_fmspi" | cut -d/ -f1)
+            ucode_platformid_mask=0x$(echo "$affected_fmspi" | cut -d/ -f2)
+            affected_cpuid=$(
+                fms2cpuid \
+                    0x"$(echo "$affected_fms" | cut -d- -f1)" \
+                    0x"$(echo "$affected_fms" | cut -d- -f2)" \
+                    0x"$(echo "$affected_fms" | cut -d- -f3)"
+            )
+            if [ "$cpu_cpuid" = "$affected_cpuid" ] && [ $((cpu_platformid & ucode_platformid_mask)) -gt 0 ]; then
+                _set_vuln bpi
+                g_bpi_fixed_ucode_version=$fixed_ucode_ver
+                break
+            fi
+        done
+        # if we didn't match the ucode list above, also check the model blacklist:
+        # Intel never tells about their EOL CPUs, so more CPUs might be affected
+        # than the ones that received a microcode update. In that case, we flag
+        # the CPU as affected but g_bpi_fixed_ucode_version stays empty (the CVE
+        # check will handle this by reporting VULN with no known fix).
+        if [ -z "$g_bpi_fixed_ucode_version" ] && [ "$cpu_family" = 6 ]; then
             set -u
             if [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
@@ -449,7 +538,7 @@ is_cpu_affected() {
                 [ "$cpu_model" = "$INTEL_FAM6_EMERALDRAPIDS_X" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_ATOM_CRESTMONT" ]; then
-                pr_debug "is_cpu_affected: bpi: affected"
+                pr_debug "is_cpu_affected: bpi: affected (model match, no known fixing ucode)"
                 _set_vuln bpi
             fi
             set +u
