@@ -106,10 +106,13 @@ is_cpu_affected() {
     _set_immune tsa
     # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
     _set_immune retbleed
-    # Downfall, Reptar & ITS are Intel specific, look for "is_intel" below:
+    # Downfall, Reptar, ITS & BPI are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
     _set_immune its
+    _set_immune bpi
+    # VMScape affects Intel, AMD and Hygon — set immune, overridden below:
+    _set_immune vmscape
 
     if is_cpu_mds_free; then
         _infer_immune msbds
@@ -364,6 +367,94 @@ is_cpu_affected() {
             fi
         fi
 
+        # VMScape (CVE-2025-40300): Intel model blacklist
+        # kernel cpu_vuln_blacklist VMSCAPE (a508cec6e521 + 8a68d64bb103)
+        # immunity: no ARCH_CAP bits (purely blacklist-based)
+        # note: kernel only sets bug on bare metal (!X86_FEATURE_HYPERVISOR)
+        # vendor scope: Intel + AMD + Hygon (AMD/Hygon handled below)
+        if [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_SANDYBRIDGE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SANDYBRIDGE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_IVYBRIDGE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_G" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_HASWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_G" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_CANNONLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_METEORLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_H" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_U" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LUNARLAKE_M" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SAPPHIRERAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_GRANITERAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_EMERALDRAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_CRESTMONT_X" ]; then
+                pr_debug "is_cpu_affected: vmscape: affected"
+                _set_vuln vmscape
+            fi
+            set +u
+        fi
+
+        # BPI (Branch Privilege Injection, CVE-2024-45332)
+        # microcode-only fix (intel-microcode 20250512+), no kernel X86_BUG flag
+        # Intel affected processor list: Coffee Lake through Arrow Lake/Lunar Lake,
+        # plus some server parts (Cooper Lake, Sapphire/Emerald Rapids, Grand Ridge)
+        # immunity: no ARCH_CAP bits
+        # vendor scope: Intel only (family 6)
+        if [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_METEORLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_H" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ARROWLAKE_U" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LUNARLAKE_M" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SAPPHIRERAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_EMERALDRAPIDS_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_CRESTMONT" ]; then
+                pr_debug "is_cpu_affected: bpi: affected"
+                _set_vuln bpi
+            fi
+            set +u
+        fi
+
     elif is_amd || is_hygon; then
         # AMD revised their statement about affected_variant2 => affected
         # https://www.amd.com/en/corporate/speculative-execution
@@ -403,6 +494,20 @@ is_cpu_affected() {
         # Retbleed (AMD, CVE-2022-29900): families 0x15-0x17 (kernel X86_BUG_RETBLEED)
         if [ "$cpu_family" = $((0x15)) ] || [ "$cpu_family" = $((0x16)) ] || [ "$cpu_family" = $((0x17)) ]; then
             _set_vuln retbleed
+        fi
+
+        # VMScape (CVE-2025-40300): AMD families 0x17/0x19/0x1a, Hygon family 0x18
+        # kernel cpu_vuln_blacklist VMSCAPE (a508cec6e521)
+        if is_amd; then
+            if [ "$cpu_family" = $((0x17)) ] || [ "$cpu_family" = $((0x19)) ] || [ "$cpu_family" = $((0x1a)) ]; then
+                pr_debug "is_cpu_affected: vmscape: AMD family $cpu_family affected"
+                _set_vuln vmscape
+            fi
+        elif is_hygon; then
+            if [ "$cpu_family" = $((0x18)) ]; then
+                pr_debug "is_cpu_affected: vmscape: Hygon family $cpu_family affected"
+                _set_vuln vmscape
+            fi
         fi
 
     elif [ "$cpu_vendor" = CAVIUM ]; then
@@ -547,12 +652,13 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its set via eval (_set_immune)
+    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its/vmscape/bpi set via eval (_set_immune)
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
         pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
+        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
