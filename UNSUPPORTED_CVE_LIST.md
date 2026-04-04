@@ -2,6 +2,16 @@
 
 This document lists transient execution CVEs that have been evaluated and determined to be **out of scope** for this tool. See the [Which rules are governing the support of a CVE in this tool?](dist/FAQ.md#which-rules-are-governing-the-support-of-a-cve-in-this-tool) section in the FAQ for the general policy.
 
+## CVE-2018-3693 — Bounds Check Bypass Store (Spectre v1.1)
+
+- **Issue:** [#236](https://github.com/speed47/spectre-meltdown-checker/issues/236)
+- **Red Hat advisory:** [Speculative Store Bypass / Bounds Check Bypass (CVE-2018-3693)](https://access.redhat.com/solutions/3523601)
+- **CVSS:** 5.6 (Medium)
+
+A subvariant of Spectre V1 where speculative store operations can write beyond validated buffer boundaries before the bounds check resolves, allowing an attacker to alter cache state and leak information via side channels.
+
+**Why out of scope:** The mitigations are identical to CVE-2017-5753 (Spectre V1): `lfence` instructions after bounds checks and `array_index_nospec()` barriers in kernel code. There is no separate sysfs entry, no new CPU feature flag, and no distinct microcode change. This tool's existing CVE-2017-5753 checks already detect these mitigations (`__user pointer sanitization`, `usercopy/swapgs barriers`), so CVE-2018-3693 is fully covered as part of Spectre V1.
+
 ## CVE-2018-9056 — BranchScope
 
 - **Issue:** [#169](https://github.com/speed47/spectre-meltdown-checker/issues/169)
@@ -12,16 +22,6 @@ This document lists transient execution CVEs that have been evaluated and determ
 A speculative execution attack exploiting the directional branch predictor, allowing an attacker to infer data by manipulating the shared branch prediction state (pattern history table). Initially demonstrated on Intel processors.
 
 **Why out of scope:** No kernel or microcode mitigations have been issued. Red Hat closed their tracking bug as "CLOSED CANTFIX", concluding that "this is a hardware processor issue, not a Linux kernel flaw" and that "it is specific to a target software which uses sensitive information in branching expressions." The mitigation responsibility falls on individual software to avoid using sensitive data in conditional branches, which is out of the scope of this tool.
-
-## CVE-2018-3693 — Bounds Check Bypass Store (Spectre v1.1)
-
-- **Issue:** [#236](https://github.com/speed47/spectre-meltdown-checker/issues/236)
-- **Red Hat advisory:** [Speculative Store Bypass / Bounds Check Bypass (CVE-2018-3693)](https://access.redhat.com/solutions/3523601)
-- **CVSS:** 5.6 (Medium)
-
-A subvariant of Spectre V1 where speculative store operations can write beyond validated buffer boundaries before the bounds check resolves, allowing an attacker to alter cache state and leak information via side channels.
-
-**Why out of scope:** The mitigations are identical to CVE-2017-5753 (Spectre V1): `lfence` instructions after bounds checks and `array_index_nospec()` barriers in kernel code. There is no separate sysfs entry, no new CPU feature flag, and no distinct microcode change. This tool's existing CVE-2017-5753 checks already detect these mitigations (`__user pointer sanitization`, `usercopy/swapgs barriers`), so CVE-2018-3693 is fully covered as part of Spectre V1.
 
 ## CVE-2018-15572 — SpectreRSB (Return Stack Buffer)
 
@@ -65,6 +65,54 @@ A backporting mistake in Linux stable/longterm kernel versions (4.4.x through 4.
 AMD CPUs may transiently execute non-canonical loads and stores using only the lower 48 address bits, potentially resulting in data leakage. The SLAM research (2023) demonstrated that this could be exploited on existing AMD Zen+/Zen2 CPUs and could also affect future CPUs with Intel LAM, AMD UAI, or ARM TBI features.
 
 **Why out of scope:** AMD's mitigation guidance is for software vendors to "analyze their code for any potential vulnerabilities" and insert LFENCE or use existing speculation mitigation techniques in their own code. No microcode or kernel-level mitigations have been issued. The responsibility falls on individual software, not on the kernel or firmware, leaving nothing for this script to check.
+
+## CVE-2024-7881 — ARM Prefetcher Privilege Escalation
+
+- **Affected CPUs:** Specific ARM cores only
+- **CVSS:** 5.1 (Medium)
+
+The prefetch engine on certain ARM cores can fetch data from privileged memory locations. Mitigation is disabling the affected prefetcher via the `CPUACTLR6_EL1[41]` register bit.
+
+**Why out of scope:** ARM-specific with very narrow scope and no Linux sysfs integration. The mitigation is a per-core register tweak, not a kernel or microcode update detectable by this tool.
+
+## CVE-2024-56161 — EntrySign (AMD Microcode Signature Bypass)
+
+- **Affected CPUs:** AMD Zen 1-5
+- **CVSS:** 7.2 (High)
+
+A weakness in AMD's microcode signature verification (AES-CMAC hash) allows loading arbitrary unsigned microcode with administrator privileges.
+
+**Why out of scope:** This is a microcode integrity/authentication issue, not a speculative execution vulnerability. It does not involve transient execution side channels and is outside the scope of this tool.
+
+## CVE-2025-20623 — Shared Microarchitectural Predictor State (10th Gen Intel)
+
+- **Advisory:** [INTEL-SA-01247](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-01247.html)
+- **Affected CPUs:** Intel 10th Generation Core Processors only
+- **CVSS:** 5.6 (Medium)
+
+Shared microarchitectural predictor state on 10th generation Intel CPUs may allow information disclosure.
+
+**Why out of scope:** Very narrow scope (single CPU generation). Mitigated by the same microcode update as CVE-2024-45332 (BPI) and handled through the existing Spectre V2 framework. No dedicated sysfs entry or kernel mitigation beyond what BPI already provides.
+
+## CVE-2025-24495 — Lion Cove BPU Initialization
+
+- **Advisory:** [INTEL-SA-01322](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-01322.html)
+- **Research:** [Training Solo (VUSec)](https://www.vusec.net/projects/training-solo/)
+- **Affected CPUs:** Intel Core Ultra with Lion Cove core only (Lunar Lake, Arrow Lake)
+- **CVSS:** 6.8 (Medium, CVSS v4)
+
+A branch predictor initialization issue specific to Intel's Lion Cove microarchitecture, discovered as part of the "Training Solo" research.
+
+**Why out of scope:** This is a subset of the ITS (Indirect Target Selection) vulnerability (CVE-2024-28956). It shares the same sysfs entry (`/sys/devices/system/cpu/vulnerabilities/indirect_target_selection`) and kernel mitigation framework. Since ITS (CVE-2024-28956) is implemented in this tool, Lion Cove BPU is already covered automatically.
+
+## CVE-2025-29943 — StackWarp (AMD SEV-SNP)
+
+- **Affected CPUs:** AMD Zen 1-5
+- **CVSS:** Low
+
+Exploits a synchronization failure in the AMD stack engine via an undocumented MSR bit, targeting AMD SEV-SNP confidential VMs. Requires hypervisor-level (ring 0) access.
+
+**Why out of scope:** Not a transient/speculative execution side channel. This is an architectural attack on AMD SEV-SNP confidential computing that requires hypervisor access, which is outside the threat model of this tool.
 
 ## CVE-2024-36348 — AMD Transient Scheduler Attack (UMIP bypass)
 
