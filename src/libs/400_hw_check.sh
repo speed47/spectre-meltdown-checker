@@ -734,6 +734,8 @@ check_cpu() {
         cap_tsx_ctrl_msr=-1
         cap_gds_ctrl=-1
         cap_gds_no=-1
+        cap_rfds_no=-1
+        cap_rfds_clear=-1
         cap_its_no=-1
         if [ "$cap_arch_capabilities" = -1 ]; then
             pstatus yellow UNKNOWN
@@ -749,6 +751,8 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
             pstatus yellow NO
         else
@@ -765,6 +769,8 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
             if [ $ret = $READ_MSR_RET_OK ]; then
                 capabilities=$ret_read_msr_value
@@ -781,8 +787,10 @@ check_cpu() {
                 [ $((ret_read_msr_value_lo >> 8 & 1)) -eq 1 ] && cap_taa_no=1
                 [ $((ret_read_msr_value_lo >> 25 & 1)) -eq 1 ] && cap_gds_ctrl=1
                 [ $((ret_read_msr_value_lo >> 26 & 1)) -eq 1 ] && cap_gds_no=1
+                [ $((ret_read_msr_value_lo >> 27 & 1)) -eq 1 ] && cap_rfds_no=1
+                [ $((ret_read_msr_value_lo >> 28 & 1)) -eq 1 ] && cap_rfds_clear=1
                 [ $((ret_read_msr_value_hi >> 30 & 1)) -eq 1 ] && cap_its_no=1
-                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no its_no=$cap_its_no"
+                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no rfds_no=$cap_rfds_no rfds_clear=$cap_rfds_clear its_no=$cap_its_no"
                 if [ "$cap_ibrs_all" = 1 ]; then
                     pstatus green YES
                 else
@@ -936,6 +944,24 @@ check_cpu() {
         if [ "$cap_gds_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
         elif [ "$cap_gds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU explicitly indicates not being affected by RFDS (RFDS_NO): "
+        if [ "$cap_rfds_no" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU microcode supports clearing register files (RFDS_CLEAR): "
+        if [ "$cap_rfds_clear" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_clear" = 1 ]; then
             pstatus green YES
         else
             pstatus yellow NO

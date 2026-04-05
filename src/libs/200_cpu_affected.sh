@@ -107,9 +107,10 @@ is_cpu_affected() {
     _set_immune tsa
     # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
     _set_immune retbleed
-    # Downfall, Reptar, ITS & BPI are Intel specific, look for "is_intel" below:
+    # Downfall, Reptar, RFDS, ITS & BPI are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
+    _set_immune rfds
     _set_immune its
     _set_immune bpi
     # VMScape affects Intel, AMD and Hygon — set immune, overridden below:
@@ -263,6 +264,32 @@ is_cpu_affected() {
                 # and GDS_NO not set: assume affected (whitelist principle)
                 pr_debug "is_cpu_affected: downfall: unknown AVX-capable CPU, defaulting to affected"
                 _infer_vuln downfall
+            fi
+            set +u
+        fi
+        # RFDS (Register File Data Sampling, CVE-2023-28746)
+        # kernel cpu_vuln_blacklist (8076fcde016c, initial model list)
+        # immunity: ARCH_CAP_RFDS_NO (bit 27 of IA32_ARCH_CAPABILITIES)
+        # vendor scope: Intel only (family 6), Atom/hybrid cores
+        if [ "$cap_rfds_no" = 1 ]; then
+            pr_debug "is_cpu_affected: rfds: not affected (RFDS_NO)"
+            _set_immune rfds
+        elif [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ]; then
+                pr_debug "is_cpu_affected: rfds: affected"
+                _set_vuln rfds
             fi
             set +u
         fi
@@ -769,7 +796,7 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
+        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
         pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"

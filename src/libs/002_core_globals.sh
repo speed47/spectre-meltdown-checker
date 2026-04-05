@@ -166,6 +166,7 @@ CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
 CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
 CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)
 CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
+CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
 CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
 CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
 '
