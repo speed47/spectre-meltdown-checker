@@ -99,6 +99,7 @@ is_cpu_affected() {
     affected_taa=''
     affected_itlbmh=''
     affected_srbds=''
+    affected_sls=''
     # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
     _set_immune zenbleed
     _set_immune inception
@@ -741,13 +742,35 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its/vmscape/bpi set via eval (_set_immune)
+    # SLS (Straight-Line Speculation):
+    # - x86_64: all CPUs are affected (compile-time mitigation CONFIG_MITIGATION_SLS)
+    # - arm64 (CVE-2020-13844): Cortex-A32/A34/A35/A53/A57/A72/A73 confirmed affected,
+    #   and broadly all speculative Armv8-A cores. No kernel mitigation merged.
+    #   Part numbers: A32=0xd01 A34=0xd02 A53=0xd03 A35=0xd04 A57=0xd07 A72=0xd08 A73=0xd09
+    #   Plus later speculative cores: A75=0xd0a A76=0xd0b A77=0xd0d N1=0xd0c V1=0xd40 N2=0xd49 V2=0xd4f
+    if is_intel || is_amd; then
+        _infer_vuln sls
+    elif [ "$cpu_vendor" = ARM ]; then
+        for cpupart in $cpu_part_list; do
+            if echo "$cpupart" | grep -q -w -e 0xd01 -e 0xd02 -e 0xd03 -e 0xd04 \
+                -e 0xd07 -e 0xd08 -e 0xd09 -e 0xd0a -e 0xd0b -e 0xd0c -e 0xd0d \
+                -e 0xd40 -e 0xd49 -e 0xd4f; then
+                _set_vuln sls
+            fi
+        done
+        # non-speculative ARM cores (arch <= 7, or early v8 models) are not affected
+        _infer_immune sls
+    else
+        _infer_immune sls
+    fi
+
+    # shellcheck disable=SC2154
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
         pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
-        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi"
+        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow

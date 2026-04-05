@@ -48,6 +48,28 @@ A Spectre V1 subvariant where the `SWAPGS` instruction can be speculatively exec
 
 **Why out of scope:** This is a Spectre V1 subvariant whose mitigation (SWAPGS barriers) shares the same sysfs entry as CVE-2017-5753. This tool's existing CVE-2017-5753 checks already detect SWAPGS barriers: a mitigated kernel reports `"Mitigation: usercopy/swapgs barriers and __user pointer sanitization"`, while a kernel lacking the fix reports `"Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers"`. CVE-2019-1125 is therefore fully covered as part of Spectre V1.
 
+## CVE-2021-26341 — AMD Straight-Line Speculation (direct branches)
+
+- **Bulletin:** [AMD-SB-1026](https://www.amd.com/en/resources/product-security/bulletin/amd-sb-1026.html)
+- **Affected CPUs:** AMD Zen 1, Zen 2
+- **CVSS:** 6.5 (Medium)
+- **Covered by:** CVE-0000-0001 (SLS supplementary check)
+
+AMD Zen 1/Zen 2 CPUs may transiently execute instructions beyond unconditional direct branches (JMP, CALL), potentially allowing information disclosure via side channels.
+
+**Why out of scope:** This is the AMD-specific direct-branch subset of the broader Straight-Line Speculation (SLS) class. The kernel mitigates it via `CONFIG_MITIGATION_SLS` (formerly `CONFIG_SLS`), which enables the GCC flag `-mharden-sls=all` to insert INT3 after unconditional control flow instructions. Since this is a compile-time-only mitigation with no sysfs interface, no MSR, and no per-CVE CPU feature flag, it cannot be checked using the standard CVE framework. A supplementary SLS check is available via `--extra` mode, which covers this CVE's mitigation as well.
+
+## CVE-2020-13844 — ARM Straight-Line Speculation
+
+- **Advisory:** [ARM Developer Security Update (June 2020)](https://developer.arm.com/Arm%20Security%20Center/Speculative%20Processor%20Vulnerability)
+- **Affected CPUs:** Cortex-A32, A34, A35, A53, A57, A72, A73, and broadly all speculative Armv8-A cores
+- **CVSS:** 5.5 (Medium)
+- **Covered by:** CVE-0000-0001 (SLS supplementary check)
+
+ARM processors may speculatively execute instructions past unconditional control flow changes (RET, BR, BLR). GCC and Clang support `-mharden-sls=all` for aarch64, but the Linux kernel never merged the patches to enable it: a `CONFIG_HARDEN_SLS_ALL` series was submitted in 2021 but rejected upstream.
+
+**Why out of scope:** This is the ARM-specific subset of the broader Straight-Line Speculation (SLS) class. The supplementary SLS check available via `--extra` mode detects affected ARM CPU models and reports that no kernel mitigation is currently available.
+
 ## CVE-2025-20623 — Shared Microarchitectural Predictor State (10th Gen Intel)
 
 - **Advisory:** [INTEL-SA-01247](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-01247.html)

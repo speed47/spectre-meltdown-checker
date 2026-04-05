@@ -32,6 +32,7 @@ exit_cleanup() {
     [ -n "${g_dumped_config:-}" ] && [ -f "$g_dumped_config" ] && rm -f "$g_dumped_config"
     [ -n "${g_kerneltmp:-}" ] && [ -f "$g_kerneltmp" ] && rm -f "$g_kerneltmp"
     [ -n "${g_kerneltmp2:-}" ] && [ -f "$g_kerneltmp2" ] && rm -f "$g_kerneltmp2"
+    [ -n "${g_sls_text_tmp:-}" ] && [ -f "$g_sls_text_tmp" ] && rm -f "$g_sls_text_tmp"
     [ -n "${g_mcedb_tmp:-}" ] && [ -f "$g_mcedb_tmp" ] && rm -f "$g_mcedb_tmp"
     [ -n "${g_intel_tmp:-}" ] && [ -d "$g_intel_tmp" ] && rm -rf "$g_intel_tmp"
     [ -n "${g_linuxfw_tmp:-}" ] && [ -f "$g_linuxfw_tmp" ] && rm -f "$g_linuxfw_tmp"

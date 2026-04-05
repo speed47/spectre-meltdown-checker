@@ -29,9 +29,11 @@ show_usage() {
 		--no-color		don't use color codes
 		--verbose, -v		increase verbosity level, possibly several times
 		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
-		--paranoid		require IBPB to deem Variant 2 as mitigated
-					also require SMT disabled + unconditional L1D flush to deem Foreshadow-NG VMM as mitigated
-					also require SMT disabled to deem MDS vulnerabilities mitigated
+		--paranoid		require all mitigations to be enabled to the fullest extent, including those that
+					are not strictly necessary but provide defense in depth (e.g. SMT disabled, IBPB
+					always-on); without this flag, the script follows the security community consensus
+		--extra			run additional checks for issues that don't have a CVE but are still security-relevant,
+					such as compile-time mitigations not enabled by default (e.g. Straight-Line Speculation)
 
 		--no-sysfs		don't use the /sys interface even if present [Linux]
 		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
@@ -128,6 +130,7 @@ opt_allow_msr_write=0
 opt_cpu=0
 opt_explain=0
 opt_paranoid=0
+opt_extra=0
 opt_mock=0
 opt_intel_db=1
 
@@ -164,6 +167,7 @@ CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
 CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)
 CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
 CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
+CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
 '
 
 # Derive the supported CVE list from the registry

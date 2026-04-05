@@ -68,6 +68,9 @@ while [ -n "${1:-}" ]; do
     elif [ "$1" = "--paranoid" ]; then
         opt_paranoid=1
         shift
+    elif [ "$1" = "--extra" ]; then
+        opt_extra=1
+        shift
     elif [ "$1" = "--hw-only" ]; then
         opt_hw_only=1
         shift
@@ -166,7 +169,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
                 exit 0
                 ;;
             1)
@@ -263,6 +266,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             bpi)
                 opt_cve_list="$opt_cve_list CVE-2024-45332"
+                opt_cve_all=0
+                ;;
+            sls)
+                opt_cve_list="$opt_cve_list CVE-0000-0001"
                 opt_cve_all=0
                 ;;
             *)
