@@ -130,6 +130,17 @@ AMD CPUs may transiently execute non-canonical loads and stores using only the l
 
 **Why out of scope:** AMD's mitigation guidance is for software vendors to "analyze their code for any potential vulnerabilities" and insert LFENCE or use existing speculation mitigation techniques in their own code. No microcode or kernel-level mitigations have been issued. The responsibility falls on individual software, not on the kernel or firmware, leaving nothing for this script to check.
 
+## CVE-2021-26318 — AMD Prefetch Attacks through Power and Time
+
+- **Issue:** [#412](https://github.com/speed47/spectre-meltdown-checker/issues/412)
+- **Bulletin:** [AMD-SB-1017](https://www.amd.com/en/resources/product-security/bulletin/amd-sb-1017.html)
+- **Research paper:** [AMD Prefetch Attacks through Power and Time (USENIX Security '22)](https://www.usenix.org/conference/usenixsecurity22/presentation/lipp)
+- **CVSS:** 5.5 (Medium)
+
+The x86 PREFETCH instruction on AMD CPUs leaks timing and power information, enabling a microarchitectural KASLR bypass from unprivileged userspace. The researchers demonstrated kernel address space layout recovery and kernel memory leakage at ~52 B/s using Spectre gadgets.
+
+**Why out of scope:** AMD acknowledged the research but explicitly stated they are "not recommending any mitigations at this time," as the attack leaks kernel address layout information (KASLR bypass) but does not directly leak kernel data across address space boundaries. KPTI was never enabled on AMD by default in the Linux kernel as a result. No microcode, kernel, or sysfs mitigations have been issued, leaving nothing for this script to check.
+
 ## CVE-2024-7881 — ARM Prefetcher Privilege Escalation
 
 - **Affected CPUs:** Specific ARM cores only
