@@ -53,7 +53,17 @@ check_mds_bsd() {
     else
         kernel_mds_state=inactive
     fi
-    # https://github.com/freebsd/freebsd/blob/master/sys/x86/x86/cpu_machdep.c#L953
+    # possible values for hw.mds_disable_state (FreeBSD cpu_machdep.c):
+    # - inactive: no mitigation (non-Intel, disabled, or not needed)
+    # - VERW: microcode-based VERW instruction
+    # - software IvyBridge: SW sequence for Ivy Bridge
+    # - software Broadwell: SW sequence for Broadwell
+    # - software Skylake SSE: SW sequence for Skylake (SSE)
+    # - software Skylake AVX: SW sequence for Skylake (AVX)
+    # - software Skylake AVX512: SW sequence for Skylake (AVX-512)
+    # - software Silvermont: SW sequence for Silvermont
+    # - unknown: fallback if handler doesn't match any known
+    # ref: https://github.com/freebsd/freebsd-src/blob/main/sys/x86/x86/cpu_machdep.c
     case "$kernel_mds_state" in
         inactive) pstatus yellow NO ;;
         VERW) pstatus green YES "with microcode support" ;;
@@ -85,7 +95,23 @@ check_mds_bsd() {
                 pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
             fi
         else
-            if [ "$kernel_md_clear" = 1 ]; then
+            if [ "$kernel_md_clear" = 1 ] && [ "$opt_live" = 1 ]; then
+                # no MD_CLEAR in microcode, but FreeBSD may still have software-only mitigation active
+                case "$kernel_mds_state" in
+                    software*)
+                        if [ "$opt_paranoid" = 1 ]; then
+                            pvulnstatus "$cve" VULN "Software-only mitigation is active, but in paranoid mode a microcode-based mitigation is required"
+                        elif [ "$kernel_smt_allowed" = 1 ]; then
+                            pvulnstatus "$cve" OK "Software-only mitigation is active, but SMT is enabled so cross-thread attacks are still possible"
+                        else
+                            pvulnstatus "$cve" OK "Software-only mitigation is active (no microcode update required for this CPU)"
+                        fi
+                        ;;
+                    *)
+                        pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+                        ;;
+                esac
+            elif [ "$kernel_md_clear" = 1 ]; then
                 pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
             else
                 pvulnstatus "$cve" VULN "Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
