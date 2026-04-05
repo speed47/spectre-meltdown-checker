@@ -210,7 +210,7 @@ has_zenbleed_fixed_firmware() {
         model_high=$(echo "$tuple" | cut -d, -f2)
         fwver=$(echo "$tuple" | cut -d, -f3)
         if [ $((cpu_model)) -ge $((model_low)) ] && [ $((cpu_model)) -le $((model_high)) ]; then
-            if [ $((cpu_ucode)) -ge $((fwver)) ]; then
+            if [ -n "$cpu_ucode" ] && [ $((cpu_ucode)) -ge $((fwver)) ]; then
                 g_zenbleed_fw=0 # true
                 break
             else

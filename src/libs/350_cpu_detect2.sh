@@ -147,8 +147,8 @@ parse_cpu_details() {
         fi
     fi
 
-    # if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
-    : "${cpu_ucode:=0x0}"
+    # if we got no cpu_ucode (e.g. we're in a vm), leave it empty
+    # so that we can detect this case and avoid false positives
 
     # on non-x86 systems (e.g. ARM), these fields may not exist in cpuinfo, fall back to 0
     : "${cpu_family:=0}"
@@ -163,9 +163,15 @@ parse_cpu_details() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_UCODE='$cpu_ucode'")
     fi
 
-    echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
-    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x pfid 0x%x" \
-        "$cpu_family" "$cpu_model" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid" "$cpu_platformid")
+    local ucode_str
+    if [ -n "$cpu_ucode" ]; then
+        echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
+        ucode_str=$(printf "0x%x" "$cpu_ucode")
+    else
+        ucode_str="unknown"
+    fi
+    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode %s cpuid 0x%x pfid 0x%x" \
+        "$cpu_family" "$cpu_model" "$cpu_stepping" "$ucode_str" "$cpu_cpuid" "$cpu_platformid")
 
     g_parse_cpu_details_done=1
 }

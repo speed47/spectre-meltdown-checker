@@ -42,6 +42,10 @@ is_latest_known_ucode() {
         ret_is_latest_known_ucode_latest="couldn't get your cpuid"
         return 2
     fi
+    if [ -z "$cpu_ucode" ]; then
+        ret_is_latest_known_ucode_latest="couldn't get your microcode version"
+        return 2
+    fi
     ret_is_latest_known_ucode_latest="latest microcode version for your CPU model is unknown"
     if is_intel; then
         brand_prefix=I
