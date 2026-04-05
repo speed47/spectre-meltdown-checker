@@ -467,6 +467,26 @@ check_cpu() {
         fi
     fi
 
+    # IBPB_RET: CPUID EAX=0x80000008, ECX=0x00 return EBX[30] indicates IBPB also flushes
+    # return predictions (Zen4+). Without this bit, IBPB alone does not clear the return
+    # predictor, requiring an additional RSB fill (kernel X86_BUG_IBPB_NO_RET fix).
+    cap_ibpb_ret=''
+    if is_amd || is_hygon; then
+        pr_info_nol "    * CPU indicates IBPB flushes return predictions: "
+        read_cpuid 0x80000008 0x0 $EBX 30 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            cap_ibpb_ret=1
+            pstatus green YES "IBPB_RET feature bit"
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            cap_ibpb_ret=0
+            pstatus yellow NO
+        else
+            cap_ibpb_ret=-1
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+    fi
+
     # STIBP
     pr_info "  * Single Thread Indirect Branch Predictors (STIBP)"
     pr_info_nol "    * SPEC_CTRL MSR is available: "
