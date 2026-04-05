@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.26.0404682'
+VERSION='26.28.0405917'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -32,6 +32,7 @@ exit_cleanup() {
     [ -n "${g_dumped_config:-}" ] && [ -f "$g_dumped_config" ] && rm -f "$g_dumped_config"
     [ -n "${g_kerneltmp:-}" ] && [ -f "$g_kerneltmp" ] && rm -f "$g_kerneltmp"
     [ -n "${g_kerneltmp2:-}" ] && [ -f "$g_kerneltmp2" ] && rm -f "$g_kerneltmp2"
+    [ -n "${g_sls_text_tmp:-}" ] && [ -f "$g_sls_text_tmp" ] && rm -f "$g_sls_text_tmp"
     [ -n "${g_mcedb_tmp:-}" ] && [ -f "$g_mcedb_tmp" ] && rm -f "$g_mcedb_tmp"
     [ -n "${g_intel_tmp:-}" ] && [ -d "$g_intel_tmp" ] && rm -rf "$g_intel_tmp"
     [ -n "${g_linuxfw_tmp:-}" ] && [ -f "$g_linuxfw_tmp" ] && rm -f "$g_linuxfw_tmp"
@@ -83,9 +84,11 @@ show_usage() {
 		--no-color		don't use color codes
 		--verbose, -v		increase verbosity level, possibly several times
 		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
-		--paranoid		require IBPB to deem Variant 2 as mitigated
-					also require SMT disabled + unconditional L1D flush to deem Foreshadow-NG VMM as mitigated
-					also require SMT disabled to deem MDS vulnerabilities mitigated
+		--paranoid		require all mitigations to be enabled to the fullest extent, including those that
+					are not strictly necessary but provide defense in depth (e.g. SMT disabled, IBPB
+					always-on); without this flag, the script follows the security community consensus
+		--extra			run additional checks for issues that don't have a CVE but are still security-relevant,
+					such as compile-time mitigations not enabled by default (e.g. Straight-Line Speculation)
 
 		--no-sysfs		don't use the /sys interface even if present [Linux]
 		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
@@ -182,6 +185,7 @@ opt_allow_msr_write=0
 opt_cpu=0
 opt_explain=0
 opt_paranoid=0
+opt_extra=0
 opt_mock=0
 opt_intel_db=1
 
@@ -217,7 +221,9 @@ CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
 CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
 CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)
 CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
+CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
 CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
+CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
 '
 
 # Derive the supported CVE list from the registry
@@ -578,6 +584,7 @@ is_cpu_affected() {
     affected_taa=''
     affected_itlbmh=''
     affected_srbds=''
+    affected_sls=''
     # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
     _set_immune zenbleed
     _set_immune inception
@@ -585,9 +592,10 @@ is_cpu_affected() {
     _set_immune tsa
     # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
     _set_immune retbleed
-    # Downfall, Reptar, ITS & BPI are Intel specific, look for "is_intel" below:
+    # Downfall, Reptar, RFDS, ITS & BPI are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
+    _set_immune rfds
     _set_immune its
     _set_immune bpi
     # VMScape affects Intel, AMD and Hygon — set immune, overridden below:
@@ -741,6 +749,32 @@ is_cpu_affected() {
                 # and GDS_NO not set: assume affected (whitelist principle)
                 pr_debug "is_cpu_affected: downfall: unknown AVX-capable CPU, defaulting to affected"
                 _infer_vuln downfall
+            fi
+            set +u
+        fi
+        # RFDS (Register File Data Sampling, CVE-2023-28746)
+        # kernel cpu_vuln_blacklist (8076fcde016c, initial model list)
+        # immunity: ARCH_CAP_RFDS_NO (bit 27 of IA32_ARCH_CAPABILITIES)
+        # vendor scope: Intel only (family 6), Atom/hybrid cores
+        if [ "$cap_rfds_no" = 1 ]; then
+            pr_debug "is_cpu_affected: rfds: not affected (RFDS_NO)"
+            _set_immune rfds
+        elif [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ]; then
+                pr_debug "is_cpu_affected: rfds: affected"
+                _set_vuln rfds
             fi
             set +u
         fi
@@ -1220,13 +1254,35 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its/vmscape/bpi set via eval (_set_immune)
+    # SLS (Straight-Line Speculation):
+    # - x86_64: all CPUs are affected (compile-time mitigation CONFIG_MITIGATION_SLS)
+    # - arm64 (CVE-2020-13844): Cortex-A32/A34/A35/A53/A57/A72/A73 confirmed affected,
+    #   and broadly all speculative Armv8-A cores. No kernel mitigation merged.
+    #   Part numbers: A32=0xd01 A34=0xd02 A53=0xd03 A35=0xd04 A57=0xd07 A72=0xd08 A73=0xd09
+    #   Plus later speculative cores: A75=0xd0a A76=0xd0b A77=0xd0d N1=0xd0c V1=0xd40 N2=0xd49 V2=0xd4f
+    if is_intel || is_amd; then
+        _infer_vuln sls
+    elif [ "$cpu_vendor" = ARM ]; then
+        for cpupart in $cpu_part_list; do
+            if echo "$cpupart" | grep -q -w -e 0xd01 -e 0xd02 -e 0xd03 -e 0xd04 \
+                -e 0xd07 -e 0xd08 -e 0xd09 -e 0xd0a -e 0xd0b -e 0xd0c -e 0xd0d \
+                -e 0xd40 -e 0xd49 -e 0xd4f; then
+                _set_vuln sls
+            fi
+        done
+        # non-speculative ARM cores (arch <= 7, or early v8 models) are not affected
+        _infer_immune sls
+    else
+        _infer_immune sls
+    fi
+
+    # shellcheck disable=SC2154
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
-        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi"
+        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
+        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
@@ -1733,6 +1789,9 @@ while [ -n "${1:-}" ]; do
     elif [ "$1" = "--paranoid" ]; then
         opt_paranoid=1
         shift
+    elif [ "$1" = "--extra" ]; then
+        opt_extra=1
+        shift
     elif [ "$1" = "--hw-only" ]; then
         opt_hw_only=1
         shift
@@ -1831,7 +1890,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
                 exit 0
                 ;;
             1)
@@ -1906,6 +1965,10 @@ while [ -n "${1:-}" ]; do
                 opt_cve_list="$opt_cve_list CVE-2023-23583"
                 opt_cve_all=0
                 ;;
+            rfds)
+                opt_cve_list="$opt_cve_list CVE-2023-28746"
+                opt_cve_all=0
+                ;;
             tsa)
                 opt_cve_list="$opt_cve_list CVE-2024-36350 CVE-2024-36357"
                 opt_cve_all=0
@@ -1928,6 +1991,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             bpi)
                 opt_cve_list="$opt_cve_list CVE-2024-45332"
+                opt_cve_all=0
+                ;;
+            sls)
+                opt_cve_list="$opt_cve_list CVE-0000-0001"
                 opt_cve_all=0
                 ;;
             *)
@@ -4121,6 +4188,8 @@ check_cpu() {
         cap_tsx_ctrl_msr=-1
         cap_gds_ctrl=-1
         cap_gds_no=-1
+        cap_rfds_no=-1
+        cap_rfds_clear=-1
         cap_its_no=-1
         if [ "$cap_arch_capabilities" = -1 ]; then
             pstatus yellow UNKNOWN
@@ -4136,6 +4205,8 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
             pstatus yellow NO
         else
@@ -4152,6 +4223,8 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
             if [ $ret = $READ_MSR_RET_OK ]; then
                 capabilities=$ret_read_msr_value
@@ -4168,8 +4241,10 @@ check_cpu() {
                 [ $((ret_read_msr_value_lo >> 8 & 1)) -eq 1 ] && cap_taa_no=1
                 [ $((ret_read_msr_value_lo >> 25 & 1)) -eq 1 ] && cap_gds_ctrl=1
                 [ $((ret_read_msr_value_lo >> 26 & 1)) -eq 1 ] && cap_gds_no=1
+                [ $((ret_read_msr_value_lo >> 27 & 1)) -eq 1 ] && cap_rfds_no=1
+                [ $((ret_read_msr_value_lo >> 28 & 1)) -eq 1 ] && cap_rfds_clear=1
                 [ $((ret_read_msr_value_hi >> 30 & 1)) -eq 1 ] && cap_its_no=1
-                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no its_no=$cap_its_no"
+                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no rfds_no=$cap_rfds_no rfds_clear=$cap_rfds_clear its_no=$cap_its_no"
                 if [ "$cap_ibrs_all" = 1 ]; then
                     pstatus green YES
                 else
@@ -4323,6 +4398,24 @@ check_cpu() {
         if [ "$cap_gds_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
         elif [ "$cap_gds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU explicitly indicates not being affected by RFDS (RFDS_NO): "
+        if [ "$cap_rfds_no" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU microcode supports clearing register files (RFDS_CLEAR): "
+        if [ "$cap_rfds_clear" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_clear" = 1 ]; then
             pstatus green YES
         else
             pstatus yellow NO
@@ -4900,6 +4993,313 @@ check_mds_linux() {
             pvulnstatus "$cve" "$status" "$msg"
         fi
     fi
+}
+
+# >>>>>> vulns-helpers/check_sls.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# Straight-Line Speculation (SLS) — supplementary check (--extra only)
+#
+# SLS: x86 CPUs may speculatively execute instructions past unconditional
+# control flow changes (RET, indirect JMP/CALL). Mitigated at compile time
+# by CONFIG_MITIGATION_SLS (formerly CONFIG_SLS before kernel 6.8), which
+# enables -mharden-sls=all to insert INT3 after these instructions.
+# No sysfs interface, no MSR, no CPU feature flag.
+# Related: CVE-2021-26341 (AMD Zen1/Zen2 direct-branch SLS subset).
+
+# Heuristic: scan the kernel .text section for indirect call/jmp thunks
+# (retpoline-style stubs), then check whether tail-call JMPs to those thunks
+# are followed by INT3 (0xcc). With SLS enabled: >80%. Without: <20%.
+#
+# Thunk signature: e8 01 00 00 00 cc 48 89 XX 24
+#   call +1; int3; mov <reg>,(%rsp); ...
+# Tail-call pattern: e9 XX XX XX XX [cc?]
+#   jmp <thunk>; [int3 if SLS]
+
+# Perl implementation of the SLS heuristic byte scanner.
+# Args: $1 = path to raw .text binary (from objcopy -O binary -j .text)
+# Output: thunks=N jmps=N sls=N
+#
+# The heuristic looks for two types of thunks and counts how many jmp rel32
+# instructions targeting them are followed by INT3 (the SLS mitigation):
+#
+# 1. Indirect call/jmp thunks (retpoline stubs used for indirect tail calls):
+#    e8 01 00 00 00 cc 48 89 XX 24  (call +1; int3; mov <reg>,(%rsp))
+#
+# 2. Return thunk (used for all function returns via jmp __x86_return_thunk):
+#    c3 90 90 90 90 cc cc cc cc cc  (ret; nop*4; int3*5+)
+#    This is the most common jmp target in retpoline-enabled kernels.
+#
+# Some kernels only use indirect thunks, some only the return thunk, and some
+# use both. We check both and combine the results.
+_sls_heuristic_perl() {
+    perl -e '
+        use strict;
+        use warnings;
+        local $/;
+        open my $fh, "<:raw", $ARGV[0] or die "open: $!";
+        my $text = <$fh>;
+        close $fh;
+        my $len = length($text);
+
+        # Collect two types of thunks separately, as different kernels
+        # apply SLS to different thunk types.
+
+        my (%indirect_thunks, %return_thunks);
+
+        # Pattern 1: indirect call/jmp thunks (retpoline stubs)
+        while ($text =~ /\xe8\x01\x00\x00\x00\xcc\x48\x89.\x24/gs) {
+            $indirect_thunks{ pos($text) - length($&) } = 1;
+        }
+
+        # Pattern 2: return thunk (ret; nop*4; int3*5)
+        while ($text =~ /\xc3\x90\x90\x90\x90\xcc\xcc\xcc\xcc\xcc/gs) {
+            $return_thunks{ pos($text) - length($&) } = 1;
+        }
+
+        my $n_indirect = scalar keys %indirect_thunks;
+        my $n_return = scalar keys %return_thunks;
+
+        if ($n_indirect + $n_return == 0) {
+            print "thunks=0 jmps=0 sls=0\n";
+            exit 0;
+        }
+
+        # Count jmps to each thunk type separately
+        my ($ind_total, $ind_sls) = (0, 0);
+        my ($ret_total, $ret_sls) = (0, 0);
+
+        for (my $i = 0; $i + 5 < $len; $i++) {
+            next unless substr($text, $i, 1) eq "\xe9";
+            my $rel = unpack("V", substr($text, $i + 1, 4));
+            $rel -= 4294967296 if $rel >= 2147483648;
+            my $target = $i + 5 + $rel;
+            my $has_int3 = ($i + 5 < $len && substr($text, $i + 5, 1) eq "\xcc") ? 1 : 0;
+            if (exists $indirect_thunks{$target}) {
+                $ind_total++;
+                $ind_sls += $has_int3;
+            }
+            if (exists $return_thunks{$target}) {
+                $ret_total++;
+                $ret_sls += $has_int3;
+            }
+        }
+
+        # Use whichever thunk type has jmps; prefer indirect thunks if both have data
+        my ($total, $sls, $n_thunks);
+        if ($ind_total > 0) {
+            ($total, $sls, $n_thunks) = ($ind_total, $ind_sls, $n_indirect);
+        } elsif ($ret_total > 0) {
+            ($total, $sls, $n_thunks) = ($ret_total, $ret_sls, $n_return);
+        } else {
+            ($total, $sls, $n_thunks) = (0, 0, $n_indirect + $n_return);
+        }
+
+        printf "thunks=%d jmps=%d sls=%d\n", $n_thunks, $total, $sls;
+    ' "$1" 2>/dev/null
+}
+
+# Awk fallback implementation of the SLS heuristic byte scanner.
+# Slower than perl but uses only POSIX tools (od + awk).
+# Args: $1 = path to raw .text binary (from objcopy -O binary -j .text)
+# Output: thunks=N jmps=N sls=N
+_sls_heuristic_awk() {
+    od -An -tu1 -v "$1" | awk '
+    {
+        for (i = 1; i <= NF; i++) b[n++] = $i + 0
+    }
+    END {
+        # Pattern 1: indirect call/jmp thunks
+        # 232 1 0 0 0 204 72 137 XX 36  (e8 01 00 00 00 cc 48 89 XX 24)
+        for (i = 0; i + 9 < n; i++) {
+            if (b[i]==232 && b[i+1]==1 && b[i+2]==0 && b[i+3]==0 && \
+                b[i+4]==0 && b[i+5]==204 && b[i+6]==72 && b[i+7]==137 && \
+                b[i+9]==36) {
+                ind[i] = 1
+                n_ind++
+            }
+        }
+        # Pattern 2: return thunk (ret; nop*4; int3*5)
+        # 195 144 144 144 144 204 204 204 204 204  (c3 90 90 90 90 cc cc cc cc cc)
+        for (i = 0; i + 9 < n; i++) {
+            if (b[i]==195 && b[i+1]==144 && b[i+2]==144 && b[i+3]==144 && \
+                b[i+4]==144 && b[i+5]==204 && b[i+6]==204 && b[i+7]==204 && \
+                b[i+8]==204 && b[i+9]==204) {
+                ret[i] = 1
+                n_ret++
+            }
+        }
+        if (n_ind + n_ret == 0) { print "thunks=0 jmps=0 sls=0"; exit }
+
+        # Count jmps to each thunk type separately
+        ind_total = 0; ind_sls = 0
+        ret_total = 0; ret_sls = 0
+        for (i = 0; i + 5 < n; i++) {
+            if (b[i] != 233) continue
+            rel = b[i+1] + b[i+2]*256 + b[i+3]*65536 + b[i+4]*16777216
+            if (rel >= 2147483648) rel -= 4294967296
+            target = i + 5 + rel
+            has_int3 = (b[i+5] == 204) ? 1 : 0
+            if (target in ind) { ind_total++; ind_sls += has_int3 }
+            if (target in ret) { ret_total++; ret_sls += has_int3 }
+        }
+
+        # Prefer indirect thunks if they have data, else fall back to return thunk
+        if (ind_total > 0)
+            printf "thunks=%d jmps=%d sls=%d\n", n_ind, ind_total, ind_sls
+        else if (ret_total > 0)
+            printf "thunks=%d jmps=%d sls=%d\n", n_ret, ret_total, ret_sls
+        else
+            printf "thunks=%d jmps=0 sls=0\n", n_ind + n_ret
+    }' 2>/dev/null
+}
+
+check_CVE_0000_0001_linux() {
+    local status sys_interface_available msg
+    status=UNK
+    sys_interface_available=0
+    msg=''
+
+    # No sysfs interface for SLS
+    # sys_interface_available stays 0
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+
+        # --- CPU affection check ---
+        if ! is_cpu_affected "$cve"; then
+            pvulnstatus "$cve" OK "your CPU is not affected"
+            return
+        fi
+
+        # --- arm64: no kernel mitigation available ---
+        local _sls_arch
+        _sls_arch=$(uname -m 2>/dev/null || echo unknown)
+        if echo "$_sls_arch" | grep -qw 'aarch64'; then
+            pvulnstatus "$cve" VULN "no kernel mitigation available for arm64 SLS (CVE-2020-13844)"
+            explain "Your ARM processor is affected by Straight-Line Speculation (CVE-2020-13844).\n" \
+                "GCC and Clang support -mharden-sls=all for aarch64, which inserts SB (Speculation Barrier)\n" \
+                "or DSB+ISB after RET and BR instructions. However, the Linux kernel does not enable this flag:\n" \
+                "patches to add CONFIG_HARDEN_SLS_ALL were submitted in 2021 but were rejected upstream.\n" \
+                "There is currently no kernel-level mitigation for SLS on arm64."
+            return
+        fi
+
+        # --- method 1: kernel config check (x86_64) ---
+        local _sls_config=''
+        if [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
+            pr_info_nol "  * Kernel compiled with SLS mitigation: "
+            if grep -qE '^CONFIG_(MITIGATION_)?SLS=y' "$opt_config"; then
+                _sls_config=1
+                pstatus green YES
+            else
+                _sls_config=0
+                pstatus yellow NO
+            fi
+        fi
+
+        # --- method 2: kernel image heuristic (fallback when no config) ---
+        local _sls_heuristic=''
+        if [ -z "$_sls_config" ]; then
+            pr_info_nol "  * Kernel compiled with SLS mitigation: "
+            if [ -n "$g_kernel_err" ]; then
+                pstatus yellow UNKNOWN "$g_kernel_err"
+            elif [ -z "$g_kernel" ]; then
+                pstatus yellow UNKNOWN "no kernel image available"
+            elif ! command -v "${opt_arch_prefix}objcopy" >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objcopy' tool, usually in the binutils package"
+            else
+                local _sls_result
+                g_sls_text_tmp=$(mktemp -t smc-sls-text-XXXXXX)
+
+                if ! "${opt_arch_prefix}objcopy" -O binary -j .text "$g_kernel" "$g_sls_text_tmp" 2>/dev/null || [ ! -s "$g_sls_text_tmp" ]; then
+                    pstatus yellow UNKNOWN "failed to extract .text section from kernel image"
+                    rm -f "$g_sls_text_tmp"
+                    g_sls_text_tmp=''
+                else
+                    _sls_result=''
+                    if command -v perl >/dev/null 2>&1; then
+                        _sls_result=$(_sls_heuristic_perl "$g_sls_text_tmp")
+                    elif command -v awk >/dev/null 2>&1; then
+                        _sls_result=$(_sls_heuristic_awk "$g_sls_text_tmp")
+                    fi
+                    rm -f "$g_sls_text_tmp"
+                    g_sls_text_tmp=''
+
+                    if [ -z "$_sls_result" ]; then
+                        pstatus yellow UNKNOWN "missing 'perl' or 'awk' tool for heuristic scan"
+                    else
+                        local _sls_thunks _sls_jmps _sls_int3
+                        _sls_thunks=$(echo "$_sls_result" | sed -n 's/.*thunks=\([0-9]*\).*/\1/p')
+                        _sls_jmps=$(echo "$_sls_result" | sed -n 's/.*jmps=\([0-9]*\).*/\1/p')
+                        _sls_int3=$(echo "$_sls_result" | sed -n 's/.*sls=\([0-9]*\).*/\1/p')
+                        pr_debug "sls heuristic: thunks=$_sls_thunks jmps=$_sls_jmps int3=$_sls_int3"
+
+                        if [ "${_sls_thunks:-0}" = 0 ] || [ "${_sls_jmps:-0}" = 0 ]; then
+                            pstatus yellow UNKNOWN "no retpoline indirect thunks found in kernel image"
+                        else
+                            local _sls_pct=$((_sls_int3 * 100 / _sls_jmps))
+                            if [ "$_sls_pct" -ge 80 ]; then
+                                _sls_heuristic=1
+                                pstatus green YES "$_sls_int3/$_sls_jmps indirect tail-call JMPs hardened (${_sls_pct}%%)"
+                            elif [ "$_sls_pct" -le 20 ]; then
+                                _sls_heuristic=0
+                                pstatus yellow NO "$_sls_int3/$_sls_jmps indirect tail-call JMPs hardened (${_sls_pct}%%)"
+                            else
+                                pstatus yellow UNKNOWN "$_sls_int3/$_sls_jmps indirect tail-call JMPs hardened (${_sls_pct}%%, inconclusive)"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
+
+        # --- verdict (x86_64) ---
+        if [ "$_sls_config" = 1 ] || [ "$_sls_heuristic" = 1 ]; then
+            pvulnstatus "$cve" OK "kernel compiled with SLS mitigation"
+            explain "Your kernel was compiled with CONFIG_MITIGATION_SLS=y (or CONFIG_SLS=y on kernels before 6.8),\n" \
+                "which enables the GCC flag -mharden-sls=all to insert INT3 instructions after unconditional\n" \
+                "control flow changes, blocking straight-line speculation."
+        elif [ "$_sls_config" = 0 ] || [ "$_sls_heuristic" = 0 ]; then
+            pvulnstatus "$cve" VULN "kernel not compiled with SLS mitigation"
+            explain "Recompile your kernel with CONFIG_MITIGATION_SLS=y (or CONFIG_SLS=y on kernels before 6.8).\n" \
+                "This enables the GCC flag -mharden-sls=all, which inserts INT3 after unconditional control flow\n" \
+                "instructions to block straight-line speculation. Note: this option defaults to off in most kernels\n" \
+                "and incurs ~2.4%% text size overhead."
+        else
+            pvulnstatus "$cve" UNK "couldn't determine SLS mitigation status"
+        fi
+    elif [ "$sys_interface_available" = 0 ]; then
+        msg="/sys vulnerability interface use forced, but there is no sysfs entry for SLS"
+        status=UNK
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_0000_0001_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-0000-0001.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-0000-0001, SLS, Straight-Line Speculation
+# Supplementary check, only runs under --extra
+
+# shellcheck disable=SC2034
+check_CVE_0000_0001() {
+    # SLS is a supplementary check: skip it in the default "all CVEs" run
+    # unless --extra is passed, but always run when explicitly selected
+    # via --variant sls or --cve CVE-0000-0001
+    if [ "$opt_cve_all" = 1 ] && [ "$opt_extra" != 1 ]; then
+        return 0
+    fi
+    check_cve 'CVE-0000-0001'
 }
 
 # >>>>>> vulns/CVE-2017-5715.sh <<<<<<
@@ -8903,6 +9303,182 @@ check_CVE_2023_23583_linux() {
 }
 
 check_CVE_2023_23583_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-2023-28746.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2023-28746, RFDS, Register File Data Sampling
+
+check_CVE_2023_28746() {
+    check_cve 'CVE-2023-28746'
+}
+
+check_CVE_2023_28746_linux() {
+    local status sys_interface_available msg kernel_rfds kernel_rfds_err rfds_mitigated
+    status=UNK
+    sys_interface_available=0
+    msg=''
+
+    if sys_interface_check "$VULN_SYSFS_BASE/reg_file_data_sampling"; then
+        # this kernel has the /sys interface, trust it over everything
+        sys_interface_available=1
+        #
+        # Kernel source inventory for reg_file_data_sampling (RFDS)
+        #
+        # --- sysfs messages ---
+        # all versions:
+        #   "Not affected"                      (cpu_show_common, pre-existing)
+        #
+        # --- mainline ---
+        # 8076fcde016c (v6.9-rc1, initial RFDS sysfs):
+        #   "Vulnerable"                        (RFDS_MITIGATION_OFF)
+        #   "Vulnerable: No microcode"          (RFDS_MITIGATION_UCODE_NEEDED)
+        #   "Mitigation: Clear Register File"   (RFDS_MITIGATION_VERW)
+        # b8ce25df2999 (v6.15, added AUTO state):
+        #   no string changes; RFDS_MITIGATION_AUTO is internal, resolved before display
+        # 203d81f8e167 (v6.17, restructured):
+        #   no string changes; added rfds_update_mitigation() + rfds_apply_mitigation()
+        #
+        # --- stable backports ---
+        # 5.10.215, 5.15.154, 6.1.82, 6.6.22, 6.7.10, 6.8.1:
+        #   same 3 strings as mainline; no structural differences
+        #   macro ALDERLAKE_N (0xBE) used instead of mainline ATOM_GRACEMONT (same model)
+        #
+        # --- Kconfig symbols ---
+        # 8076fcde016c (v6.9-rc1): CONFIG_MITIGATION_RFDS (default y)
+        #   no renames across any version
+        #
+        # --- kernel functions (for $opt_map / System.map) ---
+        # 8076fcde016c (v6.9-rc1): rfds_select_mitigation(), rfds_parse_cmdline(),
+        #   rfds_show_state(), cpu_show_reg_file_data_sampling(), vulnerable_to_rfds()
+        # 203d81f8e167 (v6.17): + rfds_update_mitigation(), rfds_apply_mitigation()
+        #
+        # --- CPU affection logic (for is_cpu_affected) ---
+        # 8076fcde016c (v6.9-rc1, initial model list):
+        #   Intel: ATOM_GOLDMONT (0x5C), ATOM_GOLDMONT_D (0x5F),
+        #          ATOM_GOLDMONT_PLUS (0x7A), ATOM_TREMONT_D (0x86),
+        #          ATOM_TREMONT (0x96), ATOM_TREMONT_L (0x9C),
+        #          ATOM_GRACEMONT (0xBE), ALDERLAKE (0x97),
+        #          ALDERLAKE_L (0x9A), RAPTORLAKE (0xB7),
+        #          RAPTORLAKE_P (0xBA), RAPTORLAKE_S (0xBF)
+        # 722fa0dba74f (v6.15, P-only hybrid exclusion):
+        #   ALDERLAKE (0x97) and RAPTORLAKE (0xB7) narrowed to Atom core type only
+        #   via X86_HYBRID_CPU_TYPE_ATOM check in vulnerable_to_rfds(); P-cores on
+        #   these hybrid models are not affected, only E-cores (Gracemont) are.
+        #   (not modeled here, we conservatively flag all steppings per whitelist principle,
+        #   because detecting the active core type at runtime is unreliable from userspace)
+        # immunity: ARCH_CAP_RFDS_NO (bit 27 of IA32_ARCH_CAPABILITIES)
+        # mitigation: ARCH_CAP_RFDS_CLEAR (bit 28 of IA32_ARCH_CAPABILITIES)
+        # vendor scope: Intel only
+        #
+        # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
+        status=$ret_sys_interface_check_status
+    fi
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        pr_info_nol "* CPU microcode mitigates the vulnerability: "
+        if [ "$cap_rfds_clear" = 1 ]; then
+            pstatus green YES "RFDS_CLEAR capability indicated by microcode"
+        elif [ "$cap_rfds_clear" = 0 ]; then
+            pstatus yellow NO
+        else
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        fi
+
+        pr_info_nol "* Kernel supports RFDS mitigation (VERW on transitions): "
+        kernel_rfds=''
+        kernel_rfds_err=''
+        if [ -n "$g_kernel_err" ]; then
+            kernel_rfds_err="$g_kernel_err"
+        elif grep -q 'Clear Register File' "$g_kernel"; then
+            kernel_rfds="found 'Clear Register File' string in kernel image"
+        elif grep -q 'reg_file_data_sampling' "$g_kernel"; then
+            kernel_rfds="found reg_file_data_sampling in kernel image"
+        fi
+        if [ -z "$kernel_rfds" ] && [ -r "$opt_config" ]; then
+            if grep -q '^CONFIG_MITIGATION_RFDS=y' "$opt_config"; then
+                kernel_rfds="RFDS mitigation config option found enabled in kernel config"
+            fi
+        fi
+        if [ -z "$kernel_rfds" ] && [ -n "$opt_map" ]; then
+            if grep -q 'rfds_select_mitigation' "$opt_map"; then
+                kernel_rfds="found rfds_select_mitigation in System.map"
+            fi
+        fi
+        if [ -n "$kernel_rfds" ]; then
+            pstatus green YES "$kernel_rfds"
+        elif [ -n "$kernel_rfds_err" ]; then
+            pstatus yellow UNKNOWN "$kernel_rfds_err"
+        else
+            pstatus yellow NO
+        fi
+
+        if [ "$opt_live" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+            pr_info_nol "* RFDS mitigation is enabled and active: "
+            if echo "$ret_sys_interface_check_fullmsg" | grep -qi '^Mitigation'; then
+                rfds_mitigated=1
+                pstatus green YES
+            else
+                rfds_mitigated=0
+                pstatus yellow NO
+            fi
+        fi
+    elif [ "$sys_interface_available" = 0 ]; then
+        # we have no sysfs but were asked to use it only!
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        # override status & msg in case CPU is not vulnerable after all
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$cap_rfds_clear" = 1 ]; then
+                if [ -n "$kernel_rfds" ]; then
+                    if [ "$opt_live" = 1 ]; then
+                        if [ "$rfds_mitigated" = 1 ]; then
+                            pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                        else
+                            pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
+                            explain "The RFDS mitigation has been disabled. Remove 'reg_file_data_sampling=off' or 'mitigations=off'\n " \
+                                "from your kernel command line to re-enable it."
+                        fi
+                    else
+                        pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation"
+                    fi
+                else
+                    pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
+                    explain "Update your kernel to a version that supports RFDS mitigation (Linux 6.9+, or check if your distro\n " \
+                        "has a backport). Your CPU microcode already provides the RFDS_CLEAR capability."
+                fi
+            else
+                if [ -n "$kernel_rfds" ]; then
+                    pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+                    explain "Update your CPU microcode (via BIOS/firmware update or linux-firmware package) to a version that\n " \
+                        "provides the RFDS_CLEAR capability."
+                else
+                    pvulnstatus "$cve" VULN "Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
+                    explain "Update both your CPU microcode (via BIOS/firmware update from your OEM) and your kernel to a version\n " \
+                        "that supports RFDS mitigation (Linux 6.9+, or check if your distro has a backport)."
+                fi
+            fi
+        else
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2023_28746_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     else

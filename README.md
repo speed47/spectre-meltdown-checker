@@ -28,6 +28,7 @@ CVE | Name | Aliases
 [CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed
 [CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar
+[CVE-2023-28746](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-28746) | Register File Data Sampling | RFDS
 [CVE-2024-28956](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-28956) | Indirect Target Selection | ITS
 [CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack, Store Queue | TSA-SQ
 [CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack, L1 | TSA-L1
@@ -62,6 +63,7 @@ CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (o
 CVE-2023-20569 (Inception, SRSO) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
 CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or kernel workaround)
 CVE-2023-23583 (Reptar) | ☠️ | ☠️ | ☠️ | ☠️ | Microcode update
+CVE-2023-28746 (RFDS) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
 CVE-2024-28956 (ITS) | 💥 | ✅ | 💥 (4) | ✅ | Microcode + kernel update
 CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
@@ -164,6 +166,10 @@ A bug in AMD Zen 2 processors causes the VZEROUPPER instruction to incorrectly z
 **CVE-2023-23583 — Redundant Prefix Issue (Reptar)**
 
 A bug in Intel processors causes unexpected behavior when executing instructions with specific redundant REX prefixes. Depending on the circumstances, this can result in a system crash (MCE), unpredictable behavior, or potentially privilege escalation. Any software running on an affected CPU can trigger the bug. Mitigation requires a microcode update. Performance impact is low.
+
+**CVE-2023-28746 — Register File Data Sampling (RFDS)**
+
+On certain Intel Atom and hybrid processors (Goldmont, Goldmont Plus, Tremont, Gracemont, and the Atom cores of Alder Lake and Raptor Lake), the register file can retain stale data from previous operations that is accessible via speculative execution, allowing an attacker to infer data across privilege boundaries. Mitigation requires both a microcode update (providing the RFDS_CLEAR capability) and a kernel update (CONFIG_MITIGATION_RFDS, Linux 6.9+) that uses the VERW instruction to clear the register file on privilege transitions. CPUs with the RFDS_NO capability bit are not affected. Performance impact is low.
 
 **CVE-2024-28956 — Indirect Target Selection (ITS)**
 
