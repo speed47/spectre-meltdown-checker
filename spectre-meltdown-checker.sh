@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.28.0405949'
+VERSION='26.28.0405957'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -4586,11 +4586,11 @@ check_cpu() {
         read_msr $MSR_IA32_MCU_OPT_CTRL
         ret=$?
         if [ $ret = $READ_MSR_RET_OK ]; then
-            if [ "$ret_read_msr_value" = "0000000000000000" ]; then
-                #SRBDS mitigation control exists and is enabled via microcode
+            if [ "$((ret_read_msr_value_lo >> 0 & 1))" = 0 ]; then
+                #SRBDS mitigation control exists and is enabled via microcode (RNGDS_MITG_DIS bit is 0)
                 cap_srbds_on=1
             else
-                #SRBDS mitigation control exists but is disabled via microcode
+                #SRBDS mitigation control exists but is disabled via microcode (RNGDS_MITG_DIS bit is 1)
                 cap_srbds_on=0
             fi
         else
