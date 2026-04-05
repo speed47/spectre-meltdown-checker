@@ -70,6 +70,19 @@ ARM processors may speculatively execute instructions past unconditional control
 
 **Why out of scope:** This is the ARM-specific subset of the broader Straight-Line Speculation (SLS) class. The supplementary SLS check available via `--extra` mode detects affected ARM CPU models and reports that no kernel mitigation is currently available.
 
+## CVE-2024-2201 — Native BHI (Branch History Injection without eBPF)
+
+- **Issue:** [#491](https://github.com/speed47/spectre-meltdown-checker/issues/491)
+- **Research:** [InSpectre Gadget / Native BHI (VUSec)](https://www.vusec.net/projects/native-bhi/)
+- **Intel advisory:** [Branch History Injection (Intel)](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/branch-history-injection.html)
+- **Affected CPUs:** Intel CPUs with eIBRS (Ice Lake+, 10th gen+, and virtualized Intel guests)
+- **CVSS:** 4.7 (Medium)
+- **Covered by:** CVE-2017-5715 (Spectre V2)
+
+VUSec researchers demonstrated that the original BHI mitigation (disabling unprivileged eBPF) was insufficient: 1,511 native kernel gadgets exist that allow exploiting Branch History Injection without eBPF, leaking arbitrary kernel memory at ~3.5 kB/sec on Intel CPUs.
+
+**Why out of scope:** CVE-2024-2201 is not a new hardware vulnerability — it is the same BHI hardware bug as CVE-2022-0002, but proves that eBPF restriction alone was never sufficient. The required mitigations are identical: `BHI_DIS_S` hardware control (MSR `IA32_SPEC_CTRL` bit 10), software BHB clearing loop at syscall entry and VM exit, or retpoline with RRSBA disabled. These are all already detected by this tool's CVE-2017-5715 (Spectre V2) checks, which parse the `BHI:` suffix from `/sys/devices/system/cpu/vulnerabilities/spectre_v2` and check for `CONFIG_MITIGATION_SPECTRE_BHI` in offline mode. No new sysfs entry, MSR, kernel config option, or boot parameter was introduced for this CVE.
+
 ## CVE-2025-20623 — Shared Microarchitectural Predictor State (10th Gen Intel)
 
 - **Advisory:** [INTEL-SA-01247](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-01247.html)
@@ -167,6 +180,17 @@ A transient execution vulnerability in some AMD processors may allow a user proc
 A transient execution vulnerability in some AMD processors may allow a user process to infer TSC_AUX even when such a read is disabled.
 
 **Why out of scope:** AMD has determined that "leakage of TSC_AUX does not result in leakage of sensitive information" and has marked this CVE as "No fix planned" across all affected product lines. No microcode or kernel mitigations have been issued, leaving nothing for this script to check.
+
+## No CVE — TLBleed (TLB side-channel)
+
+- **Issue:** [#231](https://github.com/speed47/spectre-meltdown-checker/issues/231)
+- **Research paper:** [Defeating Cache Side-channel Protections with TLB Attacks (VUSec, USENIX Security '18)](https://www.vusec.net/projects/tlbleed/)
+- **Red Hat blog:** [Temporal side-channels and you: Understanding TLBleed](https://www.redhat.com/en/blog/temporal-side-channels-and-you-understanding-tlbleed)
+- **Affected CPUs:** Intel CPUs with Hyper-Threading (demonstrated on Skylake, Coffee Lake, Broadwell Xeon)
+
+A timing side-channel attack exploiting the shared Translation Lookaside Buffer (TLB) on Intel hyperthreaded CPUs. By using machine learning to analyze TLB hit/miss timing patterns, an attacker co-located on the same physical core can extract cryptographic keys (demonstrated with 99.8% success rate on a 256-bit EdDSA key). OpenBSD disabled Hyper-Threading by default in response.
+
+**Why out of scope:** No CVE was ever assigned — Intel explicitly declined to request one. Intel stated the attack is "not related to Spectre or Meltdown" and has no plans to issue a microcode fix, pointing to existing constant-time coding practices in cryptographic software as the appropriate defense. No Linux kernel mitigation was ever merged. Red Hat's guidance was limited to operational advice (disable SMT, use CPU pinning) rather than a software fix. The only OS-level response was OpenBSD disabling Hyper-Threading by default. With no CVE, no microcode update, and no kernel mitigation, there is nothing for this script to check.
 
 ---
 
