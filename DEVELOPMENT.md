@@ -267,6 +267,8 @@ In `src/libs/200_cpu_affected.sh`, add an `affected_yourname` variable and popul
 
 Never use microcode version strings.
 
+When populating the CPU model list, use the **most recent version** of the Linux kernel source as the authoritative reference. The relevant lists are typically found in `arch/x86/kernel/cpu/common.c` (`cpu_vuln_blacklist`) or in the vulnerability-specific mitigation source file. Cross-reference the kernel list with the vendor's published advisory to catch any models the kernel hasn't added yet. Always document the kernel commit hash(es) you based the list on in a comment above the model checks, so future maintainers can diff against newer kernels.
+
 **Important**: Do not confuse hardware immunity bits with *mitigation* capability bits. A hardware immunity bit (e.g. `GDS_NO`, `TSA_SQ_NO`) declares that the CPU design is architecturally free of the vulnerability - it belongs here in `is_cpu_affected()`. A mitigation capability bit (e.g. `VERW_CLEAR`, `MD_CLEAR`) indicates that updated microcode provides a mechanism to work around a vulnerability the CPU *does* have - it belongs in the `check_CVE_YYYY_NNNNN_linux()` function (Phase 2), where it is used to determine whether mitigations are in place.
 
 ### Step 3: Implement the Linux Check
@@ -321,7 +323,7 @@ This is where the real detection lives. Check for mitigations at each layer:
 
   Each source may independently be unavailable (offline mode without the file, or stripped kernel), so check all that are present. A match in any one confirms kernel support.
 
-- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs.
+- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs. All runtime-only checks — including `/proc/cpuinfo` flags — must be guarded by `if [ "$opt_live" = 1 ]`, both when collecting the evidence in Phase 2 and when using it in Phase 4. In Phase 4, use explicit live/offline branches so that live-only variables (e.g. cpuinfo flags, MSR values) are never referenced in the offline path.
   ```sh
   if [ "$opt_live" = 1 ]; then
       read_msr 0xADDRESS
@@ -697,13 +699,15 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 
 ### Step 4: Wire Up and Test
 
-1. **Add the CVE name mapping** in the `cve2name()` function so the header prints a human-readable name.
-2. **Build** the monolithic script with `make`.
-3. **Test live**: Run the built script and confirm your CVE appears in the output and reports a sensible status.
-4. **Test batch JSON**: Run with `--batch json` and verify the CVE count incremented by one (currently 19 → 20).
-5. **Test offline**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the offline code path reports correctly.
-6. **Lint**: Run `shellcheck` on the monolithic script and fix any warnings.
-7. **Update `dist/README.md`**: Add details about the new CVE check (name, description, what it detects) so that the user-facing documentation stays in sync with the implementation.
+1. **Add the CVE to `CVE_REGISTRY`** in `src/libs/002_core_globals.sh` with the correct fields: `CVE-YYYY-NNNNN|JSON_KEY|affected_var_suffix|Complete Name and Aliases`. This is the single source of truth for CVE metadata — it drives `cve2name()`, `is_cpu_affected()`, and the supported CVE list.
+2. **Add a `--variant` alias** in `src/libs/230_util_optparse.sh`: add a new `case` entry mapping a short name (e.g. `rfds`, `downfall`) to `opt_cve_list="$opt_cve_list CVE-YYYY-NNNNN"`, and add that short name to the `help)` echo line. The CVE is already selectable via `--cve CVE-YYYY-NNNNN` (this is handled generically by the existing `--cve` parsing code), but the `--variant` alias provides the user-friendly short name.
+3. **Update `dist/README.md`**: Add the CVE in **both** tables — the "Supported CVEs" reference table at the top (CVE link, description, alias) **and** the "Am I at risk?" matrix (with the correct leak/mitigation indicators per boundary). Also add a detailed description paragraph in the `<details>` section at the bottom.
+4. **Build** the monolithic script with `make`.
+5. **Test live**: Run the built script and confirm your CVE appears in the output and reports a sensible status.
+6. **Test batch JSON**: Run with `--batch json` and verify the CVE appears in the output.
+7. **Test offline**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the offline code path reports correctly.
+8. **Test `--variant` and `--cve`**: Run with `--variant <shortname>` and `--cve CVE-YYYY-NNNNN` separately to confirm both selection methods work and produce the same output.
+9. **Lint**: Run `shellcheck` on the monolithic script and fix any warnings.
 
 ### Key Rules to Remember
 
