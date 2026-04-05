@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.28.0405929'
+VERSION='26.28.0405944'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -3029,21 +3029,25 @@ parse_cpu_details() {
     if [ -z "$cpu_ucode" ] && [ "$g_os" != Linux ]; then
         load_cpuid
         if [ -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-            # init MSR with NULLs
-            cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0
-            # call CPUID
-            cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null
-            # read MSR
-            cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 | awk '{print $3}')
-            # convert to decimal
-            cpu_ucode=$((cpu_ucode))
-            # convert back to hex
-            cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            if [ "$cpu_vendor" = AuthenticAMD ]; then
+                # AMD: read MSR_PATCHLEVEL (0xC0010058) directly
+                cpu_ucode=$(cpucontrol -m 0xC0010058 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            elif [ "$cpu_vendor" = GenuineIntel ]; then
+                # Intel: write 0 to IA32_BIOS_SIGN_ID, execute CPUID, then read back
+                cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null
+                cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null 2>&1
+                cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            fi
+            if [ -n "$cpu_ucode" ]; then
+                # convert to decimal then back to hex
+                cpu_ucode=$((cpu_ucode))
+                cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            fi
         fi
     fi
 
-    # if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
-    : "${cpu_ucode:=0x0}"
+    # if we got no cpu_ucode (e.g. we're in a vm), leave it empty
+    # so that we can detect this case and avoid false positives
 
     # on non-x86 systems (e.g. ARM), these fields may not exist in cpuinfo, fall back to 0
     : "${cpu_family:=0}"
@@ -3058,9 +3062,11 @@ parse_cpu_details() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_UCODE='$cpu_ucode'")
     fi
 
-    echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
-    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x pfid 0x%x" \
-        "$cpu_family" "$cpu_model" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid" "$cpu_platformid")
+    if [ -n "$cpu_ucode" ]; then
+        echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
+    fi
+    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%s cpuid 0x%x pfid 0x%x" \
+        "$cpu_family" "$cpu_model" "$cpu_stepping" "${cpu_ucode:-unknown}" "$cpu_cpuid" "$cpu_platformid")
 
     g_parse_cpu_details_done=1
 }
@@ -3281,7 +3287,7 @@ has_zenbleed_fixed_firmware() {
         model_high=$(echo "$tuple" | cut -d, -f2)
         fwver=$(echo "$tuple" | cut -d, -f3)
         if [ $((cpu_model)) -ge $((model_low)) ] && [ $((cpu_model)) -le $((model_high)) ]; then
-            if [ $((cpu_ucode)) -ge $((fwver)) ]; then
+            if [ -n "$cpu_ucode" ] && [ $((cpu_ucode)) -ge $((fwver)) ]; then
                 g_zenbleed_fw=0 # true
                 break
             else
@@ -3398,6 +3404,10 @@ is_latest_known_ucode() {
     parse_cpu_details
     if [ "$cpu_cpuid" = 0 ]; then
         ret_is_latest_known_ucode_latest="couldn't get your cpuid"
+        return 2
+    fi
+    if [ -z "$cpu_ucode" ]; then
+        ret_is_latest_known_ucode_latest="couldn't get your microcode version"
         return 2
     fi
     ret_is_latest_known_ucode_latest="latest microcode version for your CPU model is unknown"
@@ -9318,7 +9328,10 @@ check_CVE_2023_23583_linux() {
         pvulnstatus "$cve" VULN "your CPU is affected and no microcode update is available for your CPU stepping"
     else
         pr_info_nol "* Reptar is mitigated by microcode: "
-        if [ "$cpu_ucode" -lt "$g_reptar_fixed_ucode_version" ]; then
+        if [ -z "$cpu_ucode" ]; then
+            pstatus yellow UNKNOWN "couldn't get your microcode version"
+            pvulnstatus "$cve" UNK "couldn't detect microcode version to verify mitigation"
+        elif [ "$cpu_ucode" -lt "$g_reptar_fixed_ucode_version" ]; then
             pstatus yellow NO "You have ucode $(printf "0x%x" "$cpu_ucode") and version $(printf "0x%x" "$g_reptar_fixed_ucode_version") minimum is required"
             pvulnstatus "$cve" VULN "Your microcode is too old to mitigate the vulnerability"
         else
@@ -10060,7 +10073,10 @@ check_CVE_2024_45332_linux() {
             "update is available for your specific CPU stepping."
     else
         pr_info_nol "* BPI is mitigated by microcode: "
-        if [ "$cpu_ucode" -lt "$g_bpi_fixed_ucode_version" ]; then
+        if [ -z "$cpu_ucode" ]; then
+            pstatus yellow UNKNOWN "couldn't get your microcode version"
+            pvulnstatus "$cve" UNK "couldn't detect microcode version to verify mitigation"
+        elif [ "$cpu_ucode" -lt "$g_bpi_fixed_ucode_version" ]; then
             pstatus yellow NO "You have ucode $(printf "0x%x" "$cpu_ucode") and version $(printf "0x%x" "$g_bpi_fixed_ucode_version") minimum is required"
             pvulnstatus "$cve" VULN "Your microcode is too old to mitigate the vulnerability"
             explain "CVE-2024-45332 (Branch Privilege Injection) is a race condition in the branch predictor\n" \
