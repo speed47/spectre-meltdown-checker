@@ -130,16 +130,20 @@ parse_cpu_details() {
     if [ -z "$cpu_ucode" ] && [ "$g_os" != Linux ]; then
         load_cpuid
         if [ -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-            # init MSR with NULLs
-            cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0
-            # call CPUID
-            cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null
-            # read MSR
-            cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 | awk '{print $3}')
-            # convert to decimal
-            cpu_ucode=$((cpu_ucode))
-            # convert back to hex
-            cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            if [ "$cpu_vendor" = AuthenticAMD ]; then
+                # AMD: read MSR_PATCHLEVEL (0xC0010058) directly
+                cpu_ucode=$(cpucontrol -m 0xC0010058 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            elif [ "$cpu_vendor" = GenuineIntel ]; then
+                # Intel: write 0 to IA32_BIOS_SIGN_ID, execute CPUID, then read back
+                cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null
+                cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null 2>&1
+                cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            fi
+            if [ -n "$cpu_ucode" ]; then
+                # convert to decimal then back to hex
+                cpu_ucode=$((cpu_ucode))
+                cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            fi
         fi
     fi
 
