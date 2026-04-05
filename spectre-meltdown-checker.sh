@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.28.0405944'
+VERSION='26.28.0405949'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -3927,6 +3927,26 @@ check_cpu() {
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
         else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+    fi
+
+    # IBPB_RET: CPUID EAX=0x80000008, ECX=0x00 return EBX[30] indicates IBPB also flushes
+    # return predictions (Zen4+). Without this bit, IBPB alone does not clear the return
+    # predictor, requiring an additional RSB fill (kernel X86_BUG_IBPB_NO_RET fix).
+    cap_ibpb_ret=''
+    if is_amd || is_hygon; then
+        pr_info_nol "    * CPU indicates IBPB flushes return predictions: "
+        read_cpuid 0x80000008 0x0 $EBX 30 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            cap_ibpb_ret=1
+            pstatus green YES "IBPB_RET feature bit"
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            cap_ibpb_ret=0
+            pstatus yellow NO
+        else
+            cap_ibpb_ret=-1
             pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         fi
     fi
@@ -8921,7 +8941,7 @@ check_CVE_2023_20569() {
 }
 
 check_CVE_2023_20569_linux() {
-    local status sys_interface_available msg kernel_sro kernel_sro_err kernel_srso kernel_ibpb_entry smt_enabled
+    local status sys_interface_available msg kernel_sro kernel_sro_err kernel_srso kernel_ibpb_entry kernel_ibpb_no_ret smt_enabled
     status=UNK
     sys_interface_available=0
     msg=''
@@ -8938,6 +8958,15 @@ check_CVE_2023_20569_linux() {
         if echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Mitigation:.*safe RET.*no microcode'; then
             status=VULN
             msg="Vulnerable: Safe RET, no microcode (your kernel incorrectly reports this as mitigated, it was fixed in more recent kernels)"
+        fi
+        # kernels before the IBPB_NO_RET fix (v6.12, backported to v6.11.5/v6.6.58/v6.1.114/v5.15.169/v5.10.228)
+        # don't fill the RSB after IBPB, so when sysfs reports an IBPB-based mitigation, the return predictor
+        # can still be poisoned cross-process (PB-Inception). Override sysfs in that case.
+        if [ "$status" = OK ] && echo "$ret_sys_interface_check_fullmsg" | grep -qi 'IBPB'; then
+            if [ "$cap_ibpb_ret" != 1 ] && ! grep -q 'ibpb_no_ret' "$g_kernel" 2>/dev/null; then
+                status=VULN
+                msg="Vulnerable: IBPB-based mitigation active but kernel lacks return prediction clearing after IBPB (PB-Inception, upgrade to kernel 6.12+)"
+            fi
         fi
     fi
 
@@ -9031,6 +9060,19 @@ check_CVE_2023_20569_linux() {
             fi
         fi
 
+        # check whether the kernel is aware of the IBPB return predictor bypass (PB-Inception).
+        # kernels with the fix (v6.12+, backported) contain the "ibpb_no_ret" bug flag string,
+        # and add an RSB fill after every IBPB on affected CPUs (Zen 1-3).
+        pr_info_nol "* Kernel is aware of IBPB return predictor bypass: "
+        if [ -n "$g_kernel_err" ]; then
+            pstatus yellow UNKNOWN "$g_kernel_err"
+        elif grep -q 'ibpb_no_ret' "$g_kernel"; then
+            kernel_ibpb_no_ret="ibpb_no_ret found in kernel image"
+            pstatus green YES "$kernel_ibpb_no_ret"
+        else
+            pstatus yellow NO
+        fi
+
         # Zen & Zen2 : if the right IBPB microcode applied + SMT off --> not vuln
         if [ "$cpu_family" = $((0x17)) ]; then
             pr_info_nol "* CPU supports IBPB: "
@@ -9080,7 +9122,11 @@ check_CVE_2023_20569_linux() {
                 elif [ -z "$kernel_sro" ]; then
                     pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
                 elif [ -n "$cap_ibpb" ]; then
-                    pvulnstatus "$cve" OK "SMT is disabled and both your kernel and microcode support mitigation"
+                    if [ "$cap_ibpb_ret" != 1 ] && [ -z "$kernel_ibpb_no_ret" ]; then
+                        pvulnstatus "$cve" VULN "IBPB alone doesn't flush return predictions on this CPU, kernel update needed (PB-Inception, fixed in 6.12+)"
+                    else
+                        pvulnstatus "$cve" OK "SMT is disabled and both your kernel and microcode support mitigation"
+                    fi
                 else
                     pvulnstatus "$cve" VULN "Your microcode is too old"
                 fi
@@ -9095,7 +9141,11 @@ check_CVE_2023_20569_linux() {
                 elif [ "$cap_sbpb" = 2 ]; then
                     pvulnstatus "$cve" VULN "Your microcode doesn't support SBPB"
                 else
-                    pvulnstatus "$cve" OK "Your kernel and microcode both support mitigation"
+                    if [ "$cap_ibpb_ret" != 1 ] && [ -z "$kernel_ibpb_no_ret" ] && [ -n "$kernel_ibpb_entry" ]; then
+                        pvulnstatus "$cve" VULN "IBPB alone doesn't flush return predictions on this CPU, kernel update needed (PB-Inception, fixed in 6.12+)"
+                    else
+                        pvulnstatus "$cve" OK "Your kernel and microcode both support mitigation"
+                    fi
                 fi
             else
                 # not supposed to happen, as normally this CPU should not be affected and not run this code
