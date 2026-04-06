@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.32.0406444'
+VERSION='26.32.0406457'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -614,6 +614,11 @@ is_cpu_affected() {
         _infer_immune mlpds
         _infer_immune mdsum
         pr_debug "is_cpu_affected: cpu not affected by Microarchitectural Data Sampling"
+    elif is_cpu_msbds_only; then
+        _infer_immune mfbds
+        _infer_immune mlpds
+        _infer_immune mdsum
+        pr_debug "is_cpu_affected: cpu only affected by MSBDS, not MFBDS/MLPDS/MDSUM"
     fi
 
     if is_cpu_taa_free; then
@@ -1397,6 +1402,37 @@ is_cpu_mds_free() {
         return 0
     elif [ "$cpu_vendor" = ARM ]; then
         return 0
+    fi
+
+    return 1
+}
+
+# Check whether the CPU is known to be affected by MSBDS only (not MFBDS/MLPDS/MDSUM)
+# These CPUs have a different microarchitecture that is only susceptible to
+# Microarchitectural Store Buffer Data Sampling, not the other MDS variants.
+# Returns: 0 if MSBDS-only, 1 otherwise
+is_cpu_msbds_only() {
+    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+    #VULNWL_INTEL(ATOM_SILVERMONT,       MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_D,     MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID,   MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID2,  MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_AIRMONT,          MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNL,         MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNM,         MSBDS_ONLY),
+    parse_cpu_details
+    if is_intel; then
+        if [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID2" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
+                return 0
+            fi
+        fi
     fi
 
     return 1
@@ -2942,6 +2978,19 @@ read_msr_one_core() {
         pr_debug "read_msr: MOCKING enabled for msr $msr func returns $(eval echo \$$mockvarname)"
         g_mocked=1
         return "$(eval echo \$$mockvarname)"
+    fi
+
+    # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
+    # if the kernel lockdown is set to integrity or confidentiality, MSR writes will be denied,
+    # so we can skip the write attempt entirely and avoid relying on dmesg parsing
+    if [ -e "$SYSKERNEL_BASE/security/lockdown" ]; then
+        if grep -qE '\[integrity\]|\[confidentiality\]' "$SYSKERNEL_BASE/security/lockdown" 2>/dev/null; then
+            pr_debug "write_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
+            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_WRMSR_${msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+            g_msr_locked_down=1
+            ret_write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
+            return $WRITE_MSR_RET_LOCKDOWN
+        fi
     fi
 
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
