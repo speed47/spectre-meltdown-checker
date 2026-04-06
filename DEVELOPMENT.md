@@ -167,6 +167,7 @@ Common traps to avoid:
 | `xargs` | `-r` (no-op if empty, GNU only) | Guard with a prior `[ -n "..." ]` check, or accept the harmless empty invocation |
 | `readlink` | `-f` (canonicalize, GNU only) | Use only in Linux-specific code paths, or reimplement with `cd`/`pwd` |
 | `dd` | `iflag=`, `oflag=` (GNU only) | Use only in Linux-specific code paths (e.g. `/dev/cpu/*/msr`) |
+| `base64` | `-w N` (set line-wrap width, GNU only; BusyBox doesn't support it) | Pipe through `tr -d '\n'` to remove newlines instead of `-w0` |
 
 When a tool genuinely has no portable equivalent, restrict the non-portable call to a platform-specific code path (i.e. inside a BSD-only or Linux-only branch) and document why.
 

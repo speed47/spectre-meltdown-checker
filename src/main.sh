@@ -35,7 +35,7 @@ if [ -n "$g_mockme" ] && [ "$opt_mock" = 1 ]; then
         # not a useless use of cat: gzipping cpuinfo directly doesn't work well
         # shellcheck disable=SC2002
         if command -v "base64" >/dev/null 2>&1; then
-            g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | base64 -w0)"
+            g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | base64 | tr -d '\n')"
         elif command -v "uuencode" >/dev/null 2>&1; then
             g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | uuencode -m - | grep -Fv 'begin-base64' | grep -Fxv -- '====' | tr -d "\n")"
         fi
