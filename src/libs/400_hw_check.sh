@@ -626,17 +626,16 @@ check_cpu() {
     if [ "$opt_allow_msr_write" = 1 ]; then
         pr_info_nol "    * FLUSH_CMD MSR is available: "
         # the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+        # this is probed for informational purposes only, the CPUID L1D flush bit
+        # (cap_l1df) is the authoritative indicator per Intel guidance
         write_msr 0x10b
         ret=$?
         if [ $ret = $WRITE_MSR_RET_OK ]; then
             pstatus green YES
-            cap_flush_cmd=1
         elif [ $ret = $WRITE_MSR_RET_KO ]; then
             pstatus yellow NO
-            cap_flush_cmd=0
         else
             pstatus yellow UNKNOWN "$ret_write_msr_msg"
-            cap_flush_cmd=-1
         fi
     fi
 
@@ -653,12 +652,6 @@ check_cpu() {
     else
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         cap_l1df=-1
-    fi
-
-    # if we weren't allowed to probe the write-only MSR but the CPUID
-    # bit says that it shoul be there, make the assumption that it is
-    if [ "$opt_allow_msr_write" != 1 ]; then
-        cap_flush_cmd=$cap_l1df
     fi
 
     if is_intel; then

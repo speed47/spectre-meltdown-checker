@@ -17,7 +17,8 @@ VERSION='1.0.0'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
-readonly DEBUGFS_BASE="/sys/kernel/debug"
+readonly SYSKERNEL_BASE="/sys/kernel"
+readonly DEBUGFS_BASE="$SYSKERNEL_BASE/debug"
 readonly SYS_MODULE_BASE="/sys/module"
 readonly CPU_DEV_BASE="/dev/cpu"
 readonly BSD_CPUCTL_DEV_BASE="/dev/cpuctl"
