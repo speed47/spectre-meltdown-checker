@@ -52,10 +52,17 @@ write_msr_one_core() {
     mockvarname="SMC_MOCK_WRMSR_${msr}_RET"
     # shellcheck disable=SC2086,SC1083
     if [ -n "$(eval echo \${$mockvarname:-})" ]; then
-        pr_debug "write_msr: MOCKING enabled for msr $msr func returns $(eval echo \$$mockvarname)"
+        local mockret
+        mockret="$(eval echo \$$mockvarname)"
+        pr_debug "write_msr: MOCKING enabled for msr $msr func returns $mockret"
         g_mocked=1
-        [ "$(eval echo \$$mockvarname)" = $WRITE_MSR_RET_LOCKDOWN ] && g_msr_locked_down=1
-        return "$(eval echo \$$mockvarname)"
+        if [ "$mockret" = "$WRITE_MSR_RET_LOCKDOWN" ]; then
+            g_msr_locked_down=1
+            ret_write_msr_msg="kernel lockdown is enabled, MSR writes are restricted"
+        elif [ "$mockret" = "$WRITE_MSR_RET_ERR" ]; then
+            ret_write_msr_msg="could not write MSR"
+        fi
+        return "$mockret"
     fi
 
     # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
@@ -76,7 +83,7 @@ write_msr_one_core() {
         load_msr
     fi
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-        ret_read_msr_msg="is msr kernel module available?"
+        ret_write_msr_msg="msr kernel module is not available"
         return $WRITE_MSR_RET_ERR
     fi
 
@@ -171,10 +178,11 @@ readonly MSR_IA32_MCU_OPT_CTRL=0x123
 readonly READ_MSR_RET_OK=0
 readonly READ_MSR_RET_KO=1
 readonly READ_MSR_RET_ERR=2
+readonly READ_MSR_RET_LOCKDOWN=3
 # Read an MSR register value across one or all cores
 # Args: $1=msr_address $2=cpu_index(optional, default 0)
 # Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
-# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
+# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR | READ_MSR_RET_LOCKDOWN
 read_msr() {
     local ret core first_core_ret first_core_value
     if [ "$opt_cpu" != all ]; then
@@ -206,7 +214,7 @@ read_msr() {
 # Read an MSR register value from a single CPU core
 # Args: $1=core $2=msr_address
 # Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
-# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
+# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR | READ_MSR_RET_LOCKDOWN
 read_msr_one_core() {
     local ret core msr msr_dec mockvarname msr_h msr_l mockval
     core="$1"
@@ -238,21 +246,28 @@ read_msr_one_core() {
     mockvarname="SMC_MOCK_RDMSR_${msr}_RET"
     # shellcheck disable=SC2086,SC1083
     if [ -n "$(eval echo \${$mockvarname:-})" ] && [ "$(eval echo \$$mockvarname)" -ne 0 ]; then
-        pr_debug "read_msr: MOCKING enabled for msr $msr func returns $(eval echo \$$mockvarname)"
+        local mockret
+        mockret="$(eval echo \$$mockvarname)"
+        pr_debug "read_msr: MOCKING enabled for msr $msr func returns $mockret"
         g_mocked=1
-        return "$(eval echo \$$mockvarname)"
+        if [ "$mockret" = "$READ_MSR_RET_LOCKDOWN" ]; then
+            ret_read_msr_msg="kernel lockdown is enabled, MSR reads are restricted"
+        elif [ "$mockret" = "$READ_MSR_RET_ERR" ]; then
+            ret_read_msr_msg="could not read MSR"
+        fi
+        return "$mockret"
     fi
 
     # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
-    # if the kernel lockdown is set to integrity or confidentiality, MSR writes will be denied,
-    # so we can skip the write attempt entirely and avoid relying on dmesg parsing
+    # if the kernel lockdown is set to integrity or confidentiality, MSR reads will be denied,
+    # so we can skip the read attempt entirely and avoid relying on dmesg parsing
     if [ -e "$SYSKERNEL_BASE/security/lockdown" ]; then
         if grep -qE '\[integrity\]|\[confidentiality\]' "$SYSKERNEL_BASE/security/lockdown" 2>/dev/null; then
-            pr_debug "write_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
-            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_WRMSR_${msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+            pr_debug "read_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
+            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}_RET=$READ_MSR_RET_LOCKDOWN")
             g_msr_locked_down=1
-            ret_write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
-            return $WRITE_MSR_RET_LOCKDOWN
+            ret_read_msr_msg="kernel lockdown is enabled, MSR reads are restricted"
+            return $READ_MSR_RET_LOCKDOWN
         fi
     fi
 
@@ -261,7 +276,7 @@ read_msr_one_core() {
         load_msr
     fi
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-        ret_read_msr_msg="is msr kernel module available?"
+        ret_read_msr_msg="msr kernel module is not available"
         return $READ_MSR_RET_ERR
     fi
 
