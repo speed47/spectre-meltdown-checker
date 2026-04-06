@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.32.0406697'
+VERSION='26.32.0406707'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -4261,6 +4261,15 @@ check_cpu() {
         ret=invalid
         pstatus yellow NO "unknown CPU"
     fi
+    if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ]; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
+            cap_ibrs='IBRS (cpuinfo)'
+            cap_spec_ctrl=1
+            pstatus green YES "ibrs flag in $g_procfs/cpuinfo"
+            ret=$READ_CPUID_RET_OK
+        fi
+    fi
     if [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
     elif [ $ret = $READ_CPUID_RET_ERR ]; then
@@ -4329,6 +4338,10 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
+        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            cap_ibpb='IBPB (cpuinfo)'
+            pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
         else
@@ -4396,6 +4409,14 @@ check_cpu() {
         ret=invalid
         pstatus yellow UNKNOWN "unknown CPU"
     fi
+    if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ]; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
+            cap_stibp='STIBP (cpuinfo)'
+            pstatus green YES "stibp flag in $g_procfs/cpuinfo"
+            ret=$READ_CPUID_RET_OK
+        fi
+    fi
     if [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
     elif [ $ret = $READ_CPUID_RET_ERR ]; then
@@ -4460,6 +4481,15 @@ check_cpu() {
         fi
     fi
 
+    if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ]; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+            cap_ssbd='SSBD (cpuinfo)'
+        elif grep ^flags "$g_procfs/cpuinfo" | grep -qw virt_ssbd; then
+            cap_ssbd='SSBD in VIRT_SPEC_CTRL (cpuinfo)'
+        fi
+    fi
+
     if [ -n "${cap_ssbd:=}" ]; then
         pstatus green YES "$cap_ssbd"
     elif [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ]; then
@@ -4515,6 +4545,10 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
+    elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
+        cap_l1df=1
     elif [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
         cap_l1df=0
@@ -4531,6 +4565,10 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
+        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            cap_md_clear=1
+            pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             cap_md_clear=0
             pstatus yellow NO
@@ -4596,6 +4634,10 @@ check_cpu() {
         ret=$?
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
+            cap_arch_capabilities=1
+        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
             cap_arch_capabilities=1
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
