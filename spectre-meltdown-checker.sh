@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.29.0406048'
+VERSION='26.29.0406058'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -1449,7 +1449,7 @@ is_cpu_srbds_free() {
                 return 1
             elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -le 12 ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -le 13 ]; then
-                if [ "$cap_mds_no" -eq 1 ] && { [ "$cap_rtm" -eq 0 ] || [ "$cap_tsx_ctrl_rtm_disable" -eq 1 ]; }; then
+                if [ "$cap_mds_no" -eq 1 ] && { [ "$cap_rtm" -eq 0 ] || [ "$cap_tsx_ctrl_rtm_disable" -eq 1 ] || [ "$cap_tsx_force_abort_rtm_disable" -eq 1 ]; }; then
                     return 0
                 else
                     return 1
@@ -2771,6 +2771,7 @@ write_msr_one_core() {
 readonly MSR_IA32_PLATFORM_ID=0x17
 readonly MSR_IA32_SPEC_CTRL=0x48
 readonly MSR_IA32_ARCH_CAPABILITIES=0x10a
+readonly MSR_IA32_TSX_FORCE_ABORT=0x10f
 readonly MSR_IA32_TSX_CTRL=0x122
 readonly MSR_IA32_MCU_OPT_CTRL=0x123
 readonly READ_MSR_RET_OK=0
@@ -4372,6 +4373,8 @@ check_cpu() {
             pstatus yellow NO
         fi
 
+        # IA32_TSX_CTRL (MSR 0x122): architectural way to disable TSX, available on
+        # Cascade Lake and newer, and some Coffee Lake steppings via microcode update
         if [ "$cap_tsx_ctrl_msr" = 1 ]; then
             read_msr $MSR_IA32_TSX_CTRL
             ret=$?
@@ -4564,6 +4567,52 @@ check_cpu() {
     else
         cap_rtm=-1
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+    fi
+
+    pr_info_nol "  * CPU supports TSX Force Abort (TSX_FORCE_ABORT): "
+    ret=$READ_CPUID_RET_KO
+    cap_tsx_force_abort=0
+    if is_intel; then
+        read_cpuid 0x7 0x0 $EDX 13 1 1
+        ret=$?
+    fi
+    if [ $ret = $READ_CPUID_RET_OK ]; then
+        cap_tsx_force_abort=1
+        pstatus blue YES
+    elif [ $ret = $READ_CPUID_RET_KO ]; then
+        pstatus yellow NO
+    else
+        cap_tsx_force_abort=-1
+        pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+    fi
+
+    # IA32_TSX_FORCE_ABORT (MSR 0x10F): stopgap for older Skylake/Kaby Lake CPUs that
+    # don't support IA32_TSX_CTRL, forces all RTM transactions to abort via microcode update
+    if [ "$cap_tsx_force_abort" = 1 ]; then
+        read_msr $MSR_IA32_TSX_FORCE_ABORT
+        ret=$?
+        if [ "$ret" = $READ_MSR_RET_OK ]; then
+            cap_tsx_force_abort_rtm_disable=$((ret_read_msr_value_lo >> 0 & 1))
+            cap_tsx_force_abort_cpuid_clear=$((ret_read_msr_value_lo >> 1 & 1))
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates all TSX transactions are aborted: "
+        if [ "$cap_tsx_force_abort_rtm_disable" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_rtm_disable" = 0 ]; then
+            pstatus blue NO
+        else
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates TSX CPUID bit is cleared: "
+        if [ "$cap_tsx_force_abort_cpuid_clear" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_cpuid_clear" = 0 ]; then
+            pstatus blue NO
+        else
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        fi
     fi
 
     pr_info_nol "  * CPU supports Software Guard Extensions (SGX): "
@@ -8077,7 +8126,19 @@ check_CVE_2019_11135_linux() {
     else
         if [ "$opt_paranoid" = 1 ]; then
             # in paranoid mode, TSX or SMT enabled are not OK, even if TAA is mitigated
-            if ! echo "$ret_sys_interface_check_fullmsg" | grep -qF 'TSX disabled'; then
+            # first check sysfs, then fall back to MSR-based detection for older kernels
+            # that may not report TSX as disabled even when microcode has done so
+            tsx_disabled=0
+            if echo "$ret_sys_interface_check_fullmsg" | grep -qF 'TSX disabled'; then
+                tsx_disabled=1
+            elif [ "$cap_tsx_ctrl_rtm_disable" = 1 ] && [ "$cap_tsx_ctrl_cpuid_clear" = 1 ]; then
+                # TSX disabled via IA32_TSX_CTRL MSR (0x122)
+                tsx_disabled=1
+            elif [ "$cap_tsx_force_abort_rtm_disable" = 1 ] && [ "$cap_tsx_force_abort_cpuid_clear" = 1 ]; then
+                # TSX disabled via IA32_TSX_FORCE_ABORT MSR (0x10F), for older Skylake-era CPUs
+                tsx_disabled=1
+            fi
+            if [ "$tsx_disabled" = 0 ]; then
                 pvulnstatus "$cve" VULN "TSX must be disabled for full mitigation"
             elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT vulnerable'; then
                 pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
