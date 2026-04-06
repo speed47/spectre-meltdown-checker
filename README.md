@@ -22,6 +22,9 @@ CVE | Name | Aliases
 [CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX Asynchronous Abort | TAA, ZombieLoad V2
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | Special Register Buffer Data Sampling | SRBDS, CROSSTalk
+[CVE-2022-21123](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-21123) | Shared Buffers Data Read | SBDR, MMIO Stale Data
+[CVE-2022-21125](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-21125) | Shared Buffers Data Sampling | SBDS, MMIO Stale Data
+[CVE-2022-21166](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-21166) | Device Register Partial Write | DRPW, MMIO Stale Data
 [CVE-2022-29900](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29900) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (AMD)
 [CVE-2022-29901](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29901) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (Intel), RSBA
 [CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | Downfall, GDS
@@ -58,6 +61,9 @@ CVE-2018-12207 (iTLB Multihit, No eXcuses) | ✅ | ✅ | ☠️ | ✅ | Hypervis
 CVE-2019-11091 (MDSUM, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2019-11135 (TAA, ZombieLoad V2) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2020-0543 (SRBDS, CROSSTalk) | 💥 (2) | 💥 (2) | 💥 (2) | 💥 (2) | Microcode + kernel update
+CVE-2022-21123 (SBDR, MMIO Stale Data) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2022-21125 (SBDS, MMIO Stale Data) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2022-21166 (DRPW, MMIO Stale Data) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2022-29900 (Retbleed AMD) | 💥 | ✅ | 💥 | ✅ | Kernel update (+ microcode for IBPB)
 CVE-2022-29901 (Retbleed Intel, RSBA) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update (eIBRS or IBRS)
 CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (or disable AVX)
@@ -144,6 +150,10 @@ On CPUs with Intel TSX, a transactional abort can leave data from the line fill 
 **CVE-2020-0543 — Special Register Buffer Data Sampling (SRBDS, CROSSTalk)**
 
 Certain special CPU instructions (RDRAND, RDSEED, EGETKEY) read data through a shared staging buffer that is accessible across all cores via speculative execution. An attacker running code on any core can observe the output of these instructions from a victim on a different core, including extracting cryptographic keys from SGX enclaves (a complete ECDSA key was demonstrated). This is notable as one of the first cross-core speculative execution attacks. Mitigation requires a microcode update that serializes access to the staging buffer, plus a kernel update to manage the mitigation. Performance impact is low, mainly affecting workloads that heavily use RDRAND/RDSEED.
+
+**CVE-2022-21123, CVE-2022-21125, CVE-2022-21166 — Processor MMIO Stale Data (SBDR, SBDS, DRPW)**
+
+A class of MMIO (Memory-Mapped I/O) vulnerabilities where stale data from CPU internal fill buffers can be inferred through side-channel attacks during MMIO operations. Three sub-vulnerabilities are covered: Shared Buffers Data Read (SBDR, CVE-2022-21123), Shared Buffers Data Sampling (SBDS, CVE-2022-21125), and Device Register Partial Write (DRPW, CVE-2022-21166). Affected Intel CPUs include Haswell through Rocket Lake server and client processors, plus Tremont Atom cores. Mitigation requires a microcode update providing the FB_CLEAR capability (VERW instruction clears fill buffers) plus a kernel update (Linux 5.19+) that invokes VERW at kernel/user transitions and VM entry/exit. When SMT is enabled, sibling threads can still exploit the vulnerability even with mitigations active. Performance impact is low, as the VERW mechanism is shared with the existing MDS mitigation.
 
 **CVE-2022-29900 — Arbitrary Speculative Code Execution with Return Instructions (Retbleed AMD)**
 
