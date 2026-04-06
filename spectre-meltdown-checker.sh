@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.32.0406626'
+VERSION='26.32.0406634'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -2562,7 +2562,9 @@ try_decompress() {
         fi
         pos=${pos%%:*}
         # shellcheck disable=SC2086
-        tail -c+$pos "$6" 2>/dev/null | $3 $4 >"$g_kerneltmp" 2>/dev/null
+        # wrap in subshell so that if $3 segfaults (e.g. old BusyBox unlzma on random data),
+        # the "Segmentation fault" message printed by the shell goes to /dev/null
+        (tail -c+$pos "$6" 2>/dev/null | $3 $4 >"$g_kerneltmp" 2>/dev/null) 2>/dev/null
         ret=$?
         if [ ! -s "$g_kerneltmp" ]; then
             # don't rely on $ret, sometimes it's != 0 but worked
@@ -11248,7 +11250,7 @@ if [ -n "$g_mockme" ] && [ "$opt_mock" = 1 ]; then
         # not a useless use of cat: gzipping cpuinfo directly doesn't work well
         # shellcheck disable=SC2002
         if command -v "base64" >/dev/null 2>&1; then
-            g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | base64 -w0)"
+            g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | base64 | tr -d '\n')"
         elif command -v "uuencode" >/dev/null 2>&1; then
             g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | uuencode -m - | grep -Fv 'begin-base64' | grep -Fxv -- '====' | tr -d "\n")"
         fi
