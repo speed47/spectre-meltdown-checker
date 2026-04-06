@@ -117,6 +117,22 @@ parse_cpu_details() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_PLATFORMID='$cpu_platformid'")
     fi
 
+    # Detect hybrid CPU: CPUID.(EAX=7,ECX=0):EDX[15] = 1 means hybrid
+    cpu_hybrid=0
+    if is_intel; then
+        read_cpuid 0x7 0x0 $EDX 15 1 1
+        if [ $? = $READ_CPUID_RET_OK ]; then
+            cpu_hybrid=1
+        fi
+    fi
+    if [ -n "${SMC_MOCK_CPU_HYBRID:-}" ]; then
+        cpu_hybrid="$SMC_MOCK_CPU_HYBRID"
+        pr_debug "parse_cpu_details: MOCKING cpu hybrid to $cpu_hybrid"
+        g_mocked=1
+    else
+        g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_HYBRID='$cpu_hybrid'")
+    fi
+
     # get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
     if [ "$g_mocked" != 1 ] && read_cpuid 0x1 0x0 $EAX 0 0xFFFFFFFF; then
         cpu_cpuid="$ret_read_cpuid_value"

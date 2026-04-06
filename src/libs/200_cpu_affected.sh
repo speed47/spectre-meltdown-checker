@@ -50,7 +50,12 @@ is_cpu_affected() {
         if [ "${g_intel_line:-}" = "no" ]; then
             pr_debug "is_cpu_affected: $cpuid_hex not in Intel database (cached)"
         elif [ -z "$g_intel_line" ]; then
-            g_intel_line=$(read_inteldb | grep -F "$cpuid_hex," | head -n1)
+            # Try hybrid-specific entry first (H=0 or H=1), fall back to unqualified entry
+            g_intel_line=$(read_inteldb | grep -F "$cpuid_hex,H=$cpu_hybrid," | head -n1)
+            if [ -z "$g_intel_line" ]; then
+                # No hybrid-specific entry, try unqualified (no H= field)
+                g_intel_line=$(read_inteldb | grep -F "$cpuid_hex," | grep -v ',H=' | head -n1)
+            fi
             if [ -z "$g_intel_line" ]; then
                 g_intel_line=no
                 pr_debug "is_cpu_affected: $cpuid_hex not in Intel database"
