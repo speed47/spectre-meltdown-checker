@@ -221,6 +221,18 @@ A timing side-channel attack exploiting the shared Translation Lookaside Buffer 
 
 These are hardware flaws but not side-channel or speculative execution issues. They fall outside the vulnerability class this tool is designed to detect.
 
+## CVE-2019-11157 — Plundervolt (VoltJockey)
+
+- **Issue:** [#335](https://github.com/speed47/spectre-meltdown-checker/issues/335)
+- **Advisory:** [INTEL-SA-00289](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00289.html)
+- **Research:** [Plundervolt (plundervolt.com)](https://plundervolt.com/)
+- **Affected CPUs:** Intel Core 6th–10th gen (Skylake through Comet Lake) with SGX
+- **CVSS:** 7.1 (High)
+
+A voltage fault injection attack where a privileged attacker (ring 0) uses the software-accessible voltage scaling interface to undervolt the CPU during SGX enclave computations, inducing predictable bit flips that compromise enclave integrity and confidentiality. Intel's microcode fix locks down the voltage/frequency scaling MSRs to prevent software-initiated undervolting.
+
+**Why out of scope:** Not a transient or speculative execution vulnerability — this is a fault injection attack exploiting voltage manipulation, with no side-channel or speculative execution component. It requires ring 0 access and targets SGX enclaves specifically. While Intel issued a microcode update that locks voltage controls, there is no Linux kernel sysfs entry, no CPUID flag, and no kernel-side mitigation to detect. The fix is purely a microcode-level lockdown of voltage scaling registers, which is not exposed in any standard interface this tool can query.
+
 ## CVE-2023-31315 — SinkClose (AMD SMM Lock Bypass)
 
 - **Issue:** [#499](https://github.com/speed47/spectre-meltdown-checker/issues/499)
