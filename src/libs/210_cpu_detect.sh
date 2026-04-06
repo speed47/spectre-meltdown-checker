@@ -85,6 +85,37 @@ is_cpu_mds_free() {
     return 1
 }
 
+# Check whether the CPU is known to be affected by MSBDS only (not MFBDS/MLPDS/MDSUM)
+# These CPUs have a different microarchitecture that is only susceptible to
+# Microarchitectural Store Buffer Data Sampling, not the other MDS variants.
+# Returns: 0 if MSBDS-only, 1 otherwise
+is_cpu_msbds_only() {
+    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+    #VULNWL_INTEL(ATOM_SILVERMONT,       MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_D,     MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID,   MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID2,  MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_AIRMONT,          MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNL,         MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNM,         MSBDS_ONLY),
+    parse_cpu_details
+    if is_intel; then
+        if [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID2" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
 # Check whether the CPU is known to be unaffected by TSX Asynchronous Abort (TAA)
 # Returns: 0 if TAA-free, 1 if affected or unknown
 is_cpu_taa_free() {

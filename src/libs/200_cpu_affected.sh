@@ -124,6 +124,11 @@ is_cpu_affected() {
         _infer_immune mlpds
         _infer_immune mdsum
         pr_debug "is_cpu_affected: cpu not affected by Microarchitectural Data Sampling"
+    elif is_cpu_msbds_only; then
+        _infer_immune mfbds
+        _infer_immune mlpds
+        _infer_immune mdsum
+        pr_debug "is_cpu_affected: cpu only affected by MSBDS, not MFBDS/MLPDS/MDSUM"
     fi
 
     if is_cpu_taa_free; then
