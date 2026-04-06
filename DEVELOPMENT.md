@@ -129,11 +129,54 @@ Never look at the microcode version to determine whether it has the proper mitig
 
 **Exception**: When a vulnerability is fixed purely by a microcode update and the fix exposes **no** detectable CPUID bit, MSR bit, or ARCH\_CAP flag, then we must hardcode the known-fixing microcode versions for each affected CPU stepping. In this case, build a `<vuln>_ucode_list` table of `FF-MM-SS/platformid_mask,fixed_ucode_version` tuples (sourced from the Intel affected processor list and the Intel-Linux-Processor-Microcode-Data-Files release notes), match against `cpu_cpuid` + `cpu_platformid` in `is_cpu_affected()`, and store the required version in a `g_<vuln>_fixed_ucode_version` global. The CVE check then compares `cpu_ucode` against this threshold. Because Intel never lists EOL CPUs, the microcode list may be incomplete: keep a model blacklist as a fallback so that affected CPUs without a known fix are still flagged as affected (the CVE check should handle the empty `g_<vuln>_fixed_ucode_version` case by reporting VULN with "no microcode update available"). See Reptar (`g_reptar_fixed_ucode_version`) and BPI (`g_bpi_fixed_ucode_version`) for reference implementations.
 
-### 4. Assume affected unless proven otherwise (whitelist approach)
+### 4. `/proc/cpuinfo` fallback for CPUID reads
+
+The primary way to read CPU capability bits is via `read_cpuid` (which uses `/dev/cpu/N/cpuid`). However, this device may be unavailable — most commonly inside virtual machines where the `cpuid` kernel module cannot be loaded. When `read_cpuid` returns `READ_CPUID_RET_ERR` (could not read at all), we can fall back to checking `/proc/cpuinfo` flags as a secondary source, **in live mode only**.
+
+This works because the kernel always has direct access to CPUID (it doesn't need `/dev/cpu`), and exposes the results as flags in `/proc/cpuinfo`. When a hypervisor virtualizes a CPUID bit for the guest, the guest kernel sees it and reports it in `/proc/cpuinfo`. This is the same information `read_cpuid` would return if the device were available.
+
+**Rules:**
+- This is strictly a fallback: `read_cpuid` via `/dev/cpu/N/cpuid` remains the primary method.
+- Only use it when `read_cpuid` returned `READ_CPUID_RET_ERR` (device unavailable), **never** when it returned `READ_CPUID_RET_KO` (device available but bit is 0 — meaning the CPU/hypervisor explicitly reports the feature as absent).
+- Only in live mode (`$opt_live = 1`), since `/proc/cpuinfo` is not available in offline mode.
+- Only for CPUID bits that the kernel exposes as `/proc/cpuinfo` flags. Not all bits have a corresponding flag — only those listed in the kernel's `capflags.c`. If a bit has no `/proc/cpuinfo` flag, no fallback is possible.
+- The fallback depends on the running kernel being recent enough to know about the CPUID bit in question. An older kernel won't expose a flag it doesn't know about, so the fallback will silently not trigger — which is fine (we just stay at UNKNOWN, same as the ERR case without fallback).
+
+**Known mappings** (CPUID bit → `/proc/cpuinfo` flag → script `cap_*` variable):
+
+| CPUID source | `/proc/cpuinfo` flag | `cap_*` variable |
+|---|---|---|
+| Intel 0x7.0.EDX[26] / AMD 0x80000008.EBX[14] | `ibrs` | `cap_ibrs` |
+| AMD 0x80000008.EBX[12] | `ibpb` | `cap_ibpb` |
+| Intel 0x7.0.EDX[27] / AMD 0x80000008.EBX[15] | `stibp` | `cap_stibp` |
+| Intel 0x7.0.EDX[31] / AMD 0x80000008.EBX[24,25] | `ssbd` / `virt_ssbd` | `cap_ssbd` |
+| Intel 0x7.0.EDX[28] | `flush_l1d` | `cap_l1df` |
+| Intel 0x7.0.EDX[10] | `md_clear` | `cap_md_clear` |
+| Intel 0x7.0.EDX[29] | `arch_capabilities` | `cap_arch_capabilities` |
+
+**Implementation pattern** in `check_cpu()`:
+
+```sh
+read_cpuid 0x7 0x0 $EDX 31 1 1
+ret=$?
+if [ $ret = $READ_CPUID_RET_OK ]; then
+    cap_ssbd='Intel SSBD'
+elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ]; then
+    # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+    if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+        cap_ssbd='Intel SSBD (cpuinfo)'
+        ret=$READ_CPUID_RET_OK
+    fi
+fi
+```
+
+When the fallback sets a `cap_*` variable, append ` (cpuinfo)` to the value string so the output makes it clear the information was derived from `/proc/cpuinfo` rather than read directly from hardware. Update `ret` to `READ_CPUID_RET_OK` so downstream status display logic (`pstatus`) reports YES rather than UNKNOWN.
+
+### 5. Assume affected unless proven otherwise (whitelist approach)
 
 When a CPU is not explicitly known to be unaffected by a vulnerability, assume that it is affected. This conservative default has been the right call since the early Spectre/Meltdown days and remains sound.
 
-### 5. Offline mode
+### 6. Offline mode
 
 The script can analyze a non-running kernel via `--kernel`, `--config`, `--map` flags, allowing verification before deployment.
 
