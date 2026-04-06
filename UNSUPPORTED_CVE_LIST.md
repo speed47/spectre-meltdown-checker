@@ -155,6 +155,28 @@ AMD CPUs may transiently execute non-canonical loads and stores using only the l
 
 **Why out of scope:** AMD's mitigation guidance is for software vendors to "analyze their code for any potential vulnerabilities" and insert LFENCE or use existing speculation mitigation techniques in their own code. No microcode or kernel-level mitigations have been issued. The responsibility falls on individual software, not on the kernel or firmware, leaving nothing for this script to check.
 
+## CVE-2020-24511 — Domain-Type Confusion (IBRS Scope)
+
+- **Issue:** [#409](https://github.com/speed47/spectre-meltdown-checker/issues/409)
+- **Advisory:** [INTEL-SA-00464](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00464.html)
+- **Affected CPUs:** Intel Skylake through Comet Lake (different steppings; see advisory for details)
+- **CVSS:** 6.5 (Medium)
+
+Improper isolation of shared resources in some Intel processors allows an authenticated user to potentially enable information disclosure via local access. Specifically, the Indirect Branch Restricted Speculation (IBRS) mitigation may not be fully applied after certain privilege-level transitions, allowing residual branch predictions to cross security boundaries.
+
+**Why out of scope:** The mitigation is exclusively a microcode update (released June 2021) with no corresponding Linux kernel sysfs entry in `/sys/devices/system/cpu/vulnerabilities/`, no new CPUID bit, no new MSR, and no kernel configuration option. The only way to detect the fix would be to maintain a per-CPU-stepping minimum microcode version lookup table, which is brittle and high-maintenance. Additionally, Intel dropped microcode support for Sandy Bridge and Ivy Bridge in the same timeframe, leaving those generations permanently unpatched with no mitigation path available.
+
+## CVE-2020-24512 — Observable Timing Discrepancy (Trivial Data Value)
+
+- **Issue:** [#409](https://github.com/speed47/spectre-meltdown-checker/issues/409)
+- **Advisory:** [INTEL-SA-00464](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00464.html)
+- **Affected CPUs:** Intel Skylake through Tiger Lake (broad scope; see advisory for details)
+- **CVSS:** 2.8 (Low)
+
+Observable timing discrepancy in some Intel processors allows an authenticated user to potentially enable information disclosure via local access. Certain cache optimizations treat "trivial data value" cache lines (e.g., all-zero lines) differently from non-trivial lines, creating a timing side channel that can distinguish memory content patterns.
+
+**Why out of scope:** Like CVE-2020-24511, this is a microcode-only fix with no Linux kernel sysfs entry, no CPUID bit, no MSR, and no kernel configuration option. Detection would require a per-CPU-stepping microcode version lookup table. The vulnerability has low severity (CVSS 2.8) and practical exploitation is limited. Intel dropped microcode support for Sandy Bridge and Ivy Bridge, leaving those generations permanently vulnerable.
+
 ## CVE-2021-26318 — AMD Prefetch Attacks through Power and Time
 
 - **Issue:** [#412](https://github.com/speed47/spectre-meltdown-checker/issues/412)
