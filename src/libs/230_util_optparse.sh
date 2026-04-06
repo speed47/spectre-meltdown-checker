@@ -169,7 +169,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, div0, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
                 exit 0
                 ;;
             1)
@@ -222,6 +222,22 @@ while [ -n "${1:-}" ]; do
                 ;;
             srbds)
                 opt_cve_list="$opt_cve_list CVE-2020-0543"
+                opt_cve_all=0
+                ;;
+            mmio)
+                opt_cve_list="$opt_cve_list CVE-2022-21123 CVE-2022-21125 CVE-2022-21166"
+                opt_cve_all=0
+                ;;
+            sbdr)
+                opt_cve_list="$opt_cve_list CVE-2022-21123"
+                opt_cve_all=0
+                ;;
+            sbds)
+                opt_cve_list="$opt_cve_list CVE-2022-21125"
+                opt_cve_all=0
+                ;;
+            drpw)
+                opt_cve_list="$opt_cve_list CVE-2022-21166"
                 opt_cve_all=0
                 ;;
             div0)

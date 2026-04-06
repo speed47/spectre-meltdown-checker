@@ -156,6 +156,61 @@ is_cpu_srbds_free() {
 
 }
 
+# Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
+# Returns: 0 if MMIO-free, 1 if affected or unknown
+is_cpu_mmio_free() {
+    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+    #
+    # CPU affection logic from kernel (51802186158c, v5.19):
+    #   Bug is set when: cpu_matches(blacklist, MMIO) AND NOT arch_cap_mmio_immune()
+    #   arch_cap_mmio_immune() requires ALL THREE bits set:
+    #     ARCH_CAP_FBSDP_NO (bit 14) AND ARCH_CAP_PSDP_NO (bit 15) AND ARCH_CAP_SBDR_SSDP_NO (bit 13)
+    #
+    # Intel Family 6 model blacklist (unchanged since v5.19):
+    #   HASWELL_X (0x3F)
+    #   BROADWELL_D (0x56), BROADWELL_X (0x4F)
+    #   SKYLAKE_X (0x55), SKYLAKE_L (0x4E), SKYLAKE (0x5E)
+    #   KABYLAKE_L (0x8E), KABYLAKE (0x9E)
+    #   ICELAKE_L (0x7E), ICELAKE_D (0x6C), ICELAKE_X (0x6A)
+    #   COMETLAKE (0xA5), COMETLAKE_L (0xA6)
+    #   LAKEFIELD (0x8A)
+    #   ROCKETLAKE (0xA7)
+    #   ATOM_TREMONT (0x96), ATOM_TREMONT_D (0x86), ATOM_TREMONT_L (0x9C)
+    #
+    # Vendor scope: Intel only. Non-Intel CPUs are not affected.
+    parse_cpu_details
+    # ARCH_CAP immunity: all three bits must be set
+    if [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+        return 0
+    fi
+    if is_intel; then
+        if [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_HASWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LAKEFIELD" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ]; then
+                return 1
+            fi
+        fi
+    fi
+
+    return 0
+}
+
 # Check whether the CPU is known to be unaffected by Speculative Store Bypass (SSB)
 # Returns: 0 if SSB-free, 1 if affected or unknown
 is_cpu_ssb_free() {

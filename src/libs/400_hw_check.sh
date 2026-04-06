@@ -757,6 +757,10 @@ check_cpu() {
         cap_rfds_no=-1
         cap_rfds_clear=-1
         cap_its_no=-1
+        cap_sbdr_ssdp_no=-1
+        cap_fbsdp_no=-1
+        cap_psdp_no=-1
+        cap_fb_clear=-1
         if [ "$cap_arch_capabilities" = -1 ]; then
             pstatus yellow UNKNOWN
         elif [ "$cap_arch_capabilities" != 1 ]; then
@@ -774,6 +778,10 @@ check_cpu() {
             cap_rfds_no=0
             cap_rfds_clear=0
             cap_its_no=0
+            cap_sbdr_ssdp_no=0
+            cap_fbsdp_no=0
+            cap_psdp_no=0
+            cap_fb_clear=0
             pstatus yellow NO
         else
             read_msr $MSR_IA32_ARCH_CAPABILITIES
@@ -792,6 +800,10 @@ check_cpu() {
             cap_rfds_no=0
             cap_rfds_clear=0
             cap_its_no=0
+            cap_sbdr_ssdp_no=0
+            cap_fbsdp_no=0
+            cap_psdp_no=0
+            cap_fb_clear=0
             if [ $ret = $READ_MSR_RET_OK ]; then
                 capabilities=$ret_read_msr_value
                 # https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/msr-index.h#n82
@@ -805,12 +817,16 @@ check_cpu() {
                 [ $((ret_read_msr_value_lo >> 6 & 1)) -eq 1 ] && cap_pschange_msc_no=1
                 [ $((ret_read_msr_value_lo >> 7 & 1)) -eq 1 ] && cap_tsx_ctrl_msr=1
                 [ $((ret_read_msr_value_lo >> 8 & 1)) -eq 1 ] && cap_taa_no=1
+                [ $((ret_read_msr_value_lo >> 13 & 1)) -eq 1 ] && cap_sbdr_ssdp_no=1
+                [ $((ret_read_msr_value_lo >> 14 & 1)) -eq 1 ] && cap_fbsdp_no=1
+                [ $((ret_read_msr_value_lo >> 15 & 1)) -eq 1 ] && cap_psdp_no=1
+                [ $((ret_read_msr_value_lo >> 17 & 1)) -eq 1 ] && cap_fb_clear=1
                 [ $((ret_read_msr_value_lo >> 25 & 1)) -eq 1 ] && cap_gds_ctrl=1
                 [ $((ret_read_msr_value_lo >> 26 & 1)) -eq 1 ] && cap_gds_no=1
                 [ $((ret_read_msr_value_lo >> 27 & 1)) -eq 1 ] && cap_rfds_no=1
                 [ $((ret_read_msr_value_lo >> 28 & 1)) -eq 1 ] && cap_rfds_clear=1
                 [ $((ret_read_msr_value_hi >> 30 & 1)) -eq 1 ] && cap_its_no=1
-                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no rfds_no=$cap_rfds_no rfds_clear=$cap_rfds_clear its_no=$cap_its_no"
+                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no rfds_no=$cap_rfds_no rfds_clear=$cap_rfds_clear its_no=$cap_its_no sbdr_ssdp_no=$cap_sbdr_ssdp_no fbsdp_no=$cap_fbsdp_no psdp_no=$cap_psdp_no fb_clear=$cap_fb_clear"
                 if [ "$cap_ibrs_all" = 1 ]; then
                     pstatus green YES
                 else
@@ -966,6 +982,24 @@ check_cpu() {
         if [ "$cap_gds_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
         elif [ "$cap_gds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU explicitly indicates not being affected by MMIO Stale Data (FBSDP_NO & PSDP_NO & SBDR_SSDP_NO): "
+        if [ "$cap_sbdr_ssdp_no" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU microcode supports Fill Buffer clearing (FB_CLEAR): "
+        if [ "$cap_fb_clear" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_fb_clear" = 1 ]; then
             pstatus green YES
         else
             pstatus yellow NO

@@ -99,6 +99,7 @@ is_cpu_affected() {
     affected_taa=''
     affected_itlbmh=''
     affected_srbds=''
+    affected_mmio=''
     affected_sls=''
     # DIV0, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
     _set_immune div0
@@ -135,6 +136,11 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
     fi
 
+    if is_cpu_mmio_free; then
+        _infer_immune mmio
+        pr_debug "is_cpu_affected: cpu not affected by MMIO Stale Data"
+    fi
+
     # NO_SPECTRE_V2: Centaur family 7 and Zhaoxin family 7 are immune to Spectre V2
     # kernel commit 1e41a766c98b (v5.6-rc1): added NO_SPECTRE_V2 exemption
     # Zhaoxin vendor_id is "  Shanghai  " in cpuinfo (parsed as "Shanghai" by awk)
@@ -156,6 +162,7 @@ is_cpu_affected() {
         _set_immune mdsum
         _set_immune taa
         _set_immune srbds
+        _set_immune mmio
     elif is_intel; then
         # Intel
         # https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
@@ -805,7 +812,7 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
         pr_debug "is_cpu_affected: final results: div0=$affected_div0 zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
-        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls"
+        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls mmio=$affected_mmio"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
