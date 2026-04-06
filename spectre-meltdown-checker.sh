@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.29.0406032'
+VERSION='26.29.0406048'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -10023,22 +10023,24 @@ check_CVE_2024_36350_linux() {
             pstatus yellow NO
         fi
 
-        pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-SQ (TSA_SQ_NO): "
-        if [ "$cap_tsa_sq_no" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_tsa_sq_no" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
-        fi
+        if is_amd || is_hygon; then
+            pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-SQ (TSA_SQ_NO): "
+            if [ "$cap_tsa_sq_no" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_tsa_sq_no" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
 
-        pr_info_nol "* Microcode supports VERW buffer clearing: "
-        if [ "$cap_verw_clear" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_verw_clear" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            pr_info_nol "* Microcode supports VERW buffer clearing: "
+            if [ "$cap_verw_clear" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_verw_clear" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
         fi
 
         pr_info_nol "* Hyper-Threading (SMT) is enabled: "
@@ -10200,22 +10202,24 @@ check_CVE_2024_36357_linux() {
             pstatus yellow NO
         fi
 
-        pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-L1 (TSA_L1_NO): "
-        if [ "$cap_tsa_l1_no" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_tsa_l1_no" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
-        fi
+        if is_amd || is_hygon; then
+            pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-L1 (TSA_L1_NO): "
+            if [ "$cap_tsa_l1_no" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_tsa_l1_no" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
 
-        pr_info_nol "* Microcode supports VERW buffer clearing: "
-        if [ "$cap_verw_clear" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_verw_clear" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            pr_info_nol "* Microcode supports VERW buffer clearing: "
+            if [ "$cap_verw_clear" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_verw_clear" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
         fi
 
     elif [ "$sys_interface_available" = 0 ]; then
