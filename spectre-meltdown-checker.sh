@@ -13,11 +13,12 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.32.0406396'
+VERSION='26.32.0406437'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
-readonly DEBUGFS_BASE="/sys/kernel/debug"
+readonly SYSKERNEL_BASE="/sys/kernel"
+readonly DEBUGFS_BASE="$SYSKERNEL_BASE/debug"
 readonly SYS_MODULE_BASE="/sys/module"
 readonly CPU_DEV_BASE="/dev/cpu"
 readonly BSD_CPUCTL_DEV_BASE="/dev/cpuctl"
@@ -2757,6 +2758,19 @@ write_msr_one_core() {
         return "$(eval echo \$$mockvarname)"
     fi
 
+    # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
+    # if the kernel lockdown is set to integrity or confidentiality, MSR writes will be denied,
+    # so we can skip the write attempt entirely and avoid relying on dmesg parsing
+    if [ -e "$SYSKERNEL_BASE/security/lockdown" ]; then
+        if grep -qE '\[integrity\]|\[confidentiality\]' "$SYSKERNEL_BASE/security/lockdown" 2>/dev/null; then
+            pr_debug "write_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
+            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_WRMSR_${msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+            g_msr_locked_down=1
+            ret_write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
+            return $WRITE_MSR_RET_LOCKDOWN
+        fi
+    fi
+
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
         # try to load the module ourselves (and remember it so we can rmmod it afterwards)
         load_msr
@@ -4185,17 +4199,16 @@ check_cpu() {
     if [ "$opt_allow_msr_write" = 1 ]; then
         pr_info_nol "    * FLUSH_CMD MSR is available: "
         # the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+        # this is probed for informational purposes only, the CPUID L1D flush bit
+        # (cap_l1df) is the authoritative indicator per Intel guidance
         write_msr 0x10b
         ret=$?
         if [ $ret = $WRITE_MSR_RET_OK ]; then
             pstatus green YES
-            cap_flush_cmd=1
         elif [ $ret = $WRITE_MSR_RET_KO ]; then
             pstatus yellow NO
-            cap_flush_cmd=0
         else
             pstatus yellow UNKNOWN "$ret_write_msr_msg"
-            cap_flush_cmd=-1
         fi
     fi
 
@@ -4212,12 +4225,6 @@ check_cpu() {
     else
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         cap_l1df=-1
-    fi
-
-    # if we weren't allowed to probe the write-only MSR but the CPUID
-    # bit says that it shoul be there, make the assumption that it is
-    if [ "$opt_allow_msr_write" != 1 ]; then
-        cap_flush_cmd=$cap_l1df
     fi
 
     if is_intel; then
@@ -7771,15 +7778,10 @@ check_CVE_2018_3615() {
     pr_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
     pr_info_nol "* CPU microcode mitigates the vulnerability: "
-    if { [ "$cap_flush_cmd" = 1 ] || { [ "$g_msr_locked_down" = 1 ] && [ "$cap_l1df" = 1 ]; }; } && [ "$cap_sgx" = 1 ]; then
-        # no easy way to detect a fixed SGX but we know that
-        # microcodes that have the FLUSH_CMD MSR also have the
-        # fixed SGX (for CPUs that support it), because Intel
-        # delivered fixed microcodes for both issues at the same time
-        #
-        # if the system we're running on is locked down (no way to write MSRs),
-        # make the assumption that if the L1D flush CPUID bit is set, probably
-        # that FLUSH_CMD MSR is here too
+    if [ "$cap_l1df" = 1 ] && [ "$cap_sgx" = 1 ]; then
+        # the L1D flush CPUID bit indicates that the microcode supports L1D flushing,
+        # and microcodes that have this also have the fixed SGX (for CPUs that support it),
+        # because Intel delivered fixed microcodes for both issues at the same time
         pstatus green YES
     elif [ "$cap_sgx" = 1 ]; then
         pstatus red NO
@@ -7790,7 +7792,7 @@ check_CVE_2018_3615() {
     if ! is_cpu_affected "$cve"; then
         # override status & msg in case CPU is not vulnerable after all
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
-    elif [ "$cap_flush_cmd" = 1 ] || { [ "$g_msr_locked_down" = 1 ] && [ "$cap_l1df" = 1 ]; }; then
+    elif [ "$cap_l1df" = 1 ]; then
         pvulnstatus "$cve" OK "your CPU microcode mitigates the vulnerability"
     else
         pvulnstatus "$cve" VULN "your CPU supports SGX and the microcode is not up to date"
