@@ -255,6 +255,18 @@ A voltage fault injection attack where a privileged attacker (ring 0) uses the s
 
 **Why out of scope:** Not a transient or speculative execution vulnerability — this is a fault injection attack exploiting voltage manipulation, with no side-channel or speculative execution component. It requires ring 0 access and targets SGX enclaves specifically. While Intel issued a microcode update that locks voltage controls, there is no Linux kernel sysfs entry, no CPUID flag, and no kernel-side mitigation to detect. The fix is purely a microcode-level lockdown of voltage scaling registers, which is not exposed in any standard interface this tool can query.
 
+## CVE-2020-8694 / CVE-2020-8695 — Platypus (RAPL Power Side Channel)
+
+- **Issue:** [#384](https://github.com/speed47/spectre-meltdown-checker/issues/384)
+- **Advisory:** [INTEL-SA-00389](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00389.html)
+- **Research:** [PLATYPUS (platypusattack.com)](https://platypusattack.com/)
+- **Affected CPUs:** Intel Core (Sandy Bridge+), Intel Xeon (Sandy Bridge-EP+)
+- **CVSS:** 5.6 (Medium) / 6.5 (Medium)
+
+A software-based power side-channel attack exploiting Intel's Running Average Power Limit (RAPL) interface. By monitoring energy consumption reported through the `powercap` sysfs interface or the `MSR_RAPL_POWER_UNIT` / `MSR_PKG_ENERGY_STATUS` MSRs, an unprivileged attacker can statistically distinguish instructions and operands, recover AES-NI keys from SGX enclaves, and break kernel ASLR.
+
+**Why out of scope:** Not a transient or speculative execution vulnerability — this is a power analysis side-channel attack with no speculative execution component. The mitigations (microcode update restricting RAPL energy reporting to privileged access, and kernel restricting the `powercap` sysfs interface) are not exposed via `/sys/devices/system/cpu/vulnerabilities/`. There is no dedicated sysfs vulnerability entry, no CPUID flag, and no kernel configuration option for this tool to check.
+
 ## CVE-2023-31315 — SinkClose (AMD SMM Lock Bypass)
 
 - **Issue:** [#499](https://github.com/speed47/spectre-meltdown-checker/issues/499)
