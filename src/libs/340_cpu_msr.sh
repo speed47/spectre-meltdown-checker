@@ -5,20 +5,27 @@ readonly WRITE_MSR_RET_ERR=2
 readonly WRITE_MSR_RET_LOCKDOWN=3
 # Write a value to an MSR register across one or all cores
 # Args: $1=msr_address $2=value(optional) $3=cpu_index(optional, default 0)
-# Sets: ret_write_msr_msg
+# Sets: ret_write_msr_msg, ret_write_msr_ADDR_msg (where ADDR is the hex address, e.g. ret_write_msr_0x123_msg)
 # Returns: WRITE_MSR_RET_OK | WRITE_MSR_RET_KO | WRITE_MSR_RET_ERR | WRITE_MSR_RET_LOCKDOWN
 write_msr() {
-    local ret core first_core_ret
+    local ret core first_core_ret msr_dec msr
+    msr_dec=$(($1))
+    msr=$(printf "0x%x" "$msr_dec")
     if [ "$opt_cpu" != all ]; then
         # we only have one core to write to, do it and return the result
         write_msr_one_core "$opt_cpu" "$@"
-        return $?
+        ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
+        return $ret
     fi
 
     # otherwise we must write on all cores
     for core in $(seq 0 "$g_max_core_id"); do
         write_msr_one_core "$core" "$@"
         ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
         if [ "$core" = 0 ]; then
             # save the result of the first core, for comparison with the others
             first_core_ret=$ret
@@ -26,6 +33,8 @@ write_msr() {
             # compare first core with the other ones
             if [ "$first_core_ret" != "$ret" ]; then
                 ret_write_msr_msg="result is not homogeneous between all cores, at least core 0 and $core differ!"
+                # shellcheck disable=SC2163
+                eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
                 return $WRITE_MSR_RET_ERR
             fi
         fi
@@ -181,20 +190,28 @@ readonly READ_MSR_RET_ERR=2
 readonly READ_MSR_RET_LOCKDOWN=3
 # Read an MSR register value across one or all cores
 # Args: $1=msr_address $2=cpu_index(optional, default 0)
-# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
+# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg,
+#       ret_read_msr_ADDR_msg (where ADDR is the hex address, e.g. ret_read_msr_0x10a_msg)
 # Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR | READ_MSR_RET_LOCKDOWN
 read_msr() {
-    local ret core first_core_ret first_core_value
+    local ret core first_core_ret first_core_value msr_dec msr
+    msr_dec=$(($1))
+    msr=$(printf "0x%x" "$msr_dec")
     if [ "$opt_cpu" != all ]; then
         # we only have one core to read, do it and return the result
         read_msr_one_core "$opt_cpu" "$@"
-        return $?
+        ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
+        return $ret
     fi
 
     # otherwise we must read all cores
     for core in $(seq 0 "$g_max_core_id"); do
         read_msr_one_core "$core" "$@"
         ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
         if [ "$core" = 0 ]; then
             # save the result of the first core, for comparison with the others
             first_core_ret=$ret
@@ -203,6 +220,8 @@ read_msr() {
             # compare first core with the other ones
             if [ "$first_core_ret" != "$ret" ] || [ "$first_core_value" != "$ret_read_msr_value" ]; then
                 ret_read_msr_msg="result is not homogeneous between all cores, at least core 0 and $core differ!"
+                # shellcheck disable=SC2163
+                eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
                 return $READ_MSR_RET_ERR
             fi
         fi

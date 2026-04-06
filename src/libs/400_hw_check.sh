@@ -549,7 +549,7 @@ check_cpu() {
     elif [ "$spec_ctrl_msr" = 0 ]; then
         pstatus yellow NO
     else
-        pstatus yellow UNKNOWN "is msr kernel module available?"
+        pstatus yellow UNKNOWN "$ret_read_msr_msg"
     fi
 
     pr_info_nol "    * CPU indicates STIBP capability: "
@@ -974,7 +974,8 @@ check_cpu() {
             elif [ "$cap_tsx_ctrl_rtm_disable" = 0 ]; then
                 pstatus blue NO
             else
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x122_msg"
             fi
 
             pr_info_nol "    * TSX_CTRL MSR indicates TSX CPUID bit is cleared: "
@@ -983,7 +984,8 @@ check_cpu() {
             elif [ "$cap_tsx_ctrl_cpuid_clear" = 0 ]; then
                 pstatus blue NO
             else
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x122_msg"
             fi
         fi
 
@@ -1008,7 +1010,8 @@ check_cpu() {
 
             pr_info_nol "    * GDS microcode mitigation is disabled (GDS_MITG_DIS): "
             if [ "$cap_gds_mitg_dis" = -1 ]; then
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x123_msg"
             elif [ "$cap_gds_mitg_dis" = 1 ]; then
                 pstatus yellow YES
             else
@@ -1017,7 +1020,8 @@ check_cpu() {
 
             pr_info_nol "    * GDS microcode mitigation is locked in enabled state (GDS_MITG_LOCK): "
             if [ "$cap_gds_mitg_lock" = -1 ]; then
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x123_msg"
             elif [ "$cap_gds_mitg_lock" = 1 ]; then
                 pstatus blue YES
             else
@@ -1205,7 +1209,8 @@ check_cpu() {
         elif [ "$cap_tsx_force_abort_rtm_disable" = 0 ]; then
             pstatus blue NO
         else
-            pstatus yellow UNKNOWN "couldn't read MSR"
+            # shellcheck disable=SC2154
+            pstatus yellow UNKNOWN "$ret_read_msr_0x10f_msg"
         fi
 
         pr_info_nol "    * TSX_FORCE_ABORT MSR indicates TSX CPUID bit is cleared: "
@@ -1214,7 +1219,8 @@ check_cpu() {
         elif [ "$cap_tsx_force_abort_cpuid_clear" = 0 ]; then
             pstatus blue NO
         else
-            pstatus yellow UNKNOWN "couldn't read MSR"
+            # shellcheck disable=SC2154
+            pstatus yellow UNKNOWN "$ret_read_msr_0x10f_msg"
         fi
     fi
 
