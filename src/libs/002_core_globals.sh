@@ -156,6 +156,7 @@ CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable me
 CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)
 CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)
 CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)
+CVE-2023-20588|DIV0|div0|Division by Zero, AMD Zen1 speculative data leak
 CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
 CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
 CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)

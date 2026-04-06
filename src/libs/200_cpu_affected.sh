@@ -100,7 +100,8 @@ is_cpu_affected() {
     affected_itlbmh=''
     affected_srbds=''
     affected_sls=''
-    # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
+    # DIV0, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
+    _set_immune div0
     _set_immune zenbleed
     _set_immune inception
     # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
@@ -587,6 +588,13 @@ is_cpu_affected() {
         fi
         _set_immune variantl1tf
 
+        # DIV0 (Zen1 only)
+        # 77245f1c3c64 (v6.5, initial model list): family 0x17 models 0x00-0x2f, 0x50-0x5f
+        # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all Zen1
+        # All Zen1 CPUs are family 0x17, models 0x00-0x2f and 0x50-0x5f
+        amd_legacy_erratum "$(amd_model_range 0x17 0x00 0x0 0x2f 0xf)" && _set_vuln div0
+        amd_legacy_erratum "$(amd_model_range 0x17 0x50 0x0 0x5f 0xf)" && _set_vuln div0
+
         # Zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && _set_vuln zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && _set_vuln zenbleed
@@ -796,7 +804,7 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
+        pr_debug "is_cpu_affected: final results: div0=$affected_div0 zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
         pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
