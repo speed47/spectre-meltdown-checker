@@ -193,6 +193,17 @@ A transient execution vulnerability in some AMD processors may allow a user proc
 
 **Why out of scope:** AMD has determined that "leakage of TSC_AUX does not result in leakage of sensitive information" and has marked this CVE as "No fix planned" across all affected product lines. No microcode or kernel mitigations have been issued, leaving nothing for this script to check.
 
+## No CVE — BlindSide (Speculative Probing)
+
+- **Issue:** [#374](https://github.com/speed47/spectre-meltdown-checker/issues/374)
+- **Research paper:** [Speculative Probing: Hacking Blind in the Spectre Era (VUSec, ACM CCS 2020)](https://www.vusec.net/projects/blindside/)
+- **Red Hat advisory:** [Article 5394291](https://access.redhat.com/articles/5394291)
+- **Affected CPUs:** All CPUs vulnerable to Spectre V2 (BTB-based speculative execution)
+
+An attack technique that combines a pre-existing kernel memory corruption bug (e.g., a heap buffer overflow) with speculative execution to perform "Speculative BROP" (Blind Return-Oriented Programming). Instead of crashing the system when probing invalid addresses, BlindSide performs the probing speculatively: faults are suppressed in the speculative domain, and information is leaked via cache timing side channels. This allows an attacker to silently derandomize kernel memory layout and bypass KASLR/FGKASLR without triggering any fault.
+
+**Why out of scope:** BlindSide is an exploitation technique, not a discrete hardware vulnerability: no CVE was assigned. Red Hat explicitly states it is "not a new flaw, but a new attack." It requires a pre-existing kernel memory corruption bug as a prerequisite, and the speculative execution aspect leverages the same BTB behavior as Spectre V2 (CVE-2017-5715). No dedicated microcode update, kernel config, MSR, CPUID bit, or sysfs entry exists for BlindSide. The closest hardware mitigations (IBPB, IBRS, STIBP, Retpoline) are already covered by this tool's Spectre V2 checks.
+
 ## No CVE — TLBleed (TLB side-channel)
 
 - **Issue:** [#231](https://github.com/speed47/spectre-meltdown-checker/issues/231)
