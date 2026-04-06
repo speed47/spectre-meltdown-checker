@@ -345,11 +345,35 @@ sys_interface_check() {
 
 # Display hardware-level CPU mitigation support (microcode features, ARCH_CAPABILITIES, etc.)
 check_cpu() {
-    local capabilities ret spec_ctrl_msr
+    local capabilities ret spec_ctrl_msr codename ucode_str
     pr_info "\033[1;34mHardware check\033[0m"
 
     if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
         return
+    fi
+
+    pr_info "* CPU details"
+    pr_info "  * Vendor: $cpu_vendor"
+    pr_info "  * Model name: $cpu_friendly_name"
+    pr_info "  * Family: $(printf '0x%02x' "$cpu_family")  Model: $(printf '0x%02x' "$cpu_model")  Stepping: $(printf '0x%02x' "$cpu_stepping")"
+    if [ -n "$cpu_ucode" ]; then
+        ucode_str=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_str="N/A"
+    fi
+    pr_info "  * Microcode: $ucode_str"
+    pr_info "  * CPUID: $(printf '0x%08x' "$cpu_cpuid")"
+    if is_intel; then
+        pr_info "  * Platform ID: $(printf '0x%02x' "$cpu_platformid")"
+        if [ "$cpu_hybrid" = 1 ]; then
+            pr_info "  * Hybrid CPU: YES"
+        else
+            pr_info "  * Hybrid CPU: NO"
+        fi
+        codename=$(get_intel_codename)
+        if [ -n "$codename" ]; then
+            pr_info "  * Codename: $codename"
+        fi
     fi
 
     pr_info "* Hardware support (CPU microcode) for mitigation techniques"
