@@ -895,6 +895,8 @@ check_cpu() {
             pstatus yellow NO
         fi
 
+        # IA32_TSX_CTRL (MSR 0x122): architectural way to disable TSX, available on
+        # Cascade Lake and newer, and some Coffee Lake steppings via microcode update
         if [ "$cap_tsx_ctrl_msr" = 1 ]; then
             read_msr $MSR_IA32_TSX_CTRL
             ret=$?
@@ -1087,6 +1089,52 @@ check_cpu() {
     else
         cap_rtm=-1
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+    fi
+
+    pr_info_nol "  * CPU supports TSX Force Abort (TSX_FORCE_ABORT): "
+    ret=$READ_CPUID_RET_KO
+    cap_tsx_force_abort=0
+    if is_intel; then
+        read_cpuid 0x7 0x0 $EDX 13 1 1
+        ret=$?
+    fi
+    if [ $ret = $READ_CPUID_RET_OK ]; then
+        cap_tsx_force_abort=1
+        pstatus blue YES
+    elif [ $ret = $READ_CPUID_RET_KO ]; then
+        pstatus yellow NO
+    else
+        cap_tsx_force_abort=-1
+        pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+    fi
+
+    # IA32_TSX_FORCE_ABORT (MSR 0x10F): stopgap for older Skylake/Kaby Lake CPUs that
+    # don't support IA32_TSX_CTRL, forces all RTM transactions to abort via microcode update
+    if [ "$cap_tsx_force_abort" = 1 ]; then
+        read_msr $MSR_IA32_TSX_FORCE_ABORT
+        ret=$?
+        if [ "$ret" = $READ_MSR_RET_OK ]; then
+            cap_tsx_force_abort_rtm_disable=$((ret_read_msr_value_lo >> 0 & 1))
+            cap_tsx_force_abort_cpuid_clear=$((ret_read_msr_value_lo >> 1 & 1))
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates all TSX transactions are aborted: "
+        if [ "$cap_tsx_force_abort_rtm_disable" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_rtm_disable" = 0 ]; then
+            pstatus blue NO
+        else
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates TSX CPUID bit is cleared: "
+        if [ "$cap_tsx_force_abort_cpuid_clear" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_cpuid_clear" = 0 ]; then
+            pstatus blue NO
+        else
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        fi
     fi
 
     pr_info_nol "  * CPU supports Software Guard Extensions (SGX): "
