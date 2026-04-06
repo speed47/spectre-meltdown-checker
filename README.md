@@ -26,6 +26,7 @@ CVE | Name | Aliases
 [CVE-2022-29901](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29901) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (Intel), RSBA
 [CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | Downfall, GDS
 [CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO
+[CVE-2023-20588](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20588) | AMD Division by Zero Speculative Data Leak | DIV0
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed
 [CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar
 [CVE-2023-28746](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-28746) | Register File Data Sampling | RFDS
@@ -61,6 +62,7 @@ CVE-2022-29900 (Retbleed AMD) | 💥 | ✅ | 💥 | ✅ | Kernel update (+ micro
 CVE-2022-29901 (Retbleed Intel, RSBA) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update (eIBRS or IBRS)
 CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (or disable AVX)
 CVE-2023-20569 (Inception, SRSO) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
+CVE-2023-20588 (DIV0) | 💥 | 💥 (1) | 💥 | 💥 (1) | Kernel update (+ disable SMT)
 CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or kernel workaround)
 CVE-2023-23583 (Reptar) | ☠️ | ☠️ | ☠️ | ☠️ | Microcode update
 CVE-2023-28746 (RFDS) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
@@ -158,6 +160,10 @@ The AVX GATHER instructions can leak data from previously used vector registers 
 **CVE-2023-20569 — Return Address Security (Inception, SRSO)**
 
 On AMD Zen 1 through Zen 4 processors, an attacker can manipulate the return address predictor to redirect speculative execution on return instructions, leaking kernel memory. Mitigation requires both a kernel update (providing SRSO safe-return sequences or IBPB-on-entry) and a microcode update (providing SBPB on Zen 3/4, or IBPB support on Zen 1/2 — which additionally requires SMT to be disabled). Performance impact ranges from low to significant depending on the chosen mitigation and CPU generation.
+
+**CVE-2023-20588 — AMD Division by Zero Speculative Data Leak (DIV0)**
+
+On AMD Zen 1 processors, a #DE (divide-by-zero) exception can leave stale quotient data from a previous division in the divider unit, observable by a subsequent division via speculative side channels. This can leak data across any privilege boundary, including between SMT sibling threads sharing the same physical core. Mitigation requires a kernel update (Linux 6.5+) that adds a dummy division (`amd_clear_divider()`) on every exit to userspace and before VMRUN, preventing stale data from persisting. No microcode update is needed. Disabling SMT provides additional protection because the kernel mitigation does not cover cross-SMT-thread leaks. Performance impact is negligible.
 
 **CVE-2023-20593 — Cross-Process Information Leak (Zenbleed)**
 

@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.28.0406017'
+VERSION='26.29.0406032'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -211,6 +211,7 @@ CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable me
 CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)
 CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)
 CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)
+CVE-2023-20588|DIV0|div0|Division by Zero, AMD Zen1 speculative data leak
 CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
 CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
 CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)
@@ -585,7 +586,8 @@ is_cpu_affected() {
     affected_itlbmh=''
     affected_srbds=''
     affected_sls=''
-    # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
+    # DIV0, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
+    _set_immune div0
     _set_immune zenbleed
     _set_immune inception
     # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
@@ -1072,6 +1074,13 @@ is_cpu_affected() {
         fi
         _set_immune variantl1tf
 
+        # DIV0 (Zen1 only)
+        # 77245f1c3c64 (v6.5, initial model list): family 0x17 models 0x00-0x2f, 0x50-0x5f
+        # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all Zen1
+        # All Zen1 CPUs are family 0x17, models 0x00-0x2f and 0x50-0x5f
+        amd_legacy_erratum "$(amd_model_range 0x17 0x00 0x0 0x2f 0xf)" && _set_vuln div0
+        amd_legacy_erratum "$(amd_model_range 0x17 0x50 0x0 0x5f 0xf)" && _set_vuln div0
+
         # Zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && _set_vuln zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && _set_vuln zenbleed
@@ -1281,7 +1290,7 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
+        pr_debug "is_cpu_affected: final results: div0=$affected_div0 zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
         pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
@@ -1890,7 +1899,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, div0, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
                 exit 0
                 ;;
             1)
@@ -1943,6 +1952,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             srbds)
                 opt_cve_list="$opt_cve_list CVE-2020-0543"
+                opt_cve_all=0
+                ;;
+            div0)
+                opt_cve_list="$opt_cve_list CVE-2023-20588"
                 opt_cve_all=0
                 ;;
             zenbleed)
@@ -9169,6 +9182,178 @@ check_CVE_2023_20569_linux() {
 }
 
 check_CVE_2023_20569_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-2023-20588.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2023-20588, DIV0, AMD Division by Zero Speculative Data Leak
+
+check_CVE_2023_20588() {
+    check_cve 'CVE-2023-20588'
+}
+
+# shellcheck disable=SC2034
+_cve_2023_20588_pvulnstatus_smt() {
+    # common logic for both live (cpuinfo) and live (kernel image fallback) paths:
+    # if --paranoid and SMT is on, report VULN; otherwise OK.
+    # $1 = mitigation detail message
+    if [ "$opt_paranoid" != 1 ] || ! is_cpu_smt_enabled; then
+        pvulnstatus "$cve" OK "Mitigation: amd_clear_divider on exit to user/guest"
+    else
+        pvulnstatus "$cve" VULN "DIV0 mitigation is active but SMT is enabled, data leak possible between sibling threads"
+        explain "Disable SMT (Simultaneous Multi-Threading) for full protection against DIV0.\n " \
+            "The kernel mitigation only covers kernel-to-user and host-to-guest leak paths, not cross-SMT-thread leaks.\n " \
+            "You can disable SMT by booting with the \`nosmt\` kernel parameter, or at runtime:\n " \
+            "\`echo off > /sys/devices/system/cpu/smt/control\`"
+    fi
+}
+
+# shellcheck disable=SC2034
+_cve_2023_20588_pvulnstatus_no_kernel() {
+    pvulnstatus "$cve" VULN "your kernel doesn't support DIV0 mitigation"
+    explain "Update your kernel to a version that includes the amd_clear_divider mitigation (Linux >= 6.5 or a backported stable/vendor kernel).\n " \
+        "The kernel fix adds a dummy division on every exit to userspace and before VMRUN, preventing stale quotient data from leaking.\n " \
+        "Also disable SMT for full protection, as the mitigation doesn't cover cross-SMT-thread leaks."
+}
+
+check_CVE_2023_20588_linux() {
+    local status sys_interface_available msg kernel_mitigated cpuinfo_div0 dmesg_div0 ret
+    status=UNK
+    sys_interface_available=0
+    msg=''
+    # No sysfs interface exists for this CVE (no /sys/devices/system/cpu/vulnerabilities/div0).
+    # sys_interface_available stays 0.
+    #
+    # Kernel source inventory for CVE-2023-20588 (DIV0), traced via git blame:
+    #
+    # --- sysfs messages ---
+    # none: this vulnerability has no sysfs entry
+    #
+    # --- Kconfig symbols ---
+    # none: the mitigation is unconditional, not configurable (no CONFIG_* knob)
+    #
+    # --- kernel functions (for $opt_map / System.map) ---
+    # 77245f1c3c64 (v6.5, initial fix): amd_clear_divider()
+    #   initially called from exc_divide_error() (#DE handler)
+    # f58d6fbcb7c8 (v6.5, follow-up fix): moved amd_clear_divider() call to
+    #   exit-to-userspace path and before VMRUN (SVM)
+    # bfff3c6692ce (v6.8): moved DIV0 detection from model range check to
+    #   unconditional in init_amd_zen1()
+    # 501bd734f933 (v6.11): amd_clear_divider() made __always_inline
+    #   (may no longer appear in System.map on newer kernels)
+    #
+    # --- dmesg ---
+    # 77245f1c3c64 (v6.5): "AMD Zen1 DIV0 bug detected. Disable SMT for full protection."
+    #   (present since the initial fix, printed via pr_notice_once)
+    #
+    # --- /proc/cpuinfo bugs field ---
+    # 77245f1c3c64 (v6.5): X86_BUG_DIV0 mapped to "div0" in bugs field
+    #
+    # --- CPU affection logic (for is_cpu_affected) ---
+    # 77245f1c3c64 (v6.5, initial model list):
+    #   AMD: family 0x17 models 0x00-0x2f, 0x50-0x5f
+    # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all Zen1
+    #   (same model ranges, just different detection path)
+    # vendor scope: AMD only (Zen1 microarchitecture)
+    #
+    # --- stable backports ---
+    # 5.10.y, 5.15.y, 6.1.y, 6.4.y: backported via cpu_has_amd_erratum() path
+    #   (same as mainline v6.5 initial implementation)
+    # 6.5.y, 6.7.y: same erratum-table detection as mainline v6.5
+    # 6.6.y: stable-specific commit 824549816609 backported the init_amd_zen1()
+    #   move (equivalent to mainline bfff3c6692ce but adapted to 6.6 context)
+    # 6.8.y, 6.9.y, 6.10.y: carry mainline bfff3c6692ce directly
+    # 6.7.y missed the init_amd_zen1() move (EOL before backport landed)
+    # 501bd734f933 (__always_inline) was NOT backported to any stable branch
+    # 4.14.y, 4.19.y, 5.4.y: do NOT have the fix (EOL or not backported)
+    # no stable-specific string or behavior differences; all branches use the
+    # same dmesg message and /proc/cpuinfo bugs field as mainline
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        pr_info_nol "* Kernel supports DIV0 mitigation: "
+        kernel_mitigated=''
+        if [ -n "$g_kernel_err" ]; then
+            pstatus yellow UNKNOWN "$g_kernel_err"
+        elif grep -q 'amd_clear_divider' "$g_kernel"; then
+            kernel_mitigated="found amd_clear_divider in kernel image"
+            pstatus green YES "$kernel_mitigated"
+        elif [ -n "$opt_map" ] && grep -q 'amd_clear_divider' "$opt_map"; then
+            kernel_mitigated="found amd_clear_divider in System.map"
+            pstatus green YES "$kernel_mitigated"
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "* DIV0 mitigation enabled and active: "
+        cpuinfo_div0=''
+        dmesg_div0=''
+        if [ "$opt_live" = 1 ]; then
+            if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'div0' "$g_procfs/cpuinfo" 2>/dev/null; then
+                cpuinfo_div0=1
+                pstatus green YES "div0 found in $g_procfs/cpuinfo bug flags"
+            else
+                # cpuinfo flag not found, fall back to dmesg
+                dmesg_grep 'AMD Zen1 DIV0 bug detected'
+                ret=$?
+                if [ "$ret" -eq 0 ]; then
+                    dmesg_div0=1
+                    pstatus green YES "DIV0 bug detected message found in dmesg"
+                elif [ "$ret" -eq 2 ]; then
+                    pstatus yellow UNKNOWN "dmesg truncated, cannot check for DIV0 message"
+                else
+                    pstatus yellow NO "div0 not found in $g_procfs/cpuinfo bug flags or dmesg"
+                fi
+            fi
+        else
+            pstatus blue N/A "not testable in offline mode"
+        fi
+
+        pr_info_nol "* SMT (Simultaneous Multi-Threading) status: "
+        is_cpu_smt_enabled
+    elif [ "$sys_interface_available" = 0 ]; then
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$opt_live" = 1 ]; then
+                # live mode: cpuinfo div0 flag is the strongest proof the mitigation is active
+                if [ "$cpuinfo_div0" = 1 ] || [ "$dmesg_div0" = 1 ]; then
+                    _cve_2023_20588_pvulnstatus_smt
+                elif [ -n "$kernel_mitigated" ]; then
+                    # kernel has the code but the bug flag is not set, it shouldn't happen on affected CPUs,
+                    # but if it does, trust the kernel image evidence
+                    _cve_2023_20588_pvulnstatus_smt
+                else
+                    _cve_2023_20588_pvulnstatus_no_kernel
+                fi
+            else
+                # offline mode: only kernel image / System.map evidence is available
+                if [ -n "$kernel_mitigated" ]; then
+                    pvulnstatus "$cve" OK "Mitigation: amd_clear_divider found in kernel image"
+                else
+                    _cve_2023_20588_pvulnstatus_no_kernel
+                fi
+            fi
+        else
+            pvulnstatus "$cve" "$status" "no sysfs interface available for this CVE, use --no-sysfs to check"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2023_20588_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     else
