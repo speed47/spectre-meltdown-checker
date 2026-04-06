@@ -91,8 +91,6 @@ fi
 
 if [ "$opt_live" = 1 ]; then
     pr_info "Checking for vulnerabilities on current system"
-    pr_info "Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
-    pr_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
     # try to find the image of the current running kernel
     if [ -n "$opt_kernel" ]; then
@@ -189,7 +187,6 @@ if [ "$opt_live" = 1 ]; then
     fi
 else
     pr_info "Checking for vulnerabilities against specified kernel"
-    pr_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 fi
 
 if [ -n "$opt_kernel" ]; then
@@ -222,9 +219,7 @@ if [ "$g_os" = Linux ]; then
         g_bad_accuracy=1
     fi
 
-    if [ "${g_bad_accuracy:=0}" = 1 ]; then
-        pr_warn "We're missing some kernel info (see -v), accuracy might be reduced"
-    fi
+    : "${g_bad_accuracy:=0}"
 fi
 
 if [ -e "$opt_kernel" ]; then
@@ -262,7 +257,7 @@ else
                 pr_warn "Possible discrepancy between your running kernel '$(uname -r)' and the image '$g_kernel_version' we found ($opt_kernel), results might be incorrect"
             fi
         else
-            pr_info "Kernel image is \033[35m$g_kernel_version"
+            pr_verbose "Kernel image is \033[35m$g_kernel_version"
         fi
     else
         pr_verbose "Kernel image version is unknown"
@@ -343,10 +338,45 @@ sys_interface_check() {
     return 0
 }
 
+# Display kernel image, config, and System.map availability
+check_kernel_info() {
+    local config_display
+    pr_info "\033[1;34mKernel information\033[0m"
+    if [ "$opt_live" = 1 ]; then
+        pr_info "* Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
+    elif [ -n "$g_kernel_version" ]; then
+        pr_info "* Kernel is \033[35m$g_kernel_version\033[0m"
+    else
+        pr_info "* Kernel is \033[35munknown\033[0m"
+    fi
+    if [ -n "$opt_kernel" ] && [ -e "$opt_kernel" ]; then
+        pr_info "* Kernel image found at \033[35m$opt_kernel\033[0m"
+    else
+        pr_info "* Kernel image NOT found"
+    fi
+    if [ -n "$opt_config" ]; then
+        if [ -n "${g_dumped_config:-}" ]; then
+            config_display="$g_procfs/config.gz"
+        else
+            config_display="$opt_config"
+        fi
+        pr_info "* Kernel config found at \033[35m$config_display\033[0m"
+    else
+        pr_info "* Kernel config NOT found"
+    fi
+    if [ -n "$opt_map" ]; then
+        pr_info "* Kernel System.map found at \033[35m$opt_map\033[0m"
+    else
+        pr_info "* Kernel System.map NOT found"
+    fi
+    if [ "${g_bad_accuracy:-0}" = 1 ]; then
+        pr_warn "We're missing some kernel info, accuracy might be reduced"
+    fi
+}
+
 # Display hardware-level CPU mitigation support (microcode features, ARCH_CAPABILITIES, etc.)
 check_cpu() {
     local capabilities ret spec_ctrl_msr codename ucode_str
-    pr_info "\033[1;34mHardware check\033[0m"
 
     if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
         return

@@ -1,6 +1,10 @@
 # vim: set ts=4 sw=4 sts=4 et:
 
+check_kernel_info
+pr_info
+
 if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+    pr_info "\033[1;34mHardware check\033[0m"
     check_cpu
     check_cpu_vulnerabilities
     pr_info
@@ -20,7 +24,7 @@ if [ -n "$g_final_summary" ]; then
 fi
 
 if [ "$g_bad_accuracy" = 1 ]; then
-    pr_warn "We're missing some kernel info (see -v), accuracy might be reduced"
+    pr_warn "We're missing some kernel information (see kernel section at the top), accuracy might be reduced"
 fi
 
 g_vars=$(set | grep -Ev '^[A-Z_[:space:]]' | grep -v -F 'g_mockme=' | sort | tr "\n" '|')
