@@ -65,6 +65,7 @@ parse_cpu_details() {
     # see https://elixir.bootlin.com/linux/v6.0/source/arch/x86/kernel/cpu/microcode/intel.c#L694
     # Set it to 8 (impossible value as it is 3 bit long) by default
     cpu_platformid=8
+    # use direct cpu_vendor comparison: is_intel() calls parse_cpu_details() which would recurse
     if [ "$cpu_vendor" = GenuineIntel ] && [ "$cpu_model" -ge 5 ]; then
         read_msr $MSR_IA32_PLATFORM_ID
         ret=$?
@@ -119,7 +120,8 @@ parse_cpu_details() {
 
     # Detect hybrid CPU: CPUID.(EAX=7,ECX=0):EDX[15] = 1 means hybrid
     cpu_hybrid=0
-    if is_intel; then
+    # use direct cpu_vendor comparison: is_intel() calls parse_cpu_details() which would recurse
+    if [ "$cpu_vendor" = GenuineIntel ]; then
         read_cpuid 0x7 0x0 $EDX 15 1 1
         if [ $? = $READ_CPUID_RET_OK ]; then
             cpu_hybrid=1
@@ -146,7 +148,8 @@ parse_cpu_details() {
     if [ -z "$cpu_ucode" ] && [ "$g_os" != Linux ]; then
         load_cpuid
         if [ -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-            if [ "$cpu_vendor" = AuthenticAMD ]; then
+            # use direct cpu_vendor comparison: is_amd/is_hygon/is_intel() call parse_cpu_details() which would recurse
+            if [ "$cpu_vendor" = AuthenticAMD ] || [ "$cpu_vendor" = HygonGenuine ]; then
                 # AMD: read MSR_PATCHLEVEL (0xC0010058) directly
                 cpu_ucode=$(cpucontrol -m 0xC0010058 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
             elif [ "$cpu_vendor" = GenuineIntel ]; then
