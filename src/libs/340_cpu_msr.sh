@@ -86,14 +86,13 @@ write_msr_one_core() {
         ret=$?
     else
         # for Linux
-        # convert to decimal
         if [ ! -w $CPU_DEV_BASE/"$core"/msr ]; then
             ret_write_msr_msg="No write permission on $CPU_DEV_BASE/$core/msr"
             return $WRITE_MSR_RET_ERR
         # if wrmsr is available, use it
         elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
             pr_debug "write_msr: using wrmsr"
-            wrmsr $msr_dec $value_dec 2>/dev/null
+            wrmsr -p "$core" $msr_dec $value_dec 2>/dev/null
             ret=$?
             # ret=4: msr doesn't exist, ret=127: msr.allow_writes=off
             [ "$ret" = 127 ] && write_denied=1
