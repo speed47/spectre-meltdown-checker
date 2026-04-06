@@ -83,6 +83,18 @@ VUSec researchers demonstrated that the original BHI mitigation (disabling unpri
 
 **Why out of scope:** CVE-2024-2201 is not a new hardware vulnerability — it is the same BHI hardware bug as CVE-2022-0002, but proves that eBPF restriction alone was never sufficient. The required mitigations are identical: `BHI_DIS_S` hardware control (MSR `IA32_SPEC_CTRL` bit 10), software BHB clearing loop at syscall entry and VM exit, or retpoline with RRSBA disabled. These are all already detected by this tool's CVE-2017-5715 (Spectre V2) checks, which parse the `BHI:` suffix from `/sys/devices/system/cpu/vulnerabilities/spectre_v2` and check for `CONFIG_MITIGATION_SPECTRE_BHI` in offline mode. No new sysfs entry, MSR, kernel config option, or boot parameter was introduced for this CVE.
 
+## CVE-2020-0549 — L1D Eviction Sampling (CacheOut)
+
+- **Issue:** [#341](https://github.com/speed47/spectre-meltdown-checker/issues/341)
+- **Advisory:** [INTEL-SA-00329](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/l1d-eviction-sampling.html)
+- **Affected CPUs:** Intel Skylake through 10th gen (Tiger Lake+ not affected)
+- **CVSS:** 6.5 (Medium)
+- **Covered by:** CVE-2018-12126 / CVE-2018-12127 / CVE-2018-12130 / CVE-2019-11091 (MDS) and CVE-2018-3646 (L1TF)
+
+An Intel-specific data leakage vulnerability where L1 data cache evictions can be exploited in combination with MDS or TAA side channels to leak data across security boundaries.
+
+**Why out of scope:** The June 2020 microcode update that addresses this CVE does not introduce any new MSR bits or CPUID flags — it reuses the existing MD_CLEAR (`CPUID.7.0:EDX[10]`) and L1D_FLUSH (`MSR_IA32_FLUSH_CMD`, 0x10B) infrastructure already deployed for MDS and L1TF. The Linux kernel has no dedicated sysfs entry in `/sys/devices/system/cpu/vulnerabilities/` for this CVE; instead, it provides an opt-in per-task L1D flush via `prctl(PR_SPEC_L1D_FLUSH)` and the `l1d_flush=on` boot parameter, which piggyback on the same L1D flush mechanism checked by the existing L1TF and MDS vulnerability modules. In practice, a system with up-to-date microcode and MDS/L1TF mitigations in place is already protected against L1D Eviction Sampling.
+
 ## CVE-2025-20623 — Shared Microarchitectural Predictor State (10th Gen Intel)
 
 - **Advisory:** [INTEL-SA-01247](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-01247.html)
