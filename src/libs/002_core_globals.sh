@@ -3,68 +3,60 @@
 show_usage() {
     # shellcheck disable=SC2086
     cat <<EOF
-	Usage:
-		Live mode:    $(basename $0) [options] [--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]
-		No-runtime:   $(basename $0) [options] --no-runtime <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
-		No-hw:        $(basename $0) [options] --no-hw <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
-
 	Modes:
-		Three modes are available.
+		* Live mode:          $(basename $0) [options] [--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]
+			Inspect the currently running kernel within the context of the CPU it's running on.
+			You can optionally specify --kernel, --config, or --map to help the script locate files it couldn't auto-detect
 
-		First mode is the "live" mode (default), it does its best to find information about the currently
-		running kernel. To run under this mode, just start the script without any option.
-		You can optionally specify --kernel, --config, or --map to help the script locate files it
-		couldn't auto-detect, without changing the mode.
+		* No-runtime mode:    $(basename $0) [options] --no-runtime <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
+			Inspect the CPU hardware, but skips all running-kernel artifacts (/sys, /proc, dmesg).
+			Use this when you have a kernel image different from the kernel you're running but want to check it against this CPU.
 
-		--kernel kernel_file	specify a (possibly compressed) Linux or BSD kernel file
-		--config kernel_config	specify a kernel config file (Linux only)
-		--map kernel_map_file	specify a kernel System.map file (Linux only)
+		* No-hardware mode:   $(basename $0) [options] --no-hw <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
+			Ignore both CPU hardware and running-kernel artifacts. Use this for pure static analysis of a kernel image,
+			for example when inspecting a kernel targeted for another system or CPU.
 
-		Second mode is "no-runtime" (--no-runtime), where the script inspects the local CPU hardware
-		but skips all running-kernel artifacts (/sys, /proc, dmesg). Use this when you have a kernel
-		image from another system but want to check it against this CPU.
+		* Hardware-only mode: $(basename $0) [options] --hw-only
+			Only inspect the CPU hardware, and report information and affectedness per vulnerability.
 
-		Third mode is "no-hw" (--no-hw), where the script skips both CPU hardware inspection and
-		running-kernel artifacts. Use this for pure static analysis of a kernel image, for example
-		when inspecting an embedded kernel from a different architecture.
+	Vulnerability selection:
+		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked.
+					can be used multiple times (e.g. --variant 3a --variant l1tf). For a list use 'help'.
+		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
+					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
 
-	Options:
-		--no-color		don't use color codes
-		--verbose, -v		increase verbosity level, possibly several times
-		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
+	Check scope:
+		--no-sysfs		don't use the /sys interface even if present [Linux]
+		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
+
+	Strictness:
 		--paranoid		require all mitigations to be enabled to the fullest extent, including those that
 					are not strictly necessary but provide defense in depth (e.g. SMT disabled, IBPB
 					always-on); without this flag, the script follows the security community consensus
 		--extra			run additional checks for issues that don't have a CVE but are still security-relevant,
 					such as compile-time mitigations not enabled by default (e.g. Straight-Line Speculation)
 
-		--no-sysfs		don't use the /sys interface even if present [Linux]
-		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
-		--coreos		special mode for CoreOS (use an ephemeral toolbox to inspect kernel) [Linux]
-
-		--arch-prefix PREFIX	specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
-					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
-		--batch text		produce machine readable output, this is the default if --batch is specified alone
-		--batch short		produce only one line with the vulnerabilities separated by spaces
-		--batch json		produce comprehensive JSON output with system, CPU, and vulnerability details
-		--batch json-terse	produce a terse JSON array of per-CVE results (legacy format)
-		--batch nrpe		produce machine readable output formatted for NRPE
-		--batch prometheus      produce Prometheus metrics (smc_* schema)
-
-		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked.
-					can be used multiple times (e.g. --variant 3a --variant l1tf)
-					for a list of supported VARIANT parameters, use --variant help
-		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
-					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
-		--hw-only		only check for CPU information, don't check for any variant
-		--no-runtime		skip running-kernel checks (/sys, /proc, dmesg), still inspect local CPU hardware
-		--no-hw			skip CPU information and running-kernel checks (implies --no-runtime)
+	Hardware and platform:
+		--cpu [#,all]		interact with CPUID and MSR of CPU core number #, or all (default: CPU core 0)
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
 		--allow-msr-write	allow probing for write-only MSRs, this might produce kernel logs or be blocked by your system
-		--cpu [#,all]		interact with CPUID and MSR of CPU core number #, or all (default: CPU core 0)
+		--arch-prefix PREFIX	specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
+					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
+		--coreos		special mode for CoreOS (use an ephemeral toolbox to inspect kernel) [Linux]
+
+	Output:
+		--batch FORMAT		produce machine readable output; FORMAT is one of:
+					text (default), short, json, json-terse, nrpe, prometheus
+		--no-color		don't use color codes
+		--verbose, -v		increase verbosity level, possibly several times
+		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
+
+	Firmware database:
 		--update-fwdb		update our local copy of the CPU microcodes versions database (using the awesome
 					MCExtractor project and the Intel firmwares GitHub repository)
 		--update-builtin-fwdb	same as --update-fwdb but update builtin DB inside the script itself
+
+	Debug:
 		--dump-mock-data	used to mimick a CPU on an other system, mainly used to help debugging this script
 
 	Return codes:

@@ -238,6 +238,28 @@ What is the purpose of this tool? Why was it written? How can it be useful to me
 
 All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
 
+## Operating modes
+
+The script supports four operating modes, depending on whether you want to inspect the running kernel, a kernel image, the CPU hardware, or a combination.
+
+| Mode | Flag | CPU hardware | Running kernel | Kernel image | Use case |
+|------|------|:---:|:---:|:---:|----------|
+| **Live** *(default)* | *(none)* | Yes | Yes | auto-detect | Day-to-day auditing of the current system |
+| **No-runtime** | `--no-runtime` | Yes | No | required | Check a different kernel against this CPU (e.g. pre-deployment) |
+| **No-hardware** | `--no-hw` | No | No | required | Pure static analysis of a kernel image for another system or architecture |
+| **Hardware-only** | `--hw-only` | Yes | No | No | Quickly check CPU affectedness without inspecting any kernel |
+
+In **Live** mode (the default), the script inspects both the CPU and the running kernel.
+You can optionally pass `--kernel`, `--config`, or `--map` to point the script at files it couldn't auto-detect.
+
+In **No-runtime** mode, the script still reads the local CPU (CPUID, MSRs, microcode) but skips all running-kernel artifacts (`/sys`, `/proc`, `dmesg`).
+Use this when you have a kernel image from another system but want to evaluate it against the current CPU.
+
+In **No-hardware** mode, both CPU inspection and running-kernel artifacts are skipped entirely.
+This is useful for cross-architecture analysis, for example inspecting an ARM kernel image on an x86 workstation.
+
+In **Hardware-only** mode, the script only reports CPU information and per-CVE hardware affectedness, without inspecting any kernel.
+
 ## Running the script
 
 ### Direct way (recommended)
