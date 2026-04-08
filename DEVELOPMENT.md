@@ -19,7 +19,7 @@ Even though the Linux `sysfs` hierarchy (`/sys/devices/system/cpu/vulnerabilitie
 
 - **Independent of kernel knowledge**: A given kernel only understands vulnerabilities known at compile time. This script's detection logic is maintained independently, so it can identify gaps a kernel doesn't yet know about.
 - **Detailed prerequisite breakdown**: Mitigating a vulnerability can involve multiple layers (microcode, host kernel, hypervisor, guest kernel, software). The script shows exactly which pieces are in place and which are missing.
-- **Offline kernel analysis**: The script can inspect a kernel image before it is booted (`--kernel`, `--config`, `--map`), verifying it carries the expected mitigations.
+- **No-runtime kernel analysis**: The script can inspect a kernel image before it is booted (`--kernel`, `--config`, `--map`), verifying it carries the expected mitigations.
 - **Backport-aware**: It detects actual capabilities rather than checking version strings, so it works correctly with vendor kernels that silently backport or forward-port patches.
 - **Covers gaps in sysfs**: Some vulnerabilities (e.g. Zenbleed) are not reported through `sysfs` at all.
 
@@ -159,7 +159,7 @@ This works because the kernel always has direct access to CPUID (it doesn't need
 **Rules:**
 - This is strictly a fallback: `read_cpuid` via `/dev/cpu/N/cpuid` remains the primary method.
 - Only use it when `read_cpuid` returned `READ_CPUID_RET_ERR` (device unavailable), **never** when it returned `READ_CPUID_RET_KO` (device available but bit is 0 — meaning the CPU/hypervisor explicitly reports the feature as absent).
-- Only in live mode (`$opt_live = 1`), since `/proc/cpuinfo` is not available in offline mode.
+- Only in live mode (`$opt_runtime = 1`), since `/proc/cpuinfo` is not available in no-runtime mode.
 - Only for CPUID bits that the kernel exposes as `/proc/cpuinfo` flags. Not all bits have a corresponding flag — only those listed in the kernel's `capflags.c`. If a bit has no `/proc/cpuinfo` flag, no fallback is possible.
 - The fallback depends on the running kernel being recent enough to know about the CPUID bit in question. An older kernel won't expose a flag it doesn't know about, so the fallback will silently not trigger — which is fine (we just stay at UNKNOWN, same as the ERR case without fallback).
 
@@ -182,7 +182,7 @@ read_cpuid 0x7 0x0 $EDX 31 1 1
 ret=$?
 if [ $ret = $READ_CPUID_RET_OK ]; then
     cap_ssbd='Intel SSBD'
-elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_live" = 1 ]; then
+elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
     # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
     if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
         cap_ssbd='Intel SSBD (cpuinfo)'
@@ -197,7 +197,7 @@ When the fallback sets a `cap_*` variable, append ` (cpuinfo)` to the value stri
 
 When a CPU is not explicitly known to be unaffected by a vulnerability, assume that it is affected. This conservative default has been the right call since the early Spectre/Meltdown days and remains sound.
 
-### 6. Offline mode
+### 6. No-runtime mode
 
 The script can analyze a non-running kernel via `--kernel`, `--config`, `--map` flags, allowing verification before deployment.
 
@@ -388,18 +388,18 @@ This is where the real detection lives. Check for mitigations at each layer:
     fi
     ```
 
-  Each source may independently be unavailable (offline mode without the file, or stripped kernel), so check all that are present. A match in any one confirms kernel support.
+  Each source may independently be unavailable (no-runtime mode without the file, or stripped kernel), so check all that are present. A match in any one confirms kernel support.
 
-- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs. All runtime-only checks — including `/proc/cpuinfo` flags — must be guarded by `if [ "$opt_live" = 1 ]`, both when collecting the evidence in Phase 2 and when using it in Phase 4. In Phase 4, use explicit live/offline branches so that live-only variables (e.g. cpuinfo flags, MSR values) are never referenced in the offline path.
+- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs. All runtime-only checks — including `/proc/cpuinfo` flags — must be guarded by `if [ "$opt_runtime" = 1 ]`, both when collecting the evidence in Phase 2 and when using it in Phase 4. In Phase 4, use explicit live/no-runtime branches so that live-only variables (e.g. cpuinfo flags, MSR values) are never referenced in the no-runtime path.
   ```sh
-  if [ "$opt_live" = 1 ]; then
+  if [ "$opt_runtime" = 1 ]; then
       read_msr 0xADDRESS
       ret=$?
       if [ "$ret" = "$READ_MSR_RET_OK" ]; then
           # check specific bits in ret_read_msr_value_lo / ret_read_msr_value_hi
       fi
   else
-      pstatus blue N/A "not testable in offline mode"
+      pstatus blue N/A "not testable in no-runtime mode"
   fi
   ```
 
@@ -490,15 +490,15 @@ four categories of information that the script consumes in different modes:
 
 1. **Sysfs messages** — every version of the string the kernel has ever produced for
    `/sys/devices/system/cpu/vulnerabilities/<name>`. Used in live mode to parse the
-   kernel's own assessment, and in offline mode to grep for known strings in `$g_kernel`.
+   kernel's own assessment, and in no-runtime mode to grep for known strings in `$g_kernel`.
 2. **Kconfig option names** — every `CONFIG_*` symbol that enables or controls the
-   mitigation. Used in offline mode to check `$opt_config`. Kconfig names change over
+   mitigation. Used in no-runtime mode to check `$opt_config`. Kconfig names change over
    time (e.g. `CONFIG_GDS_FORCE_MITIGATION` → `CONFIG_MITIGATION_GDS_FORCE` →
    `CONFIG_MITIGATION_GDS`), and vendor kernels may use their own names, so all variants
    must be catalogued.
 3. **Kernel function names** — functions introduced specifically for the mitigation (e.g.
    `gds_select_mitigation`, `gds_apply_mitigation`, `l1tf_select_mitigation`). Used in
-   offline mode to check `$opt_map` (System.map): the presence of a mitigation function
+   no-runtime mode to check `$opt_map` (System.map): the presence of a mitigation function
    proves the kernel was compiled with the mitigation code, even if the config file is
    unavailable.
 4. **CPU affection logic** — the complete algorithm the kernel uses to decide whether a
@@ -776,7 +776,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
    - The new CVE appears in the `vulnerabilities` array with correct `cve`, `name`, `aliases`, `cpu_affected`, `status`, `vulnerable`, `info`, `sysfs_status`, and `sysfs_message` fields.
    - If new `cap_*` variables were added in `check_cpu()`, they appear in `cpu.capabilities` (see Step 2 JSON note).
    - Run with `--batch json-terse` as well to verify backward-compatible output.
-7. **Test offline**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the offline code path reports correctly.
+7. **Test no-runtime**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the no-runtime code path reports correctly.
 8. **Test `--variant` and `--cve`**: Run with `--variant <shortname>` and `--cve CVE-YYYY-NNNNN` separately to confirm both selection methods work and produce the same output.
 9. **Lint**: Run `shellcheck` on the monolithic script and fix any warnings.
 
@@ -784,7 +784,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 
 - **Never hardcode kernel or microcode versions** - detect capabilities directly (design principles 2 and 3). Exception: when a microcode fix has no detectable indicator, hardcode fixing versions per CPU (see principle 3).
 - **Assume affected by default** - only mark a CPU as unaffected when there is positive evidence (design principle 4).
-- **Always handle both live and offline modes** - use `$opt_live` to branch, and print `N/A "not testable in offline mode"` for runtime-only checks when offline.
+- **Always handle both live and no-runtime modes** - use `$opt_runtime` to branch, and print `N/A "not testable in no-runtime mode"` for runtime-only checks when in no-runtime mode.
 - **Use `explain()`** when reporting VULN to give actionable remediation advice (see "Cross-Cutting Features" above).
 - **Handle `--paranoid` and `--vmm`** when the CVE has stricter mitigation tiers or VMM-specific aspects (see "Cross-Cutting Features" above).
 - **Keep JSON output in sync** - when adding new `cap_*` variables, add them to `_build_json_cpu()` in `src/libs/250_output_emitters.sh` (see Step 2 JSON note above). Per-CVE fields are handled automatically.

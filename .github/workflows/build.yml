@@ -159,15 +159,18 @@ jobs:
         fi
     - name: create a pull request to ${{ github.ref_name }}-build
       run: |
+        # all the files in dist/* and .github/* must be moved as is to the -build branch root, move them out for now:
         tmpdir=$(mktemp -d)
         mv ./dist/* .github $tmpdir/
         rm -rf ./dist
+
         git fetch origin ${{ github.ref_name }}-build
         git checkout -f ${{ github.ref_name }}-build
         mv $tmpdir/* .
-        rm -rf src/
+        rm -rf src/ scripts/ img/
         mkdir -p .github
         rsync -vaP --delete $tmpdir/.github/ .github/
+
         git add --all
         echo =#=#= DIFF CACHED
         git diff --cached

@@ -214,17 +214,17 @@ A race condition in the branch predictor update mechanism of Intel processors (C
 Several transient execution CVEs are not covered by this tool, for various reasons (duplicates, only
 affecting non-supported hardware or OS, theoretical with no known exploitation, etc.).
 The complete list along with the reason for each exclusion is available in the
-[UNSUPPORTED_CVE_LIST.md](https://github.com/speed47/spectre-meltdown-checker/blob/source/UNSUPPORTED_CVE_LIST.md) file.
+[UNSUPPORTED_CVE_LIST.md](doc/UNSUPPORTED_CVE_LIST.md) file.
 
 ## Scope
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
-- FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](FAQ.md#which-bsd-oses-are-supported))
+- FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](doc/FAQ.md#which-bsd-oses-are-supported))
 
-For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
+For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](doc/FAQ.md#how-does-this-script-work).
 
-Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](FAQ.md#why-is-my-os-not-supported).
+Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](doc/FAQ.md#why-is-my-os-not-supported).
 
 Supported architectures:
 - `x86` (32 bits)
@@ -236,7 +236,7 @@ Supported architectures:
 
 What is the purpose of this tool? Why was it written? How can it be useful to me? How does it work? What can I expect from it?
 
-All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
+All these questions (and more) have detailed answers in the [FAQ](doc/FAQ.md), please have a look!
 
 ## Operating modes
 

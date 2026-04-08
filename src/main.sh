@@ -166,7 +166,9 @@ fi
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
     prom_run_as_root='false'
     [ "$(id -u)" -eq 0 ] && prom_run_as_root='true'
-    if [ "$opt_no_hw" = 1 ]; then
+    if [ "$opt_hw_only" = 1 ]; then
+        prom_mode='hw-only'
+    elif [ "$opt_no_hw" = 1 ]; then
         prom_mode='no-hw'
     elif [ "$opt_runtime" = 0 ]; then
         prom_mode='no-runtime'
