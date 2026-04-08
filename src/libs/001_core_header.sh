@@ -27,8 +27,7 @@ trap 'exit_cleanup' EXIT
 trap 'pr_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
 # Clean up temporary files and undo module/mount side effects on exit
 exit_cleanup() {
-    local saved_ret
-    saved_ret=$?
+    local saved_ret=$?
     # cleanup the temp decompressed config & kernel image
     [ -n "${g_dumped_config:-}" ] && [ -f "$g_dumped_config" ] && rm -f "$g_dumped_config"
     [ -n "${g_kerneltmp:-}" ] && [ -f "$g_kerneltmp" ] && rm -f "$g_kerneltmp"
