@@ -20,10 +20,10 @@ _prom_escape() {
 # Prints: JSON token
 _json_cap() {
     case "${1:-}" in
-        1)    printf 'true' ;;
-        0)    printf 'false' ;;
-        -1|'') printf 'null' ;;
-        *)    printf '"%s"' "$(_json_escape "$1")" ;;
+        1) printf 'true' ;;
+        0) printf 'false' ;;
+        -1 | '') printf 'null' ;;
+        *) printf '"%s"' "$(_json_escape "$1")" ;;
     esac
 }
 
@@ -349,9 +349,18 @@ _emit_nrpe() {
 _emit_prometheus() {
     local numeric_status cpu_affected full_name esc_name
     case "$3" in
-        OK)   numeric_status=0 ; g_smc_ok_count=$((g_smc_ok_count + 1)) ;;
-        VULN) numeric_status=1 ; g_smc_vuln_count=$((g_smc_vuln_count + 1)) ;;
-        UNK)  numeric_status=2 ; g_smc_unk_count=$((g_smc_unk_count + 1)) ;;
+        OK)
+            numeric_status=0
+            g_smc_ok_count=$((g_smc_ok_count + 1))
+            ;;
+        VULN)
+            numeric_status=1
+            g_smc_vuln_count=$((g_smc_vuln_count + 1))
+            ;;
+        UNK)
+            numeric_status=2
+            g_smc_unk_count=$((g_smc_unk_count + 1))
+            ;;
         *)
             echo "$0: error: unknown status '$3' passed to _emit_prometheus()" >&2
             exit 255
@@ -387,8 +396,8 @@ _build_prometheus_system_info() {
         *) hypervisor_host='' ;;
     esac
     sys_labels=''
-    [ -n "$kernel_release"  ] && sys_labels="${sys_labels:+$sys_labels,}kernel_release=\"$(_prom_escape "$kernel_release")\""
-    [ -n "$kernel_arch"     ] && sys_labels="${sys_labels:+$sys_labels,}kernel_arch=\"$(_prom_escape "$kernel_arch")\""
+    [ -n "$kernel_release" ] && sys_labels="${sys_labels:+$sys_labels,}kernel_release=\"$(_prom_escape "$kernel_release")\""
+    [ -n "$kernel_arch" ] && sys_labels="${sys_labels:+$sys_labels,}kernel_arch=\"$(_prom_escape "$kernel_arch")\""
     [ -n "$hypervisor_host" ] && sys_labels="${sys_labels:+$sys_labels,}hypervisor_host=\"$hypervisor_host\""
     [ -n "$sys_labels" ] && g_smc_system_info_line="smc_system_info{$sys_labels} 1"
 }
@@ -432,19 +441,19 @@ _build_prometheus_cpu_info() {
         *) smt_val='' ;;
     esac
     cpu_labels=''
-    [ -n "${cpu_vendor:-}"        ] && cpu_labels="${cpu_labels:+$cpu_labels,}vendor=\"$(_prom_escape "$cpu_vendor")\""
+    [ -n "${cpu_vendor:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}vendor=\"$(_prom_escape "$cpu_vendor")\""
     [ -n "${cpu_friendly_name:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model=\"$(_prom_escape "$cpu_friendly_name")\""
-    [ -n "${cpu_family:-}"        ] && cpu_labels="${cpu_labels:+$cpu_labels,}family=\"$cpu_family\""
-    [ -n "${cpu_model:-}"         ] && cpu_labels="${cpu_labels:+$cpu_labels,}model_id=\"$cpu_model\""
-    [ -n "${cpu_stepping:-}"      ] && cpu_labels="${cpu_labels:+$cpu_labels,}stepping=\"$cpu_stepping\""
-    [ -n "$cpuid_hex"             ] && cpu_labels="${cpu_labels:+$cpu_labels,}cpuid=\"$cpuid_hex\""
-    [ -n "$codename"              ] && cpu_labels="${cpu_labels:+$cpu_labels,}codename=\"$(_prom_escape "$codename")\""
-    [ -n "$smt_val"               ] && cpu_labels="${cpu_labels:+$cpu_labels,}smt=\"$smt_val\""
-    [ -n "$ucode_hex"             ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode=\"$ucode_hex\""
-    [ -n "$ucode_latest_hex"      ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_latest=\"$ucode_latest_hex\""
-    [ -n "$ucode_uptodate"        ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_up_to_date=\"$ucode_uptodate\""
+    [ -n "${cpu_family:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}family=\"$cpu_family\""
+    [ -n "${cpu_model:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model_id=\"$cpu_model\""
+    [ -n "${cpu_stepping:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}stepping=\"$cpu_stepping\""
+    [ -n "$cpuid_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}cpuid=\"$cpuid_hex\""
+    [ -n "$codename" ] && cpu_labels="${cpu_labels:+$cpu_labels,}codename=\"$(_prom_escape "$codename")\""
+    [ -n "$smt_val" ] && cpu_labels="${cpu_labels:+$cpu_labels,}smt=\"$smt_val\""
+    [ -n "$ucode_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode=\"$ucode_hex\""
+    [ -n "$ucode_latest_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_latest=\"$ucode_latest_hex\""
+    [ -n "$ucode_uptodate" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_up_to_date=\"$ucode_uptodate\""
     # always emit microcode_blacklisted when we have microcode info (it's a boolean, never omit)
-    [ -n "$ucode_hex"             ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_blacklisted=\"$ucode_blacklisted\""
+    [ -n "$ucode_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_blacklisted=\"$ucode_blacklisted\""
     [ -n "$cpu_labels" ] && g_smc_cpu_info_line="smc_cpu_info{$cpu_labels} 1"
 }
 

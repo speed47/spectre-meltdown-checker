@@ -344,4 +344,3 @@ if [ "$opt_runtime" = 0 ] && [ -z "$opt_kernel" ] && [ -z "$opt_config" ] && [ -
     pr_warn "Option --no-runtime requires at least one of --kernel, --config, or --map"
     exit 255
 fi
-
