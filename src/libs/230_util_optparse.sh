@@ -47,7 +47,7 @@ while [ -n "${1:-}" ]; do
         opt_arch_prefix="$2"
         shift 2
     elif [ "$1" = "--live" ]; then
-        opt_live=1
+        # deprecated, kept for backward compatibility (live is now the default)
         shift
     elif [ "$1" = "--no-color" ]; then
         opt_no_color=1
@@ -74,8 +74,12 @@ while [ -n "${1:-}" ]; do
     elif [ "$1" = "--hw-only" ]; then
         opt_hw_only=1
         shift
+    elif [ "$1" = "--no-runtime" ]; then
+        opt_runtime=0
+        shift
     elif [ "$1" = "--no-hw" ]; then
         opt_no_hw=1
+        opt_runtime=0
         shift
     elif [ "$1" = "--allow-msr-write" ]; then
         opt_allow_msr_write=1
@@ -334,11 +338,13 @@ if [ "$opt_no_hw" = 1 ] && [ "$opt_hw_only" = 1 ]; then
     exit 255
 fi
 
-if [ "$opt_live" = -1 ]; then
-    if [ -n "$opt_kernel" ] || [ -n "$opt_config" ] || [ -n "$opt_map" ]; then
-        # no --live specified and we have a least one of the kernel/config/map files on the cmdline: offline mode
-        opt_live=0
-    else
-        opt_live=1
-    fi
+if [ "$opt_runtime" = 0 ] && [ "$opt_sysfs_only" = 1 ]; then
+    pr_warn "Incompatible options specified (--no-runtime and --sysfs-only), aborting"
+    exit 255
 fi
+
+if [ "$opt_runtime" = 0 ] && [ -z "$opt_kernel" ] && [ -z "$opt_config" ] && [ -z "$opt_map" ]; then
+    pr_warn "Option --no-runtime requires at least one of --kernel, --config, or --map"
+    exit 255
+fi
+

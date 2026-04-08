@@ -172,8 +172,13 @@ fi
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
     prom_run_as_root='false'
     [ "$(id -u)" -eq 0 ] && prom_run_as_root='true'
-    prom_mode='offline'
-    [ "$opt_live" = 1 ] && prom_mode='live'
+    if [ "$opt_no_hw" = 1 ]; then
+        prom_mode='no-hw'
+    elif [ "$opt_runtime" = 0 ]; then
+        prom_mode='no-runtime'
+    else
+        prom_mode='live'
+    fi
     prom_paranoid='false'
     [ "$opt_paranoid" = 1 ] && prom_paranoid='true'
     prom_sysfs_only='false'

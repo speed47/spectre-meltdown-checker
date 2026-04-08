@@ -68,10 +68,12 @@ _json_bool() {
 _build_json_meta() {
     local timestamp mode
     timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
-    if [ "$opt_live" = 1 ]; then
-        mode="live"
+    if [ "$opt_no_hw" = 1 ]; then
+        mode="no-hw"
+    elif [ "$opt_runtime" = 0 ]; then
+        mode="no-runtime"
     else
-        mode="offline"
+        mode="live"
     fi
     local run_as_root
     if [ "$(id -u)" -eq 0 ]; then
@@ -97,7 +99,7 @@ _build_json_meta() {
 # shellcheck disable=SC2034
 _build_json_system() {
     local kernel_release kernel_version kernel_arch smt_val
-    if [ "$opt_live" = 1 ]; then
+    if [ "$opt_runtime" = 1 ]; then
         kernel_release=$(uname -r)
         kernel_version=$(uname -v)
         kernel_arch=$(uname -m)
@@ -383,7 +385,7 @@ _emit_prometheus() {
 # shellcheck disable=SC2034
 _build_prometheus_system_info() {
     local kernel_release kernel_arch hypervisor_host sys_labels
-    if [ "$opt_live" = 1 ]; then
+    if [ "$opt_runtime" = 1 ]; then
         kernel_release=$(uname -r 2>/dev/null || true)
         kernel_arch=$(uname -m 2>/dev/null || true)
     else

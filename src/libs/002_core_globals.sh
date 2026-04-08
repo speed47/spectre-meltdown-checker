@@ -4,26 +4,29 @@ show_usage() {
     # shellcheck disable=SC2086
     cat <<EOF
 	Usage:
-		Live mode (auto):   $(basename $0) [options]
-		Live mode (manual): $(basename $0) [options] <[--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]> --live
-		Offline mode:       $(basename $0) [options] <[--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]>
+		Live mode:    $(basename $0) [options] [--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]
+		No-runtime:   $(basename $0) [options] --no-runtime <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
+		No-hw:        $(basename $0) [options] --no-hw <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
 
 	Modes:
-		Two modes are available.
+		Three modes are available.
 
-		First mode is the "live" mode (default), it does its best to find information about the currently running kernel.
-		To run under this mode, just start the script without any option (you can also use --live explicitly)
-
-		Second mode is the "offline" mode, where you can inspect a non-running kernel.
-		This mode is automatically enabled when you specify the location of the kernel file, config and System.map files:
+		First mode is the "live" mode (default), it does its best to find information about the currently
+		running kernel. To run under this mode, just start the script without any option.
+		You can optionally specify --kernel, --config, or --map to help the script locate files it
+		couldn't auto-detect, without changing the mode.
 
 		--kernel kernel_file	specify a (possibly compressed) Linux or BSD kernel file
 		--config kernel_config	specify a kernel config file (Linux only)
 		--map kernel_map_file	specify a kernel System.map file (Linux only)
 
-		If you want to use live mode while specifying the location of the kernel, config or map file yourself,
-		you can add --live to the above options, to tell the script to run in live mode instead of the offline mode,
-		which is enabled by default when at least one file is specified on the command line.
+		Second mode is "no-runtime" (--no-runtime), where the script inspects the local CPU hardware
+		but skips all running-kernel artifacts (/sys, /proc, dmesg). Use this when you have a kernel
+		image from another system but want to check it against this CPU.
+
+		Third mode is "no-hw" (--no-hw), where the script skips both CPU hardware inspection and
+		running-kernel artifacts. Use this for pure static analysis of a kernel image, for example
+		when inspecting an embedded kernel from a different architecture.
 
 	Options:
 		--no-color		don't use color codes
@@ -55,7 +58,8 @@ show_usage() {
 		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
 					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
 		--hw-only		only check for CPU information, don't check for any variant
-		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
+		--no-runtime		skip running-kernel checks (/sys, /proc, dmesg), still inspect local CPU hardware
+		--no-hw			skip CPU information and running-kernel checks (implies --no-runtime)
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
 		--no-intel-db		don't use the builtin Intel DB of affected processors
 		--allow-msr-write	allow probing for write-only MSRs, this might produce kernel logs or be blocked by your system
@@ -114,7 +118,7 @@ g_os=$(uname -s)
 opt_kernel=''
 opt_config=''
 opt_map=''
-opt_live=-1
+opt_runtime=1
 opt_no_color=0
 opt_batch=0
 opt_batch_format='text'
