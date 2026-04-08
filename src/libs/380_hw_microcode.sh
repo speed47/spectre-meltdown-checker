@@ -33,11 +33,12 @@ read_inteldb() {
 }
 
 # Check whether the CPU is running the latest known microcode version
-# Sets: ret_is_latest_known_ucode_latest
+# Sets: ret_is_latest_known_ucode_latest, ret_is_latest_known_ucode_version
 # Returns: 0=latest, 1=outdated, 2=unknown
 is_latest_known_ucode() {
     local brand_prefix tuple pfmask ucode ucode_date
     parse_cpu_details
+    ret_is_latest_known_ucode_version=''
     if [ "$cpu_cpuid" = 0 ]; then
         ret_is_latest_known_ucode_latest="couldn't get your cpuid"
         return 2
@@ -64,6 +65,8 @@ is_latest_known_ucode() {
         ucode_date=$(echo "$tuple" | cut -d, -f5 | sed -E 's=(....)(..)(..)=\1/\2/\3=')
         pr_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $ucode from $ucode_date"
         ret_is_latest_known_ucode_latest=$(printf "latest version is 0x%x dated $ucode_date according to $g_mcedb_info" "$ucode")
+        # shellcheck disable=SC2034
+        ret_is_latest_known_ucode_version=$(printf "0x%x" "$ucode")
         if [ "$cpu_ucode" -ge "$ucode" ]; then
             return 0
         else

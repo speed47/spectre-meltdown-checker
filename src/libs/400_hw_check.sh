@@ -312,9 +312,14 @@ sys_interface_check() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_SYSFS_$(basename "$file")='$ret_sys_interface_check_fullmsg'")
     fi
     if [ "$mode" = silent ]; then
+        # capture sysfs message for JSON even in silent mode
+        # shellcheck disable=SC2034
+        g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
         return 0
     elif [ "$mode" = quiet ]; then
         pr_info "* Information from the /sys interface: $ret_sys_interface_check_fullmsg"
+        # shellcheck disable=SC2034
+        g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
         return 0
     fi
     pr_info_nol "* Mitigated according to the /sys interface: "
@@ -334,6 +339,11 @@ sys_interface_check() {
         ret_sys_interface_check_status=UNK
         pstatus yellow UNKNOWN "$ret_sys_interface_check_fullmsg"
     fi
+    # capture for JSON full output (read by _emit_json_full via pvulnstatus)
+    # shellcheck disable=SC2034
+    g_json_cve_sysfs_status="$ret_sys_interface_check_status"
+    # shellcheck disable=SC2034
+    g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
     pr_debug "sys_interface_check: $file=$msg (re=$regex)"
     return 0
 }

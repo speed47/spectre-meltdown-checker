@@ -1,4 +1,245 @@
 # vim: set ts=4 sw=4 sts=4 et:
+# --- JSON helper functions ---
+
+# Escape a string for use in a JSON value (handles backslashes, double quotes, newlines, tabs)
+# Args: $1=string
+# Prints: escaped string (without surrounding quotes)
+_json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | tr '\n' ' '
+}
+
+# Convert a shell capability value to a JSON token
+# Args: $1=value (1=true, 0=false, -1/empty=null, other string=quoted string)
+# Prints: JSON token
+_json_cap() {
+    case "${1:-}" in
+        1)    printf 'true' ;;
+        0)    printf 'false' ;;
+        -1|'') printf 'null' ;;
+        *)    printf '"%s"' "$(_json_escape "$1")" ;;
+    esac
+}
+
+# Emit a JSON string value or null
+# Args: $1=string (empty=null)
+# Prints: JSON token ("escaped string" or null)
+_json_str() {
+    if [ -n "${1:-}" ]; then
+        printf '"%s"' "$(_json_escape "$1")"
+    else
+        printf 'null'
+    fi
+}
+
+# Emit a JSON number value or null
+# Args: $1=number (empty=null)
+# Prints: JSON token
+_json_num() {
+    if [ -n "${1:-}" ]; then
+        printf '%s' "$1"
+    else
+        printf 'null'
+    fi
+}
+
+# Emit a JSON boolean value or null
+# Args: $1=value (1/0/empty)
+# Prints: JSON token
+_json_bool() {
+    case "${1:-}" in
+        1) printf 'true' ;;
+        0) printf 'false' ;;
+        *) printf 'null' ;;
+    esac
+}
+
+# --- JSON section builders (comprehensive format) ---
+
+# Build the "meta" section of the comprehensive JSON output
+# Sets: g_json_meta
+# shellcheck disable=SC2034
+_build_json_meta() {
+    local timestamp mode
+    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
+    if [ "$opt_live" = 1 ]; then
+        mode="live"
+    else
+        mode="offline"
+    fi
+    local run_as_root
+    if [ "$(id -u)" -eq 0 ]; then
+        run_as_root='true'
+    else
+        run_as_root='false'
+    fi
+    g_json_meta=$(printf '{"script_version":%s,"format_version":1,"timestamp":%s,"os":%s,"mode":"%s","run_as_root":%s,"reduced_accuracy":%s,"paranoid":%s,"sysfs_only":%s,"no_hw":%s,"extra":%s}' \
+        "$(_json_str "$VERSION")" \
+        "$(_json_str "$timestamp")" \
+        "$(_json_str "$g_os")" \
+        "$mode" \
+        "$run_as_root" \
+        "$(_json_bool "${g_bad_accuracy:-0}")" \
+        "$(_json_bool "$opt_paranoid")" \
+        "$(_json_bool "$opt_sysfs_only")" \
+        "$(_json_bool "$opt_no_hw")" \
+        "$(_json_bool "$opt_extra")")
+}
+
+# Build the "system" section of the comprehensive JSON output
+# Sets: g_json_system
+# shellcheck disable=SC2034
+_build_json_system() {
+    local kernel_release kernel_version kernel_arch smt_val
+    if [ "$opt_live" = 1 ]; then
+        kernel_release=$(uname -r)
+        kernel_version=$(uname -v)
+        kernel_arch=$(uname -m)
+    else
+        kernel_release=''
+        kernel_version=''
+        kernel_arch=''
+    fi
+    # SMT detection
+    is_cpu_smt_enabled
+    smt_val=$?
+    case $smt_val in
+        0) smt_val='true' ;;
+        1) smt_val='false' ;;
+        *) smt_val='null' ;;
+    esac
+    g_json_system=$(printf '{"kernel_release":%s,"kernel_version":%s,"kernel_arch":%s,"kernel_image":%s,"kernel_config":%s,"kernel_version_string":%s,"kernel_cmdline":%s,"cpu_count":%s,"smt_enabled":%s,"hypervisor_host":%s,"hypervisor_host_reason":%s}' \
+        "$(_json_str "$kernel_release")" \
+        "$(_json_str "$kernel_version")" \
+        "$(_json_str "$kernel_arch")" \
+        "$(_json_str "${opt_kernel:-}")" \
+        "$(_json_str "${opt_config:-}")" \
+        "$(_json_str "${g_kernel_version:-}")" \
+        "$(_json_str "${g_kernel_cmdline:-}")" \
+        "$(_json_num "${g_max_core_id:+$((g_max_core_id + 1))}")" \
+        "$smt_val" \
+        "$(_json_bool "${g_has_vmm:-}")" \
+        "$(_json_str "${g_has_vmm_reason:-}")")
+}
+
+# Build the "cpu" section of the comprehensive JSON output
+# Sets: g_json_cpu
+# shellcheck disable=SC2034
+_build_json_cpu() {
+    local cpuid_hex ucode_hex codename caps
+    if [ -n "${cpu_cpuid:-}" ]; then
+        cpuid_hex=$(printf '0x%08x' "$cpu_cpuid")
+    else
+        cpuid_hex=''
+    fi
+    if [ -n "${cpu_ucode:-}" ]; then
+        ucode_hex=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_hex=''
+    fi
+    codename=''
+    if is_intel; then
+        codename=$(get_intel_codename 2>/dev/null || true)
+    fi
+    # Build capabilities sub-object
+    caps=$(printf '{"spec_ctrl":%s,"ibrs":%s,"ibpb":%s,"ibpb_ret":%s,"stibp":%s,"ssbd":%s,"l1d_flush":%s,"md_clear":%s,"arch_capabilities":%s,"rdcl_no":%s,"ibrs_all":%s,"rsba":%s,"l1dflush_no":%s,"ssb_no":%s,"mds_no":%s,"taa_no":%s,"pschange_msc_no":%s,"tsx_ctrl_msr":%s,"tsx_ctrl_rtm_disable":%s,"tsx_ctrl_cpuid_clear":%s,"gds_ctrl":%s,"gds_no":%s,"gds_mitg_dis":%s,"gds_mitg_lock":%s,"rfds_no":%s,"rfds_clear":%s,"its_no":%s,"sbdr_ssdp_no":%s,"fbsdp_no":%s,"psdp_no":%s,"fb_clear":%s,"rtm":%s,"tsx_force_abort":%s,"tsx_force_abort_rtm_disable":%s,"tsx_force_abort_cpuid_clear":%s,"sgx":%s,"srbds":%s,"srbds_on":%s,"amd_ssb_no":%s,"hygon_ssb_no":%s,"ipred":%s,"rrsba":%s,"bhi":%s,"tsa_sq_no":%s,"tsa_l1_no":%s,"verw_clear":%s,"autoibrs":%s,"sbpb":%s,"avx2":%s,"avx512":%s}' \
+        "$(_json_cap "${cap_spec_ctrl:-}")" \
+        "$(_json_cap "${cap_ibrs:-}")" \
+        "$(_json_cap "${cap_ibpb:-}")" \
+        "$(_json_cap "${cap_ibpb_ret:-}")" \
+        "$(_json_cap "${cap_stibp:-}")" \
+        "$(_json_cap "${cap_ssbd:-}")" \
+        "$(_json_cap "${cap_l1df:-}")" \
+        "$(_json_cap "${cap_md_clear:-}")" \
+        "$(_json_cap "${cap_arch_capabilities:-}")" \
+        "$(_json_cap "${cap_rdcl_no:-}")" \
+        "$(_json_cap "${cap_ibrs_all:-}")" \
+        "$(_json_cap "${cap_rsba:-}")" \
+        "$(_json_cap "${cap_l1dflush_no:-}")" \
+        "$(_json_cap "${cap_ssb_no:-}")" \
+        "$(_json_cap "${cap_mds_no:-}")" \
+        "$(_json_cap "${cap_taa_no:-}")" \
+        "$(_json_cap "${cap_pschange_msc_no:-}")" \
+        "$(_json_cap "${cap_tsx_ctrl_msr:-}")" \
+        "$(_json_cap "${cap_tsx_ctrl_rtm_disable:-}")" \
+        "$(_json_cap "${cap_tsx_ctrl_cpuid_clear:-}")" \
+        "$(_json_cap "${cap_gds_ctrl:-}")" \
+        "$(_json_cap "${cap_gds_no:-}")" \
+        "$(_json_cap "${cap_gds_mitg_dis:-}")" \
+        "$(_json_cap "${cap_gds_mitg_lock:-}")" \
+        "$(_json_cap "${cap_rfds_no:-}")" \
+        "$(_json_cap "${cap_rfds_clear:-}")" \
+        "$(_json_cap "${cap_its_no:-}")" \
+        "$(_json_cap "${cap_sbdr_ssdp_no:-}")" \
+        "$(_json_cap "${cap_fbsdp_no:-}")" \
+        "$(_json_cap "${cap_psdp_no:-}")" \
+        "$(_json_cap "${cap_fb_clear:-}")" \
+        "$(_json_cap "${cap_rtm:-}")" \
+        "$(_json_cap "${cap_tsx_force_abort:-}")" \
+        "$(_json_cap "${cap_tsx_force_abort_rtm_disable:-}")" \
+        "$(_json_cap "${cap_tsx_force_abort_cpuid_clear:-}")" \
+        "$(_json_cap "${cap_sgx:-}")" \
+        "$(_json_cap "${cap_srbds:-}")" \
+        "$(_json_cap "${cap_srbds_on:-}")" \
+        "$(_json_cap "${cap_amd_ssb_no:-}")" \
+        "$(_json_cap "${cap_hygon_ssb_no:-}")" \
+        "$(_json_cap "${cap_ipred:-}")" \
+        "$(_json_cap "${cap_rrsba:-}")" \
+        "$(_json_cap "${cap_bhi:-}")" \
+        "$(_json_cap "${cap_tsa_sq_no:-}")" \
+        "$(_json_cap "${cap_tsa_l1_no:-}")" \
+        "$(_json_cap "${cap_verw_clear:-}")" \
+        "$(_json_cap "${cap_autoibrs:-}")" \
+        "$(_json_cap "${cap_sbpb:-}")" \
+        "$(_json_cap "${cap_avx2:-}")" \
+        "$(_json_cap "${cap_avx512:-}")")
+
+    g_json_cpu=$(printf '{"vendor":%s,"friendly_name":%s,"family":%s,"model":%s,"stepping":%s,"cpuid":%s,"platform_id":%s,"hybrid":%s,"codename":%s,"arm_part_list":%s,"arm_arch_list":%s,"capabilities":%s}' \
+        "$(_json_str "${cpu_vendor:-}")" \
+        "$(_json_str "${cpu_friendly_name:-}")" \
+        "$(_json_num "${cpu_family:-}")" \
+        "$(_json_num "${cpu_model:-}")" \
+        "$(_json_num "${cpu_stepping:-}")" \
+        "$(_json_str "$cpuid_hex")" \
+        "$(_json_num "${cpu_platformid:-}")" \
+        "$(_json_bool "${cpu_hybrid:-}")" \
+        "$(_json_str "$codename")" \
+        "$(_json_str "${cpu_part_list:-}")" \
+        "$(_json_str "${cpu_arch_list:-}")" \
+        "$caps")
+}
+
+# Build the "cpu_microcode" section of the comprehensive JSON output
+# Sets: g_json_cpu_microcode
+# shellcheck disable=SC2034
+_build_json_cpu_microcode() {
+    local ucode_uptodate ucode_hex latest_hex blacklisted
+    if [ -n "${cpu_ucode:-}" ]; then
+        ucode_hex=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_hex=''
+    fi
+    is_latest_known_ucode
+    case $? in
+        0) ucode_uptodate='true' ;;
+        1) ucode_uptodate='false' ;;
+        *) ucode_uptodate='null' ;;
+    esac
+    if is_ucode_blacklisted; then
+        blacklisted='true'
+    else
+        blacklisted='false'
+    fi
+    latest_hex="${ret_is_latest_known_ucode_version:-}"
+    g_json_cpu_microcode=$(printf '{"installed_version":%s,"latest_version":%s,"microcode_up_to_date":%s,"is_blacklisted":%s,"message":%s,"db_source":%s,"db_info":%s}' \
+        "$(_json_str "$ucode_hex")" \
+        "$(_json_str "$latest_hex")" \
+        "$ucode_uptodate" \
+        "$blacklisted" \
+        "$(_json_str "${ret_is_latest_known_ucode_latest:-}")" \
+        "$(_json_str "${g_mcedb_source:-}")" \
+        "$(_json_str "${g_mcedb_info:-}")")
+}
+
 # --- Format-specific batch emitters ---
 
 # Emit a single CVE result as plain text
@@ -16,26 +257,60 @@ _emit_short() {
     g_short_output="${g_short_output}$1 "
 }
 
-# Append a CVE result as a JSON object to the batch output buffer
+# Append a CVE result as a terse JSON object to the batch output buffer
 # Args: $1=cve $2=aka $3=status(UNK|VULN|OK) $4=description
 # Sets: g_json_output
 # Callers: pvulnstatus
-_emit_json() {
+_emit_json_terse() {
     local is_vuln esc_name esc_infos
     case "$3" in
         UNK) is_vuln="null" ;;
         VULN) is_vuln="true" ;;
         OK) is_vuln="false" ;;
         *)
-            echo "$0: error: unknown status '$3' passed to _emit_json()" >&2
+            echo "$0: error: unknown status '$3' passed to _emit_json_terse()" >&2
             exit 255
             ;;
     esac
-    # escape backslashes and double quotes for valid JSON strings
-    esc_name=$(printf '%s' "$2" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-    esc_infos=$(printf '%s' "$4" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+    esc_name=$(_json_escape "$2")
+    esc_infos=$(_json_escape "$4")
     [ -z "$g_json_output" ] && g_json_output='['
     g_json_output="${g_json_output}{\"NAME\":\"$esc_name\",\"CVE\":\"$1\",\"VULNERABLE\":$is_vuln,\"INFOS\":\"$esc_infos\"},"
+}
+
+# Append a CVE result as a comprehensive JSON object to the batch output buffer
+# Args: $1=cve $2=aka $3=status(UNK|VULN|OK) $4=description
+# Sets: g_json_vulns
+# Callers: pvulnstatus
+_emit_json_full() {
+    local is_vuln esc_name esc_infos aliases cpu_affected sysfs_status sysfs_msg
+    case "$3" in
+        UNK) is_vuln="null" ;;
+        VULN) is_vuln="true" ;;
+        OK) is_vuln="false" ;;
+        *)
+            echo "$0: error: unknown status '$3' passed to _emit_json_full()" >&2
+            exit 255
+            ;;
+    esac
+    esc_name=$(_json_escape "$2")
+    esc_infos=$(_json_escape "$4")
+    aliases=$(_cve_registry_field "$1" 4)
+
+    # CPU affection status (cached, cheap)
+    if is_cpu_affected "$1" 2>/dev/null; then
+        cpu_affected='true'
+    else
+        cpu_affected='false'
+    fi
+
+    # sysfs status: use the value captured by this CVE's check function, then clear it
+    # so it doesn't leak into the next CVE that might not call sys_interface_check
+    sysfs_status="${g_json_cve_sysfs_status:-}"
+    sysfs_msg="${g_json_cve_sysfs_msg:-}"
+
+    : "${g_json_vulns:=}"
+    g_json_vulns="${g_json_vulns}{\"cve\":\"$1\",\"name\":\"$esc_name\",\"aliases\":$(_json_str "$aliases"),\"cpu_affected\":$cpu_affected,\"status\":\"$3\",\"vulnerable\":$is_vuln,\"info\":\"$esc_infos\",\"sysfs_status\":$(_json_str "$sysfs_status"),\"sysfs_message\":$(_json_str "$sysfs_msg")},"
 }
 
 # Append vulnerable CVE IDs to the NRPE output buffer
@@ -85,7 +360,8 @@ pvulnstatus() {
         case "$opt_batch_format" in
             text) _emit_text "$1" "$aka" "$2" "$3" ;;
             short) _emit_short "$1" "$aka" "$2" "$3" ;;
-            json) _emit_json "$1" "$aka" "$2" "$3" ;;
+            json) _emit_json_full "$1" "$aka" "$2" "$3" ;;
+            json-terse) _emit_json_terse "$1" "$aka" "$2" "$3" ;;
             nrpe) _emit_nrpe "$1" "$aka" "$2" "$3" ;;
             prometheus) _emit_prometheus "$1" "$aka" "$2" "$3" ;;
             *)
@@ -93,6 +369,9 @@ pvulnstatus() {
                 exit 255
                 ;;
         esac
+        # reset per-CVE sysfs globals so they don't leak into the next CVE
+        g_json_cve_sysfs_status=''
+        g_json_cve_sysfs_msg=''
     fi
 
     _record_result "$1" "$2"

@@ -43,7 +43,8 @@ show_usage() {
 					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
 		--batch text		produce machine readable output, this is the default if --batch is specified alone
 		--batch short		produce only one line with the vulnerabilities separated by spaces
-		--batch json		produce JSON output formatted for Puppet, Ansible, Chef...
+		--batch json		produce comprehensive JSON output with system, CPU, and vulnerability details
+		--batch json-terse	produce a terse JSON array of per-CVE results (legacy format)
 		--batch nrpe		produce machine readable output formatted for NRPE
 		--batch prometheus      produce output for consumption by prometheus-node-exporter
 

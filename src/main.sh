@@ -1,6 +1,12 @@
 # vim: set ts=4 sw=4 sts=4 et:
 
 check_kernel_info
+
+# Build JSON meta and system sections early (after kernel info is resolved)
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+    _build_json_meta
+fi
+
 pr_info
 
 if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
@@ -8,6 +14,15 @@ if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
     check_cpu
     check_cpu_vulnerabilities
     pr_info
+fi
+
+# Build JSON system/cpu/microcode sections (after check_cpu has populated cap_* vars and VMM detection)
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+    _build_json_system
+    if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+        _build_json_cpu
+        _build_json_cpu_microcode
+    fi
 fi
 
 # now run the checks the user asked for
@@ -80,8 +95,26 @@ if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "short" ]; then
     _pr_echo 0 "${g_short_output% }"
 fi
 
-if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json-terse" ]; then
     _pr_echo 0 "${g_json_output%?}]"
+fi
+
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+    # Assemble the comprehensive JSON output from pre-built sections
+    # Inject mocked flag into meta (g_mocked can be set at any point during the run)
+    g_json_meta="${g_json_meta%\}},\"mocked\":$(_json_bool "${g_mocked:-0}")}"
+    _json_final='{'
+    _json_final="${_json_final}\"meta\":${g_json_meta:-null}"
+    _json_final="${_json_final},\"system\":${g_json_system:-null}"
+    _json_final="${_json_final},\"cpu\":${g_json_cpu:-null}"
+    _json_final="${_json_final},\"cpu_microcode\":${g_json_cpu_microcode:-null}"
+    if [ -n "${g_json_vulns:-}" ]; then
+        _json_final="${_json_final},\"vulnerabilities\":[${g_json_vulns%,}]"
+    else
+        _json_final="${_json_final},\"vulnerabilities\":[]"
+    fi
+    _json_final="${_json_final}}"
+    _pr_echo 0 "$_json_final"
 fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then

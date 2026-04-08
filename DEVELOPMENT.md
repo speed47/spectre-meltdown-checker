@@ -84,8 +84,11 @@ sudo ./spectre-meltdown-checker.sh --variant l1tf --variant taa
 # Run specific tests that we might have just added (CVE name)
 sudo ./spectre-meltdown-checker.sh --cve CVE-2018-3640 --cve CVE-2022-40982
 
-# Batch JSON mode (CI validates exactly 19 CVEs in output)
-sudo ./spectre-meltdown-checker.sh --batch json | jq '.[] | .CVE' | wc -l  # must be 19
+# Batch JSON mode (comprehensive output)
+sudo ./spectre-meltdown-checker.sh --batch json | python3 -m json.tool
+
+# Batch JSON terse mode (legacy flat array)
+sudo ./spectre-meltdown-checker.sh --batch json-terse | python3 -m json.tool
 
 # Update microcode firmware database
 sudo ./spectre-meltdown-checker.sh --update-fwdb
@@ -105,7 +108,25 @@ The entire tool is a single bash script with no external script dependencies. Ke
 - **Microcode database** (embedded): Intel/AMD microcode version lookup via `read_mcedb`/`read_inteldb`; updated automatically via `.github/workflows/autoupdate.yml`
 - **Kernel analysis** (~line 1568): `extract_kernel`, `try_decompress` - extracts and inspects kernel images (handles gzip, bzip2, xz, lz4, zstd compression)
 - **Vulnerability checks**: 19 `check_CVE_<year>_<number>()` functions, each with `_linux()` and `_bsd()` variants. Uses whitelist logic (assumes affected unless proven otherwise)
-- **Main flow** (~line 6668): Parse options → detect CPU → loop through requested CVEs → output results (text/json/nrpe/prometheus) → cleanup
+- **Batch output emitters** (`src/libs/250_output_emitters.sh`): `_emit_json_full`, `_emit_json_terse`, `_emit_text`, `_emit_nrpe`, `_emit_prometheus`, plus JSON section builders (`_build_json_meta`, `_build_json_system`, `_build_json_cpu`, `_build_json_cpu_microcode`)
+- **Main flow** (~line 6668): Parse options → detect CPU → loop through requested CVEs → output results (text/json/json-terse/nrpe/prometheus) → cleanup
+
+### JSON Batch Output Formats
+
+Two JSON formats are available via `--batch`:
+
+- **`--batch json`** (comprehensive): A top-level object with five sections:
+  - `meta` — script version, format version, timestamp, run mode flags (`run_as_root`, `reduced_accuracy`, `mocked`, `paranoid`, `sysfs_only`, `no_hw`, `extra`)
+  - `system` — kernel release/version/arch/cmdline, CPU count, SMT status, hypervisor host detection
+  - `cpu` — vendor, model name, family/model/stepping, CPUID, codename, ARM fields (`arm_part_list`, `arm_arch_list`), plus a `capabilities` sub-object containing all `cap_*` hardware flags as booleans/nulls/strings
+  - `cpu_microcode` — `installed_version`, `latest_version`, `microcode_up_to_date`, `is_blacklisted`, firmware DB source/info
+  - `vulnerabilities` — array of per-CVE objects: `cve`, `name`, `aliases`, `cpu_affected`, `status`, `vulnerable`, `info`, `sysfs_status`, `sysfs_message`
+
+- **`--batch json-terse`** (legacy): A flat array of objects with four fields: `NAME`, `CVE`, `VULNERABLE` (bool/null), `INFOS`. This is the original format, preserved for backward compatibility.
+
+The comprehensive format is built in two phases: static sections (`meta`, `system`, `cpu`, `cpu_microcode`) are assembled after `check_cpu()` completes, and per-CVE entries are accumulated during the main CVE loop via `_emit_json_full()`. The sysfs data for each CVE is captured by `sys_interface_check()` into `g_json_cve_sysfs_status`/`g_json_cve_sysfs_msg` globals, which are read by the emitter and reset after each CVE to prevent cross-CVE leakage. CPU affection is determined via the already-cached `is_cpu_affected()`.
+
+When adding new `cap_*` variables (for a new CVE or updated hardware support), they must be added to `_build_json_cpu()` in `src/libs/250_output_emitters.sh`. Per-CVE data is handled automatically.
 
 ## Key Design Principles
 
@@ -314,6 +335,8 @@ Never use microcode version strings.
 When populating the CPU model list, use the **most recent version** of the Linux kernel source as the authoritative reference. The relevant lists are typically found in `arch/x86/kernel/cpu/common.c` (`cpu_vuln_blacklist`) or in the vulnerability-specific mitigation source file. Cross-reference the kernel list with the vendor's published advisory to catch any models the kernel hasn't added yet. Always document the kernel commit hash(es) you based the list on in a comment above the model checks, so future maintainers can diff against newer kernels.
 
 **Important**: Do not confuse hardware immunity bits with *mitigation* capability bits. A hardware immunity bit (e.g. `GDS_NO`, `TSA_SQ_NO`) declares that the CPU design is architecturally free of the vulnerability - it belongs here in `is_cpu_affected()`. A mitigation capability bit (e.g. `VERW_CLEAR`, `MD_CLEAR`) indicates that updated microcode provides a mechanism to work around a vulnerability the CPU *does* have - it belongs in the `check_CVE_YYYY_NNNNN_linux()` function (Phase 2), where it is used to determine whether mitigations are in place.
+
+**JSON output**: If the new CVE introduces new `cap_*` variables in `check_cpu()` (whether immunity bits or mitigation bits), these must also be added to the `_build_json_cpu()` function in `src/libs/250_output_emitters.sh`, inside the `capabilities` sub-object. Use the same name as the shell variable without the `cap_` prefix (e.g. `cap_tsa_sq_no` becomes `"tsa_sq_no"` in JSON), and emit it via `_json_cap`. The per-CVE vulnerability data (affection, status, sysfs) is handled automatically by the existing `_emit_json_full()` function and requires no changes when adding a new CVE.
 
 ### Step 3: Implement the Linux Check
 
@@ -748,7 +771,11 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 3. **Update `dist/README.md`**: Add the CVE in **both** tables — the "Supported CVEs" reference table at the top (CVE link, description, alias) **and** the "Am I at risk?" matrix (with the correct leak/mitigation indicators per boundary). Also add a detailed description paragraph in the `<details>` section at the bottom.
 4. **Build** the monolithic script with `make`.
 5. **Test live**: Run the built script and confirm your CVE appears in the output and reports a sensible status.
-6. **Test batch JSON**: Run with `--batch json` and verify the CVE appears in the output.
+6. **Test batch JSON**: Run with `--batch json` and pipe through `python3 -m json.tool` to verify:
+   - The output is valid JSON.
+   - The new CVE appears in the `vulnerabilities` array with correct `cve`, `name`, `aliases`, `cpu_affected`, `status`, `vulnerable`, `info`, `sysfs_status`, and `sysfs_message` fields.
+   - If new `cap_*` variables were added in `check_cpu()`, they appear in `cpu.capabilities` (see Step 2 JSON note).
+   - Run with `--batch json-terse` as well to verify backward-compatible output.
 7. **Test offline**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the offline code path reports correctly.
 8. **Test `--variant` and `--cve`**: Run with `--variant <shortname>` and `--cve CVE-YYYY-NNNNN` separately to confirm both selection methods work and produce the same output.
 9. **Lint**: Run `shellcheck` on the monolithic script and fix any warnings.
@@ -760,6 +787,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 - **Always handle both live and offline modes** - use `$opt_live` to branch, and print `N/A "not testable in offline mode"` for runtime-only checks when offline.
 - **Use `explain()`** when reporting VULN to give actionable remediation advice (see "Cross-Cutting Features" above).
 - **Handle `--paranoid` and `--vmm`** when the CVE has stricter mitigation tiers or VMM-specific aspects (see "Cross-Cutting Features" above).
+- **Keep JSON output in sync** - when adding new `cap_*` variables, add them to `_build_json_cpu()` in `src/libs/250_output_emitters.sh` (see Step 2 JSON note above). Per-CVE fields are handled automatically.
 - **All indentation must use 4 spaces** (CI enforces this via `fmt-check`; the vim modeline `et` enables expandtab).
 - **Stay POSIX-compatible** - no bashisms, no GNU-only flags in portable code paths.
 
