@@ -166,6 +166,7 @@ jobs:
 
         git fetch origin ${{ github.ref_name }}-build
         git checkout -f ${{ github.ref_name }}-build
+        rm -rf doc/
         mv $tmpdir/* .
         rm -rf src/ scripts/ img/
         mkdir -p .github

@@ -40,7 +40,6 @@ Run metadata.  Always present.
 | `reduced_accuracy` | boolean | | Kernel image, config, or System.map was missing; some checks fall back to weaker heuristics |
 | `paranoid` | boolean | | `--paranoid` mode: stricter criteria (e.g. requires SMT disabled, IBPB always-on) |
 | `sysfs_only` | boolean | | `--sysfs-only`: only the kernel's own sysfs report was used, not independent detection |
-| `no_hw` | boolean | | `--no-hw`: hardware checks (MSR, CPUID) were skipped |
 | `extra` | boolean | | `--extra`: additional experimental checks were enabled |
 | `mocked` | boolean | | One or more CPU values were overridden for testing.  Results do **not** reflect the real system |
 
@@ -49,14 +48,13 @@ Run metadata.  Always present.
 "meta": {
   "script_version": "25.30.025040123",
   "format_version": 1,
-  "timestamp": "2026-04-06T12:22:14Z",
+  "timestamp": "2025-04-07T12:00:00Z",
   "os": "Linux",
   "mode": "live",
   "run_as_root": true,
   "reduced_accuracy": false,
   "paranoid": false,
   "sysfs_only": false,
-  "no_hw": false,
   "extra": false,
   "mocked": false
 }
@@ -106,22 +104,41 @@ boundaries by a malicious guest.  Prioritise remediation where
 
 CPU hardware identification.  `null` when `--no-hw` is active.
 
+The object uses `arch` as a discriminator: `"x86"` for Intel/AMD/Hygon CPUs,
+`"arm"` for ARM/Cavium/Phytium.  Arch-specific fields live under a matching
+sub-object (`cpu.x86` or `cpu.arm`), so consumers never see irrelevant null
+fields from the other architecture.
+
+#### Common fields
+
 | Field | Type | Values | Meaning |
 |---|---|---|---|
-| `vendor` | string \| null | e.g. `"Intel"`, `"AuthenticAMD"` | CPU vendor string |
+| `arch` | string | `"x86"` / `"arm"` | CPU architecture family; determines which sub-object is present |
+| `vendor` | string \| null | e.g. `"GenuineIntel"`, `"ARM"` | CPU vendor string |
 | `friendly_name` | string \| null | e.g. `"Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz"` | Human-readable CPU model |
+
+#### `cpu.x86` (present when `arch == "x86"`)
+
+| Field | Type | Values | Meaning |
+|---|---|---|---|
 | `family` | integer \| null | | CPU family number |
 | `model` | integer \| null | | CPU model number |
 | `stepping` | integer \| null | | CPU stepping number |
 | `cpuid` | string \| null | hex, e.g. `"0x000906ed"` | Full CPUID leaf 1 EAX value |
-| `platform_id` | integer \| null | | Intel platform ID (from MSR 0x17); null on AMD and ARM |
+| `platform_id` | integer \| null | | Intel platform ID (from MSR 0x17); null on AMD |
 | `hybrid` | boolean \| null | | Whether this is a hybrid CPU (P-cores + E-cores, e.g. Alder Lake) |
-| `codename` | string \| null | e.g. `"Coffee Lake"` | Intel CPU codename; null on AMD and ARM |
-| `arm_part_list` | string \| null | | Space-separated list of ARM part numbers detected across cores |
-| `arm_arch_list` | string \| null | | Space-separated list of ARM architecture levels detected across cores |
-| `capabilities` | object | | CPU feature flags detected via CPUID and MSR reads (see below) |
+| `codename` | string \| null | e.g. `"Coffee Lake"` | Intel CPU codename; null on AMD |
+| `capabilities` | object | | CPU feature flags (see below) |
 
-#### `cpu.capabilities`
+#### `cpu.arm` (present when `arch == "arm"`)
+
+| Field | Type | Values | Meaning |
+|---|---|---|---|
+| `part_list` | string \| null | e.g. `"0xd0b 0xd05"` | Space-separated ARM part numbers across cores (big.LITTLE may have several) |
+| `arch_list` | string \| null | e.g. `"8 8"` | Space-separated ARM architecture levels across cores |
+| `capabilities` | object | | ARM-specific capability flags (currently empty; reserved for future use) |
+
+#### `cpu.x86.capabilities`
 
 Each capability is a **tri-state**: `true` (present), `false` (absent), or
 `null` (not applicable or could not be read, e.g. when not root or on AMD for
@@ -235,7 +252,7 @@ with an unknown CVE ID).
 #### `cpu_affected` explained
 
 `cpu_affected: false` with `status: "OK"` means the CPU hardware is
-architecturally immune — no patch was ever needed.
+architecturally immune, no patch was ever needed.
 
 `cpu_affected: true` with `status: "OK"` means the hardware has the weakness
 but all required mitigations (kernel, microcode, or both) are in place.
@@ -327,9 +344,10 @@ Some checks fall back to weaker heuristics and may report `"UNK"` for CVEs
 that are actually mitigated.
 
 **Non-x86 architectures (ARM, ARM64)**
-`cpu.codename` and `cpu.platform_id` are always null.  `cpu.arm_part_list`
-and `cpu.arm_arch_list` carry the relevant identifiers instead.
-Most `cpu.capabilities` fields are null (those flags are Intel/AMD-specific).
+On ARM, `cpu.arch` is `"arm"` and the `cpu.arm` sub-object carries `part_list`
+and `arch_list`.  The x86-specific sub-object is absent (no null noise).
+`cpu.arm.capabilities` is currently empty; ARM-specific flags will be added
+there as needed.
 
 **`mocked: true`**
 Must never appear on a production host.  If it does, the results are

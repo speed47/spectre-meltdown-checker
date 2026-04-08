@@ -14,7 +14,7 @@
       "required": [
         "script_version", "format_version", "timestamp", "os", "mode",
         "run_as_root", "reduced_accuracy", "paranoid", "sysfs_only",
-        "no_hw", "extra", "mocked"
+        "extra", "mocked"
       ],
       "additionalProperties": false,
       "properties": {
@@ -54,10 +54,6 @@
         },
         "sysfs_only": {
           "description": "True when --sysfs-only was set: the script trusted the kernel's own sysfs report without independent detection.",
-          "type": "boolean"
-        },
-        "no_hw": {
-          "description": "True when --no-hw was set: hardware checks (MSR, CPUID) were skipped.",
           "type": "boolean"
         },
         "extra": {
@@ -131,118 +127,158 @@
     },
 
     "cpu": {
-      "description": "CPU hardware identification and capability flags. Null when --no-hw is active.",
-      "type": ["object", "null"],
-      "required": [
-        "vendor", "friendly_name", "family", "model", "stepping",
-        "cpuid", "platform_id", "hybrid", "codename",
-        "arm_part_list", "arm_arch_list", "capabilities"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "vendor": {
-          "description": "CPU vendor string, e.g. 'Intel', 'AuthenticAMD'.",
-          "type": ["string", "null"]
-        },
-        "friendly_name": {
-          "description": "Human-readable CPU model from /proc/cpuinfo, e.g. 'Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz'.",
-          "type": ["string", "null"]
-        },
-        "family": {
-          "description": "CPU family number.",
-          "type": ["integer", "null"]
-        },
-        "model": {
-          "description": "CPU model number.",
-          "type": ["integer", "null"]
-        },
-        "stepping": {
-          "description": "CPU stepping number.",
-          "type": ["integer", "null"]
-        },
-        "cpuid": {
-          "description": "Full CPUID leaf 1 EAX value as a hex string, e.g. '0x000906ed'. Null on some ARM CPUs.",
-          "type": ["string", "null"],
-          "pattern": "^0x[0-9a-f]+$"
-        },
-        "platform_id": {
-          "description": "Intel platform ID from MSR 0x17. Null on AMD and ARM.",
-          "type": ["integer", "null"]
-        },
-        "hybrid": {
-          "description": "Whether this is a hybrid CPU (P-cores + E-cores, e.g. Alder Lake). Null if undeterminable.",
-          "type": ["boolean", "null"]
-        },
-        "codename": {
-          "description": "Intel CPU codename, e.g. 'Coffee Lake'. Null on AMD and ARM.",
-          "type": ["string", "null"]
-        },
-        "arm_part_list": {
-          "description": "Space-separated list of ARM part numbers detected across cores. Null on x86.",
-          "type": ["string", "null"]
-        },
-        "arm_arch_list": {
-          "description": "Space-separated list of ARM architecture levels detected across cores. Null on x86.",
-          "type": ["string", "null"]
-        },
-        "capabilities": {
-          "description": "CPU feature flags detected via CPUID and MSR reads. Each value is true (present), false (absent), or null (not applicable or could not be read).",
+      "description": "CPU hardware identification. Null when --no-hw is active. Contains an 'arch' discriminator ('x86' or 'arm') and a matching arch-specific sub-object with identification fields and capabilities.",
+      "oneOf": [
+        { "type": "null" },
+        {
           "type": "object",
+          "description": "x86 CPU (Intel, AMD, Hygon).",
+          "required": ["arch", "vendor", "friendly_name", "x86"],
           "additionalProperties": false,
           "properties": {
-            "spec_ctrl":                      { "type": ["boolean", "null"], "description": "SPEC_CTRL MSR present (Intel; enables IBRS + IBPB via WRMSR)" },
-            "ibrs":                           { "type": ["boolean", "null"], "description": "Indirect Branch Restricted Speculation" },
-            "ibpb":                           { "type": ["boolean", "null"], "description": "Indirect Branch Prediction Barrier" },
-            "ibpb_ret":                       { "type": ["boolean", "null"], "description": "IBPB on return (enhanced form)" },
-            "stibp":                          { "type": ["boolean", "null"], "description": "Single Thread Indirect Branch Predictors" },
-            "ssbd":                           { "type": ["boolean", "null"], "description": "Speculative Store Bypass Disable" },
-            "l1d_flush":                      { "type": ["boolean", "null"], "description": "L1D cache flush instruction" },
-            "md_clear":                       { "type": ["boolean", "null"], "description": "VERW clears CPU buffers (MDS mitigation)" },
-            "arch_capabilities":              { "type": ["boolean", "null"], "description": "IA32_ARCH_CAPABILITIES MSR is present" },
-            "rdcl_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to RDCL (Meltdown-like attacks)" },
-            "ibrs_all":                       { "type": ["boolean", "null"], "description": "Enhanced IBRS always-on mode supported" },
-            "rsba":                           { "type": ["boolean", "null"], "description": "RSB may use return predictions from outside the RSB" },
-            "l1dflush_no":                    { "type": ["boolean", "null"], "description": "Not susceptible to L1D flush side-channel" },
-            "ssb_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Speculative Store Bypass" },
-            "mds_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to MDS" },
-            "taa_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to TSX Asynchronous Abort" },
-            "pschange_msc_no":                { "type": ["boolean", "null"], "description": "Page-size-change MSC not susceptible" },
-            "tsx_ctrl_msr":                   { "type": ["boolean", "null"], "description": "TSX_CTRL MSR is present" },
-            "tsx_ctrl_rtm_disable":           { "type": ["boolean", "null"], "description": "RTM disabled via TSX_CTRL" },
-            "tsx_ctrl_cpuid_clear":           { "type": ["boolean", "null"], "description": "CPUID HLE/RTM bits cleared via TSX_CTRL" },
-            "gds_ctrl":                       { "type": ["boolean", "null"], "description": "GDS_CTRL MSR present" },
-            "gds_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Gather Data Sampling" },
-            "gds_mitg_dis":                   { "type": ["boolean", "null"], "description": "GDS mitigation disabled" },
-            "gds_mitg_lock":                  { "type": ["boolean", "null"], "description": "GDS mitigation locked" },
-            "rfds_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to Register File Data Sampling" },
-            "rfds_clear":                     { "type": ["boolean", "null"], "description": "VERW clears register file stale data" },
-            "its_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Indirect Target Selection" },
-            "sbdr_ssdp_no":                   { "type": ["boolean", "null"], "description": "Not susceptible to SBDR/SSDP" },
-            "fbsdp_no":                       { "type": ["boolean", "null"], "description": "Not susceptible to FBSDP" },
-            "psdp_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to PSDP" },
-            "fb_clear":                       { "type": ["boolean", "null"], "description": "Fill buffer cleared on idle/C6" },
-            "rtm":                            { "type": ["boolean", "null"], "description": "Restricted Transactional Memory (TSX RTM) present" },
-            "tsx_force_abort":                { "type": ["boolean", "null"], "description": "TSX_FORCE_ABORT MSR present" },
-            "tsx_force_abort_rtm_disable":    { "type": ["boolean", "null"], "description": "RTM disabled via TSX_FORCE_ABORT" },
-            "tsx_force_abort_cpuid_clear":    { "type": ["boolean", "null"], "description": "CPUID RTM cleared via TSX_FORCE_ABORT" },
-            "sgx":                            { "type": ["boolean", "null"], "description": "Software Guard Extensions present" },
-            "srbds":                          { "type": ["boolean", "null"], "description": "SRBDS affected" },
-            "srbds_on":                       { "type": ["boolean", "null"], "description": "SRBDS mitigation active" },
-            "amd_ssb_no":                     { "type": ["boolean", "null"], "description": "AMD: not susceptible to Speculative Store Bypass" },
-            "hygon_ssb_no":                   { "type": ["boolean", "null"], "description": "Hygon: not susceptible to Speculative Store Bypass" },
-            "ipred":                          { "type": ["boolean", "null"], "description": "Indirect Predictor Barrier support" },
-            "rrsba":                          { "type": ["boolean", "null"], "description": "Restricted RSB Alternate (Intel Retbleed mitigation)" },
-            "bhi":                            { "type": ["boolean", "null"], "description": "Branch History Injection mitigation support" },
-            "tsa_sq_no":                      { "type": ["boolean", "null"], "description": "Not susceptible to TSA-SQ" },
-            "tsa_l1_no":                      { "type": ["boolean", "null"], "description": "Not susceptible to TSA-L1" },
-            "verw_clear":                     { "type": ["boolean", "null"], "description": "VERW clears CPU buffers" },
-            "autoibrs":                       { "type": ["boolean", "null"], "description": "AMD AutoIBRS (equivalent to enhanced IBRS on Intel)" },
-            "sbpb":                           { "type": ["boolean", "null"], "description": "Selective Branch Predictor Barrier (AMD Inception mitigation)" },
-            "avx2":                           { "type": ["boolean", "null"], "description": "AVX2 supported (relevant to Downfall / GDS)" },
-            "avx512":                         { "type": ["boolean", "null"], "description": "AVX-512 supported (relevant to Downfall / GDS)" }
+            "arch": { "type": "string", "const": "x86" },
+            "vendor": {
+              "description": "CPU vendor string: 'GenuineIntel', 'AuthenticAMD', or 'HygonGenuine'.",
+              "type": ["string", "null"]
+            },
+            "friendly_name": {
+              "description": "Human-readable CPU model from /proc/cpuinfo, e.g. 'Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz'.",
+              "type": ["string", "null"]
+            },
+            "x86": {
+              "type": "object",
+              "required": ["family", "model", "stepping", "cpuid", "platform_id", "hybrid", "codename", "capabilities"],
+              "additionalProperties": false,
+              "properties": {
+                "family": {
+                  "description": "CPU family number.",
+                  "type": ["integer", "null"]
+                },
+                "model": {
+                  "description": "CPU model number.",
+                  "type": ["integer", "null"]
+                },
+                "stepping": {
+                  "description": "CPU stepping number.",
+                  "type": ["integer", "null"]
+                },
+                "cpuid": {
+                  "description": "Full CPUID leaf 1 EAX value as a hex string, e.g. '0x000906ed'.",
+                  "type": ["string", "null"],
+                  "pattern": "^0x[0-9a-f]+$"
+                },
+                "platform_id": {
+                  "description": "Intel platform ID from MSR 0x17. Null on AMD.",
+                  "type": ["integer", "null"]
+                },
+                "hybrid": {
+                  "description": "Whether this is a hybrid CPU (P-cores + E-cores, e.g. Alder Lake). Null if undeterminable.",
+                  "type": ["boolean", "null"]
+                },
+                "codename": {
+                  "description": "Intel CPU codename, e.g. 'Coffee Lake'. Null on AMD.",
+                  "type": ["string", "null"]
+                },
+                "capabilities": {
+                  "description": "CPU feature flags detected via CPUID and MSR reads. Each value is true (present), false (absent), or null (not applicable or could not be read).",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "spec_ctrl":                      { "type": ["boolean", "null"], "description": "SPEC_CTRL MSR present (Intel; enables IBRS + IBPB via WRMSR)" },
+                    "ibrs":                           { "type": ["boolean", "null"], "description": "Indirect Branch Restricted Speculation" },
+                    "ibpb":                           { "type": ["boolean", "null"], "description": "Indirect Branch Prediction Barrier" },
+                    "ibpb_ret":                       { "type": ["boolean", "null"], "description": "IBPB on return (enhanced form)" },
+                    "stibp":                          { "type": ["boolean", "null"], "description": "Single Thread Indirect Branch Predictors" },
+                    "ssbd":                           { "type": ["boolean", "null"], "description": "Speculative Store Bypass Disable" },
+                    "l1d_flush":                      { "type": ["boolean", "null"], "description": "L1D cache flush instruction" },
+                    "md_clear":                       { "type": ["boolean", "null"], "description": "VERW clears CPU buffers (MDS mitigation)" },
+                    "arch_capabilities":              { "type": ["boolean", "null"], "description": "IA32_ARCH_CAPABILITIES MSR is present" },
+                    "rdcl_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to RDCL (Meltdown-like attacks)" },
+                    "ibrs_all":                       { "type": ["boolean", "null"], "description": "Enhanced IBRS always-on mode supported" },
+                    "rsba":                           { "type": ["boolean", "null"], "description": "RSB may use return predictions from outside the RSB" },
+                    "l1dflush_no":                    { "type": ["boolean", "null"], "description": "Not susceptible to L1D flush side-channel" },
+                    "ssb_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Speculative Store Bypass" },
+                    "mds_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to MDS" },
+                    "taa_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to TSX Asynchronous Abort" },
+                    "pschange_msc_no":                { "type": ["boolean", "null"], "description": "Page-size-change MSC not susceptible" },
+                    "tsx_ctrl_msr":                   { "type": ["boolean", "null"], "description": "TSX_CTRL MSR is present" },
+                    "tsx_ctrl_rtm_disable":           { "type": ["boolean", "null"], "description": "RTM disabled via TSX_CTRL" },
+                    "tsx_ctrl_cpuid_clear":           { "type": ["boolean", "null"], "description": "CPUID HLE/RTM bits cleared via TSX_CTRL" },
+                    "gds_ctrl":                       { "type": ["boolean", "null"], "description": "GDS_CTRL MSR present" },
+                    "gds_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Gather Data Sampling" },
+                    "gds_mitg_dis":                   { "type": ["boolean", "null"], "description": "GDS mitigation disabled" },
+                    "gds_mitg_lock":                  { "type": ["boolean", "null"], "description": "GDS mitigation locked" },
+                    "rfds_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to Register File Data Sampling" },
+                    "rfds_clear":                     { "type": ["boolean", "null"], "description": "VERW clears register file stale data" },
+                    "its_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Indirect Target Selection" },
+                    "sbdr_ssdp_no":                   { "type": ["boolean", "null"], "description": "Not susceptible to SBDR/SSDP" },
+                    "fbsdp_no":                       { "type": ["boolean", "null"], "description": "Not susceptible to FBSDP" },
+                    "psdp_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to PSDP" },
+                    "fb_clear":                       { "type": ["boolean", "null"], "description": "Fill buffer cleared on idle/C6" },
+                    "rtm":                            { "type": ["boolean", "null"], "description": "Restricted Transactional Memory (TSX RTM) present" },
+                    "tsx_force_abort":                { "type": ["boolean", "null"], "description": "TSX_FORCE_ABORT MSR present" },
+                    "tsx_force_abort_rtm_disable":    { "type": ["boolean", "null"], "description": "RTM disabled via TSX_FORCE_ABORT" },
+                    "tsx_force_abort_cpuid_clear":    { "type": ["boolean", "null"], "description": "CPUID RTM cleared via TSX_FORCE_ABORT" },
+                    "sgx":                            { "type": ["boolean", "null"], "description": "Software Guard Extensions present" },
+                    "srbds":                          { "type": ["boolean", "null"], "description": "SRBDS affected" },
+                    "srbds_on":                       { "type": ["boolean", "null"], "description": "SRBDS mitigation active" },
+                    "amd_ssb_no":                     { "type": ["boolean", "null"], "description": "AMD: not susceptible to Speculative Store Bypass" },
+                    "hygon_ssb_no":                   { "type": ["boolean", "null"], "description": "Hygon: not susceptible to Speculative Store Bypass" },
+                    "ipred":                          { "type": ["boolean", "null"], "description": "Indirect Predictor Barrier support" },
+                    "rrsba":                          { "type": ["boolean", "null"], "description": "Restricted RSB Alternate (Intel Retbleed mitigation)" },
+                    "bhi":                            { "type": ["boolean", "null"], "description": "Branch History Injection mitigation support" },
+                    "tsa_sq_no":                      { "type": ["boolean", "null"], "description": "Not susceptible to TSA-SQ" },
+                    "tsa_l1_no":                      { "type": ["boolean", "null"], "description": "Not susceptible to TSA-L1" },
+                    "verw_clear":                     { "type": ["boolean", "null"], "description": "VERW clears CPU buffers" },
+                    "autoibrs":                       { "type": ["boolean", "null"], "description": "AMD AutoIBRS (equivalent to enhanced IBRS on Intel)" },
+                    "sbpb":                           { "type": ["boolean", "null"], "description": "Selective Branch Predictor Barrier (AMD Inception mitigation)" },
+                    "avx2":                           { "type": ["boolean", "null"], "description": "AVX2 supported (relevant to Downfall / GDS)" },
+                    "avx512":                         { "type": ["boolean", "null"], "description": "AVX-512 supported (relevant to Downfall / GDS)" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "ARM CPU (ARM, Cavium, Phytium).",
+          "required": ["arch", "vendor", "friendly_name", "arm"],
+          "additionalProperties": false,
+          "properties": {
+            "arch": { "type": "string", "const": "arm" },
+            "vendor": {
+              "description": "CPU vendor string: 'ARM', 'CAVIUM', or 'PHYTIUM'.",
+              "type": ["string", "null"]
+            },
+            "friendly_name": {
+              "description": "Human-readable CPU model, e.g. 'ARM v8 model 0xd0b'.",
+              "type": ["string", "null"]
+            },
+            "arm": {
+              "type": "object",
+              "required": ["part_list", "arch_list", "capabilities"],
+              "additionalProperties": false,
+              "properties": {
+                "part_list": {
+                  "description": "Space-separated list of ARM part numbers detected across cores, e.g. '0xd0b 0xd05' (big.LITTLE).",
+                  "type": ["string", "null"]
+                },
+                "arch_list": {
+                  "description": "Space-separated list of ARM architecture levels detected across cores, e.g. '8 8'.",
+                  "type": ["string", "null"]
+                },
+                "capabilities": {
+                  "description": "ARM-specific CPU capability flags. Currently empty; reserved for future use.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {}
+                }
+              }
+            }
           }
         }
-      }
+      ]
     },
 
     "cpu_microcode": {

@@ -1,7 +1,7 @@
-# Prometheus Batch Mode — Fleet Operator Guide
+# Prometheus Batch Mode
 
 `--batch prometheus` emits Prometheus text-format metrics that can be fed into any
-Prometheus-compatible monitoring stack.  It is designed for **fleet-scale security
+Prometheus-compatible monitoring stack. It is designed for **fleet-scale security
 monitoring**: run the script periodically on every host, push the output to a
 Prometheus Pushgateway (or drop it into a node_exporter textfile directory), then
 alert and dashboard from Prometheus/Grafana like any other infrastructure metric.
@@ -181,7 +181,7 @@ smc_vulnerability_status{cve="CVE-2022-29900",name="Retbleed, arbitrary speculat
 **`cpu_affected` explained:**
 
 A value of `0` with `cpu_affected="false"` means the CPU hardware is architecturally
-immune to this CVE — no patch was needed or applied.
+immune to this CVE, no patch was needed or applied.
 
 A value of `0` with `cpu_affected="true"` means the CPU has the hardware weakness
 but all required mitigations (kernel, microcode, or both) are in place.
@@ -319,10 +319,10 @@ smc_vulnerability_status{cve="CVE-2018-3646", cpu_affected="true"} == 0
   count(smc_vulnerable_count >= 0)
 )
 
-# Hosts where scan ran without root — results less reliable
+# Hosts where scan ran without root, results less reliable
 smc_build_info{run_as_root="false"}
 
-# Hosts with sysfs_only mode — independent detection was skipped
+# Hosts with sysfs_only mode, independent detection was skipped
 smc_build_info{sysfs_only="true"}
 
 # Vulnerable CVEs joined with kernel release for patch tracking

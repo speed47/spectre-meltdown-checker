@@ -20,7 +20,7 @@ NOTE: ...          ← context notes (when applicable)
 [UNKNOWN]  CVE-XXXX-YYYY (NAME): description
 ```
 
-### Line 1 — status line
+### Line 1 (status line)
 
 Always present.  Parsed by every Nagios-compatible monitoring system.
 
@@ -40,7 +40,7 @@ STATUS: summary | perfdata
 |---|---|---|
 | `OK` | `0` | All CVE checks passed |
 | `CRITICAL` | `2` | At least one CVE is vulnerable |
-| `UNKNOWN` | `3` | No VULN found, but at least one check is inconclusive — **or** the script was not run as root and found apparent vulnerabilities (see below) |
+| `UNKNOWN` | `3` | No VULN found, but at least one check is inconclusive **or** the script was not run as root and found apparent vulnerabilities (see below) |
 
 #### Summary format
 
@@ -52,7 +52,7 @@ STATUS: summary | perfdata
 | UNK only | `N/T CVE checks inconclusive` |
 | Non-root + VULN | `N/T CVE(s) appear vulnerable (unconfirmed, not root): CVE-A ...` |
 
-### Lines 2+ — long output
+### Lines 2+ (long output)
 
 Shown in the detail/extended info view of most monitoring frontends.
 Never parsed by the monitoring core; safe to add or reorder.
@@ -63,7 +63,7 @@ Printed before per-CVE details when applicable:
 
 | Note | Condition |
 |---|---|
-| `NOTE: paranoid mode active — stricter mitigation requirements applied` | `--paranoid` was used |
+| `NOTE: paranoid mode active, stricter mitigation requirements applied` | `--paranoid` was used |
 | `NOTE: hypervisor host detected (reason); L1TF/MDS severity is elevated` | System is a VM host (KVM, Xen, VMware…) |
 | `NOTE: not a hypervisor host` | System is confirmed not a VM host |
 | `NOTE: not running as root; MSR reads skipped, results may be incomplete` | Script ran without root privileges |
@@ -84,8 +84,8 @@ entries (`[UNKNOWN]`); within each group the order follows the CVE registry.
 |---|---|---|
 | `0` | OK | All checked CVEs are mitigated or hardware-unaffected |
 | `2` | CRITICAL | At least one CVE is vulnerable (script ran as root) |
-| `3` | UNKNOWN | At least one check inconclusive — or apparent VULN found without root |
-| `255` | — | Script error (bad arguments, unsupported platform) |
+| `3` | UNKNOWN | At least one check inconclusive, or apparent VULN found without root |
+| `255` | - | Script error (bad arguments, unsupported platform) |
 
 Exit code `1` (WARNING) is not used; there is no "degraded but acceptable"
 state for CPU vulnerability mitigations.
@@ -142,7 +142,7 @@ Exit: `3`
 **Inconclusive checks, paranoid mode, VMM host:**
 ```
 UNKNOWN: 3/31 CVE checks inconclusive | checked=31 vulnerable=0 unknown=3
-NOTE: paranoid mode active — stricter mitigation requirements applied
+NOTE: paranoid mode active, stricter mitigation requirements applied
 NOTE: hypervisor host detected (kvm); L1TF/MDS severity is elevated
 [UNKNOWN]  CVE-2018-3646 (L1TF VMM): SMT is enabled on a hypervisor host, not mitigated under paranoid mode
 ```
