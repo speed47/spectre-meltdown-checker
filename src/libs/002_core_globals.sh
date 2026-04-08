@@ -60,7 +60,6 @@ show_usage() {
 		--no-runtime		skip running-kernel checks (/sys, /proc, dmesg), still inspect local CPU hardware
 		--no-hw			skip CPU information and running-kernel checks (implies --no-runtime)
 		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
-		--no-intel-db		don't use the builtin Intel DB of affected processors
 		--allow-msr-write	allow probing for write-only MSRs, this might produce kernel logs or be blocked by your system
 		--cpu [#,all]		interact with CPUID and MSR of CPU core number #, or all (default: CPU core 0)
 		--update-fwdb		update our local copy of the CPU microcodes versions database (using the awesome
@@ -137,7 +136,6 @@ opt_explain=0
 opt_paranoid=0
 opt_extra=0
 opt_mock=0
-opt_intel_db=1
 
 g_critical=0
 g_unknown=0

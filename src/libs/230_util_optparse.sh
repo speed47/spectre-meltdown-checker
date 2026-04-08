@@ -84,9 +84,6 @@ while [ -n "${1:-}" ]; do
     elif [ "$1" = "--allow-msr-write" ]; then
         opt_allow_msr_write=1
         shift
-    elif [ "$1" = "--no-intel-db" ]; then
-        opt_intel_db=0
-        shift
     elif [ "$1" = "--cpu" ]; then
         opt_cpu=$2
         if [ "$opt_cpu" != all ]; then

@@ -26,10 +26,7 @@ read_mcedb() {
 
 # Read the Intel official affected CPUs database (builtin) to stdout
 read_inteldb() {
-    if [ "$opt_intel_db" = 1 ]; then
-        awk '/^# %%% ENDOFINTELDB/ { exit } { if (DELIM==1) { print $2 } } /^# %%% INTELDB/ { DELIM=1 }' "$0"
-    fi
-    # otherwise don't output nothing, it'll be as if the database is empty
+    awk '/^# %%% ENDOFINTELDB/ { exit } { if (DELIM==1) { print $2 } } /^# %%% INTELDB/ { DELIM=1 }' "$0"
 }
 
 # Check whether the CPU is running the latest known microcode version
