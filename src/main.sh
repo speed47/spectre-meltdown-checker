@@ -163,12 +163,6 @@ if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
     _pr_echo 0 "$_json_final"
 fi
 
-if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus-legacy" ]; then
-    echo "# TYPE specex_vuln_status untyped"
-    echo "# HELP specex_vuln_status Exposure of system to speculative execution vulnerabilities"
-    printf "%b\n" "$g_prometheus_output"
-fi
-
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
     prom_run_as_root='false'
     [ "$(id -u)" -eq 0 ] && prom_run_as_root='true'

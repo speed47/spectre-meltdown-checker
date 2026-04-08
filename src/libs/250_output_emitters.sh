@@ -341,18 +341,7 @@ _emit_nrpe() {
     esac
 }
 
-# Append a CVE result as a legacy Prometheus metric to the batch output buffer
-# Args: $1=cve $2=aka $3=status $4=description
-# Sets: g_prometheus_output
-# Callers: pvulnstatus
-_emit_prometheus_legacy() {
-    local esc_info
-    # escape backslashes and double quotes for Prometheus label values
-    esc_info=$(printf '%s' "$4" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-    g_prometheus_output="${g_prometheus_output:+$g_prometheus_output\n}specex_vuln_status{name=\"$2\",cve=\"$1\",status=\"$3\",info=\"$esc_info\"} 1"
-}
-
-# Append a CVE result as a Prometheus gauge to the new-format batch output buffer
+# Append a CVE result as a Prometheus gauge to the batch output buffer
 # Status is encoded numerically: 0=not_vulnerable, 1=vulnerable, 2=unknown
 # Args: $1=cve $2=aka $3=status(UNK|VULN|OK) $4=description
 # Sets: g_smc_vuln_output, g_smc_ok_count, g_smc_vuln_count, g_smc_unk_count
@@ -491,7 +480,6 @@ pvulnstatus() {
             json-terse) _emit_json_terse "$1" "$aka" "$2" "$3" ;;
             nrpe) _emit_nrpe "$1" "$aka" "$2" "$3" ;;
             prometheus) _emit_prometheus "$1" "$aka" "$2" "$3" ;;
-            prometheus-legacy) _emit_prometheus_legacy "$1" "$aka" "$2" "$3" ;;
             *)
                 echo "$0: error: invalid batch format '$opt_batch_format' specified" >&2
                 exit 255
