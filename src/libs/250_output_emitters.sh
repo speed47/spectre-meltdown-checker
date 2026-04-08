@@ -8,6 +8,13 @@ _json_escape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | tr '\n' ' '
 }
 
+# Escape a string for use as a Prometheus label value (handles backslashes, double quotes, newlines)
+# Args: $1=string
+# Prints: escaped string (without surrounding quotes)
+_prom_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '
+}
+
 # Convert a shell capability value to a JSON token
 # Args: $1=value (1=true, 0=false, -1/empty=null, other string=quoted string)
 # Prints: JSON token
@@ -321,15 +328,122 @@ _emit_nrpe() {
     [ "$3" = VULN ] && g_nrpe_vuln="$g_nrpe_vuln $1"
 }
 
-# Append a CVE result as a Prometheus metric to the batch output buffer
+# Append a CVE result as a legacy Prometheus metric to the batch output buffer
 # Args: $1=cve $2=aka $3=status $4=description
 # Sets: g_prometheus_output
 # Callers: pvulnstatus
-_emit_prometheus() {
+_emit_prometheus_legacy() {
     local esc_info
     # escape backslashes and double quotes for Prometheus label values
     esc_info=$(printf '%s' "$4" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
     g_prometheus_output="${g_prometheus_output:+$g_prometheus_output\n}specex_vuln_status{name=\"$2\",cve=\"$1\",status=\"$3\",info=\"$esc_info\"} 1"
+}
+
+# Append a CVE result as a Prometheus gauge to the new-format batch output buffer
+# Status is encoded numerically: 0=not_vulnerable, 1=vulnerable, 2=unknown
+# Args: $1=cve $2=aka $3=status(UNK|VULN|OK) $4=description
+# Sets: g_smc_vuln_output, g_smc_ok_count, g_smc_vuln_count, g_smc_unk_count
+# Callers: pvulnstatus
+_emit_prometheus() {
+    local numeric_status cpu_affected full_name esc_name
+    case "$3" in
+        OK)   numeric_status=0 ; g_smc_ok_count=$((g_smc_ok_count + 1)) ;;
+        VULN) numeric_status=1 ; g_smc_vuln_count=$((g_smc_vuln_count + 1)) ;;
+        UNK)  numeric_status=2 ; g_smc_unk_count=$((g_smc_unk_count + 1)) ;;
+        *)
+            echo "$0: error: unknown status '$3' passed to _emit_prometheus()" >&2
+            exit 255
+            ;;
+    esac
+    if is_cpu_affected "$1" 2>/dev/null; then
+        cpu_affected='true'
+    else
+        cpu_affected='false'
+    fi
+    # use the complete CVE name (field 4) rather than the short aka key (field 2)
+    full_name=$(_cve_registry_field "$1" 4)
+    esc_name=$(_prom_escape "$full_name")
+    g_smc_vuln_output="${g_smc_vuln_output:+$g_smc_vuln_output\n}smc_vulnerability_status{cve=\"$1\",name=\"$esc_name\",cpu_affected=\"$cpu_affected\"} $numeric_status"
+}
+
+# Build the smc_system_info Prometheus metric line
+# Sets: g_smc_system_info_line
+# Callers: src/main.sh (after check_cpu / check_cpu_vulnerabilities)
+# shellcheck disable=SC2034
+_build_prometheus_system_info() {
+    local kernel_release kernel_arch hypervisor_host sys_labels
+    if [ "$opt_live" = 1 ]; then
+        kernel_release=$(uname -r 2>/dev/null || true)
+        kernel_arch=$(uname -m 2>/dev/null || true)
+    else
+        kernel_release=''
+        kernel_arch=''
+    fi
+    case "${g_has_vmm:-}" in
+        1) hypervisor_host='true' ;;
+        0) hypervisor_host='false' ;;
+        *) hypervisor_host='' ;;
+    esac
+    sys_labels=''
+    [ -n "$kernel_release"  ] && sys_labels="${sys_labels:+$sys_labels,}kernel_release=\"$(_prom_escape "$kernel_release")\""
+    [ -n "$kernel_arch"     ] && sys_labels="${sys_labels:+$sys_labels,}kernel_arch=\"$(_prom_escape "$kernel_arch")\""
+    [ -n "$hypervisor_host" ] && sys_labels="${sys_labels:+$sys_labels,}hypervisor_host=\"$hypervisor_host\""
+    [ -n "$sys_labels" ] && g_smc_system_info_line="smc_system_info{$sys_labels} 1"
+}
+
+# Build the smc_cpu_info Prometheus metric line
+# Sets: g_smc_cpu_info_line
+# Callers: src/main.sh (after check_cpu / check_cpu_vulnerabilities)
+# shellcheck disable=SC2034
+_build_prometheus_cpu_info() {
+    local cpuid_hex ucode_hex ucode_latest_hex ucode_uptodate ucode_blacklisted codename smt_val cpu_labels
+    if [ -n "${cpu_cpuid:-}" ]; then
+        cpuid_hex=$(printf '0x%08x' "$cpu_cpuid")
+    else
+        cpuid_hex=''
+    fi
+    if [ -n "${cpu_ucode:-}" ]; then
+        ucode_hex=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_hex=''
+    fi
+    is_latest_known_ucode
+    case $? in
+        0) ucode_uptodate='true' ;;
+        1) ucode_uptodate='false' ;;
+        *) ucode_uptodate='' ;;
+    esac
+    ucode_latest_hex="${ret_is_latest_known_ucode_version:-}"
+    if is_ucode_blacklisted; then
+        ucode_blacklisted='true'
+    else
+        ucode_blacklisted='false'
+    fi
+    codename=''
+    if is_intel; then
+        codename=$(get_intel_codename 2>/dev/null || true)
+    fi
+    is_cpu_smt_enabled
+    case $? in
+        0) smt_val='true' ;;
+        1) smt_val='false' ;;
+        *) smt_val='' ;;
+    esac
+    cpu_labels=''
+    [ -n "${cpu_vendor:-}"        ] && cpu_labels="${cpu_labels:+$cpu_labels,}vendor=\"$(_prom_escape "$cpu_vendor")\""
+    [ -n "${cpu_friendly_name:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model=\"$(_prom_escape "$cpu_friendly_name")\""
+    [ -n "${cpu_family:-}"        ] && cpu_labels="${cpu_labels:+$cpu_labels,}family=\"$cpu_family\""
+    [ -n "${cpu_model:-}"         ] && cpu_labels="${cpu_labels:+$cpu_labels,}model_id=\"$cpu_model\""
+    [ -n "${cpu_stepping:-}"      ] && cpu_labels="${cpu_labels:+$cpu_labels,}stepping=\"$cpu_stepping\""
+    [ -n "$cpuid_hex"             ] && cpu_labels="${cpu_labels:+$cpu_labels,}cpuid=\"$cpuid_hex\""
+    [ -n "$codename"              ] && cpu_labels="${cpu_labels:+$cpu_labels,}codename=\"$(_prom_escape "$codename")\""
+    [ -n "$smt_val"               ] && cpu_labels="${cpu_labels:+$cpu_labels,}smt=\"$smt_val\""
+    [ -n "$ucode_hex"             ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode=\"$ucode_hex\""
+    [ -n "$ucode_latest_hex"      ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_latest=\"$ucode_latest_hex\""
+    [ -n "$ucode_uptodate"        ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_up_to_date=\"$ucode_uptodate\""
+    # always emit microcode_blacklisted when we have microcode info (it's a boolean, never omit)
+    [ -n "$ucode_hex"             ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_blacklisted=\"$ucode_blacklisted\""
+    [ -n "$cpu_labels" ] && g_smc_cpu_info_line="smc_cpu_info{$cpu_labels} 1"
 }
 
 # Update global state used to determine the program exit code
@@ -364,6 +478,7 @@ pvulnstatus() {
             json-terse) _emit_json_terse "$1" "$aka" "$2" "$3" ;;
             nrpe) _emit_nrpe "$1" "$aka" "$2" "$3" ;;
             prometheus) _emit_prometheus "$1" "$aka" "$2" "$3" ;;
+            prometheus-legacy) _emit_prometheus_legacy "$1" "$aka" "$2" "$3" ;;
             *)
                 echo "$0: error: invalid batch format '$opt_batch_format' specified" >&2
                 exit 255

@@ -46,7 +46,8 @@ show_usage() {
 		--batch json		produce comprehensive JSON output with system, CPU, and vulnerability details
 		--batch json-terse	produce a terse JSON array of per-CVE results (legacy format)
 		--batch nrpe		produce machine readable output formatted for NRPE
-		--batch prometheus      produce output for consumption by prometheus-node-exporter
+		--batch prometheus      produce Prometheus metrics (smc_* schema, recommended)
+		--batch prometheus-legacy  produce legacy Prometheus output (specex_vuln_status, deprecated)
 
 		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked.
 					can be used multiple times (e.g. --variant 3a --variant l1tf)
@@ -138,6 +139,12 @@ opt_intel_db=1
 g_critical=0
 g_unknown=0
 g_nrpe_vuln=''
+g_smc_vuln_output=''
+g_smc_ok_count=0
+g_smc_vuln_count=0
+g_smc_unk_count=0
+g_smc_system_info_line=''
+g_smc_cpu_info_line=''
 
 # CVE Registry: single source of truth for all CVE metadata.
 # Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases

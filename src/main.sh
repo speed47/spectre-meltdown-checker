@@ -25,6 +25,14 @@ if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
     fi
 fi
 
+# Build Prometheus info metric lines (same timing requirement as JSON builders above)
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
+    _build_prometheus_system_info
+    if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+        _build_prometheus_cpu_info
+    fi
+fi
+
 # now run the checks the user asked for
 for cve in $g_supported_cve_list; do
     if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
@@ -117,10 +125,57 @@ if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
     _pr_echo 0 "$_json_final"
 fi
 
-if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus-legacy" ]; then
     echo "# TYPE specex_vuln_status untyped"
     echo "# HELP specex_vuln_status Exposure of system to speculative execution vulnerabilities"
     printf "%b\n" "$g_prometheus_output"
+fi
+
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
+    prom_run_as_root='false'
+    [ "$(id -u)" -eq 0 ] && prom_run_as_root='true'
+    prom_mode='offline'
+    [ "$opt_live" = 1 ] && prom_mode='live'
+    prom_paranoid='false'
+    [ "$opt_paranoid" = 1 ] && prom_paranoid='true'
+    prom_sysfs_only='false'
+    [ "$opt_sysfs_only" = 1 ] && prom_sysfs_only='true'
+    prom_reduced_accuracy='false'
+    [ "${g_bad_accuracy:-0}" = 1 ] && prom_reduced_accuracy='true'
+    prom_mocked='false'
+    [ "${g_mocked:-0}" = 1 ] && prom_mocked='true'
+    echo "# HELP smc_build_info spectre-meltdown-checker script metadata (always 1)"
+    echo "# TYPE smc_build_info gauge"
+    printf 'smc_build_info{version="%s",mode="%s",run_as_root="%s",paranoid="%s",sysfs_only="%s",reduced_accuracy="%s",mocked="%s"} 1\n' \
+        "$(_prom_escape "$VERSION")" \
+        "$prom_mode" \
+        "$prom_run_as_root" \
+        "$prom_paranoid" \
+        "$prom_sysfs_only" \
+        "$prom_reduced_accuracy" \
+        "$prom_mocked"
+    if [ -n "${g_smc_system_info_line:-}" ]; then
+        echo "# HELP smc_system_info Operating system and kernel metadata (always 1)"
+        echo "# TYPE smc_system_info gauge"
+        echo "$g_smc_system_info_line"
+    fi
+    if [ -n "${g_smc_cpu_info_line:-}" ]; then
+        echo "# HELP smc_cpu_info CPU hardware and microcode metadata (always 1)"
+        echo "# TYPE smc_cpu_info gauge"
+        echo "$g_smc_cpu_info_line"
+    fi
+    echo "# HELP smc_vulnerability_status Vulnerability check result per CVE: 0=not_vulnerable, 1=vulnerable, 2=unknown"
+    echo "# TYPE smc_vulnerability_status gauge"
+    printf "%b\n" "$g_smc_vuln_output"
+    echo "# HELP smc_vulnerable_count Number of CVEs with vulnerable status"
+    echo "# TYPE smc_vulnerable_count gauge"
+    echo "smc_vulnerable_count $g_smc_vuln_count"
+    echo "# HELP smc_unknown_count Number of CVEs with unknown status"
+    echo "# TYPE smc_unknown_count gauge"
+    echo "smc_unknown_count $g_smc_unk_count"
+    echo "# HELP smc_last_scan_timestamp_seconds Unix timestamp when this scan completed"
+    echo "# TYPE smc_last_scan_timestamp_seconds gauge"
+    echo "smc_last_scan_timestamp_seconds $(date +%s 2>/dev/null || echo 0)"
 fi
 
 # exit with the proper exit code

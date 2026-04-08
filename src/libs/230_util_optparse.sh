@@ -116,7 +116,7 @@ while [ -n "${1:-}" ]; do
         opt_no_color=1
         shift
         case "$1" in
-            text | short | nrpe | json | json-terse | prometheus)
+            text | short | nrpe | json | json-terse | prometheus | prometheus-legacy)
                 opt_batch_format="$1"
                 shift
                 ;;
@@ -124,7 +124,7 @@ while [ -n "${1:-}" ]; do
             '') ;;  # allow nothing at all
             *)
                 echo "$0: error: unknown batch format '$1'" >&2
-                echo "$0: error: --batch expects a format from: text, nrpe, json, json-terse" >&2
+                echo "$0: error: --batch expects a format from: text, short, nrpe, json, json-terse, prometheus, prometheus-legacy" >&2
                 exit 255
                 ;;
         esac
