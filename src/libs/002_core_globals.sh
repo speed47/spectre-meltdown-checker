@@ -138,7 +138,12 @@ opt_intel_db=1
 
 g_critical=0
 g_unknown=0
-g_nrpe_vuln=''
+g_nrpe_total=0
+g_nrpe_vuln_count=0
+g_nrpe_unk_count=0
+g_nrpe_vuln_ids=''
+g_nrpe_vuln_details=''
+g_nrpe_unk_details=''
 g_smc_vuln_output=''
 g_smc_ok_count=0
 g_smc_vuln_count=0

@@ -92,11 +92,49 @@ if [ "$g_mocked" = 1 ]; then
 fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
-    if [ -n "$g_nrpe_vuln" ]; then
-        echo "Vulnerable:$g_nrpe_vuln"
+    _nrpe_is_root=0
+    [ "$(id -u)" -eq 0 ] && _nrpe_is_root=1
+
+    # Non-root + VULN: demote to UNKNOWN, MSR reads were skipped so VULN findings
+    # may be false positives or genuine mitigations may have gone undetected
+    _nrpe_demoted=0
+    [ "$g_nrpe_vuln_count" -gt 0 ] && [ "$_nrpe_is_root" = 0 ] && _nrpe_demoted=1
+
+    # Determine status word and build the one-line summary
+    if [ "$_nrpe_demoted" = 1 ]; then
+        _nrpe_status_word='UNKNOWN'
+        _nrpe_summary="${g_nrpe_vuln_count}/${g_nrpe_total} CVE(s) appear vulnerable (unconfirmed, not root): ${g_nrpe_vuln_ids}"
+        [ "$g_nrpe_unk_count" -gt 0 ] && _nrpe_summary="${_nrpe_summary}, ${g_nrpe_unk_count} inconclusive"
+    elif [ "$g_nrpe_vuln_count" -gt 0 ]; then
+        _nrpe_status_word='CRITICAL'
+        _nrpe_summary="${g_nrpe_vuln_count}/${g_nrpe_total} CVE(s) vulnerable: ${g_nrpe_vuln_ids}"
+        [ "$g_nrpe_unk_count" -gt 0 ] && _nrpe_summary="${_nrpe_summary}, ${g_nrpe_unk_count} inconclusive"
+    elif [ "$g_nrpe_unk_count" -gt 0 ]; then
+        _nrpe_status_word='UNKNOWN'
+        _nrpe_summary="${g_nrpe_unk_count}/${g_nrpe_total} CVE checks inconclusive"
     else
-        echo "OK"
+        _nrpe_status_word='OK'
+        _nrpe_summary="All ${g_nrpe_total} CVE checks passed"
     fi
+
+    # Line 1: status word + summary + performance data (Nagios plugin spec)
+    echo "${_nrpe_status_word}: ${_nrpe_summary} | checked=${g_nrpe_total} vulnerable=${g_nrpe_vuln_count} unknown=${g_nrpe_unk_count}"
+
+    # Long output (lines 2+): context notes, then per-CVE details
+    [ "$opt_paranoid" = 1 ] && echo "NOTE: paranoid mode active, stricter mitigation requirements applied"
+    case "${g_has_vmm:-}" in
+        1) echo "NOTE: hypervisor host detected (${g_has_vmm_reason:-VMM}); L1TF/MDS severity is elevated" ;;
+        0) echo "NOTE: not a hypervisor host" ;;
+    esac
+    [ "$_nrpe_is_root" = 0 ] && echo "NOTE: not running as root; MSR reads skipped, results may be incomplete"
+
+    # VULN details first, then UNK details (each group in CVE-registry order)
+    [ -n "${g_nrpe_vuln_details:-}" ] && printf "%b\n" "$g_nrpe_vuln_details"
+    [ -n "${g_nrpe_unk_details:-}" ] && printf "%b\n" "$g_nrpe_unk_details"
+
+    # Exit with the correct Nagios code when we demoted VULN→UNKNOWN due to non-root
+    # (g_critical=1 would otherwise cause exit 2 below)
+    [ "$_nrpe_demoted" = 1 ] && exit 3
 fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "short" ]; then

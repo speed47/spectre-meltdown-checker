@@ -320,12 +320,23 @@ _emit_json_full() {
     g_json_vulns="${g_json_vulns}{\"cve\":\"$1\",\"name\":\"$esc_name\",\"aliases\":$(_json_str "$aliases"),\"cpu_affected\":$cpu_affected,\"status\":\"$3\",\"vulnerable\":$is_vuln,\"info\":\"$esc_infos\",\"sysfs_status\":$(_json_str "$sysfs_status"),\"sysfs_message\":$(_json_str "$sysfs_msg")},"
 }
 
-# Append vulnerable CVE IDs to the NRPE output buffer
+# Accumulate a CVE result into the NRPE output buffers
 # Args: $1=cve $2=aka $3=status $4=description
-# Sets: g_nrpe_vuln
+# Sets: g_nrpe_total, g_nrpe_vuln_count, g_nrpe_unk_count, g_nrpe_vuln_ids, g_nrpe_vuln_details, g_nrpe_unk_details
 # Callers: pvulnstatus
 _emit_nrpe() {
-    [ "$3" = VULN ] && g_nrpe_vuln="$g_nrpe_vuln $1"
+    g_nrpe_total=$((g_nrpe_total + 1))
+    case "$3" in
+        VULN)
+            g_nrpe_vuln_count=$((g_nrpe_vuln_count + 1))
+            g_nrpe_vuln_ids="${g_nrpe_vuln_ids:+$g_nrpe_vuln_ids }$1"
+            g_nrpe_vuln_details="${g_nrpe_vuln_details:+$g_nrpe_vuln_details\n}[CRITICAL] $1 ($2): $4"
+            ;;
+        UNK)
+            g_nrpe_unk_count=$((g_nrpe_unk_count + 1))
+            g_nrpe_unk_details="${g_nrpe_unk_details:+$g_nrpe_unk_details\n}[UNKNOWN]  $1 ($2): $4"
+            ;;
+    esac
 }
 
 # Append a CVE result as a legacy Prometheus metric to the batch output buffer
