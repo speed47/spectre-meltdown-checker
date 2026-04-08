@@ -258,9 +258,6 @@ check_CVE_0000_0001_linux() {
         # --- verdict (x86_64) ---
         if [ "$_sls_config" = 1 ] || [ "$_sls_heuristic" = 1 ]; then
             pvulnstatus "$cve" OK "kernel compiled with SLS mitigation"
-            explain "Your kernel was compiled with CONFIG_MITIGATION_SLS=y (or CONFIG_SLS=y on kernels before 6.8),\n" \
-                "which enables the GCC flag -mharden-sls=all to insert INT3 instructions after unconditional\n" \
-                "control flow changes, blocking straight-line speculation."
         elif [ "$_sls_config" = 0 ] || [ "$_sls_heuristic" = 0 ]; then
             pvulnstatus "$cve" VULN "kernel not compiled with SLS mitigation"
             explain "Recompile your kernel with CONFIG_MITIGATION_SLS=y (or CONFIG_SLS=y on kernels before 6.8).\n" \
