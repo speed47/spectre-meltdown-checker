@@ -214,17 +214,17 @@ A race condition in the branch predictor update mechanism of Intel processors (C
 Several transient execution CVEs are not covered by this tool, for various reasons (duplicates, only
 affecting non-supported hardware or OS, theoretical with no known exploitation, etc.).
 The complete list along with the reason for each exclusion is available in the
-[UNSUPPORTED_CVE_LIST.md](https://github.com/speed47/spectre-meltdown-checker/blob/source/UNSUPPORTED_CVE_LIST.md) file.
+[UNSUPPORTED_CVE_LIST.md](doc/UNSUPPORTED_CVE_LIST.md) file.
 
 ## Scope
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
-- FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](FAQ.md#which-bsd-oses-are-supported))
+- FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](doc/FAQ.md#which-bsd-oses-are-supported))
 
-For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
+For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](doc/FAQ.md#how-does-this-script-work).
 
-Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](FAQ.md#why-is-my-os-not-supported).
+Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](doc/FAQ.md#why-is-my-os-not-supported).
 
 Supported architectures:
 - `x86` (32 bits)
@@ -236,7 +236,29 @@ Supported architectures:
 
 What is the purpose of this tool? Why was it written? How can it be useful to me? How does it work? What can I expect from it?
 
-All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
+All these questions (and more) have detailed answers in the [FAQ](doc/FAQ.md), please have a look!
+
+## Operating modes
+
+The script supports four operating modes, depending on whether you want to inspect the running kernel, a kernel image, the CPU hardware, or a combination.
+
+| Mode | Flag | CPU hardware | Running kernel | Kernel image | Use case |
+|------|------|:---:|:---:|:---:|----------|
+| **Live** *(default)* | *(none)* | Yes | Yes | auto-detect | Day-to-day auditing of the current system |
+| **No-runtime** | `--no-runtime` | Yes | No | required | Check a different kernel against this CPU (e.g. pre-deployment) |
+| **No-hardware** | `--no-hw` | No | No | required | Pure static analysis of a kernel image for another system or architecture |
+| **Hardware-only** | `--hw-only` | Yes | No | No | Quickly check CPU affectedness without inspecting any kernel |
+
+In **Live** mode (the default), the script inspects both the CPU and the running kernel.
+You can optionally pass `--kernel`, `--config`, or `--map` to point the script at files it couldn't auto-detect.
+
+In **No-runtime** mode, the script still reads the local CPU (CPUID, MSRs, microcode) but skips all running-kernel artifacts (`/sys`, `/proc`, `dmesg`).
+Use this when you have a kernel image from another system but want to evaluate it against the current CPU.
+
+In **No-hardware** mode, both CPU inspection and running-kernel artifacts are skipped entirely.
+This is useful for cross-architecture analysis, for example inspecting an ARM kernel image on an x86 workstation.
+
+In **Hardware-only** mode, the script only reports CPU information and per-CVE hardware affectedness, without inspecting any kernel.
 
 ## Running the script
 
@@ -288,15 +310,6 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
 ## Example of script output
 
-- Intel Haswell CPU running under Ubuntu 16.04 LTS
+- AMD EPYC-Milan running under Debian Trixie
 
-![haswell](https://user-images.githubusercontent.com/218502/108764885-6dcfc380-7553-11eb-81ac-4d19060a3acf.png)
-
-- AMD Ryzen running under OpenSUSE Tumbleweed
-
-![ryzen](https://user-images.githubusercontent.com/218502/108764896-70321d80-7553-11eb-9dd2-fad2a0a1a737.png)
-
-- Batch mode (JSON flavor)
-
-![batch](https://user-images.githubusercontent.com/218502/108764902-71634a80-7553-11eb-9678-fd304995fa64.png)
-
+![alt text](https://raw.githubusercontent.com/speed47/spectre-meltdown-checker/refs/heads/test/img/smc_amd_epyc_milan.jpg)

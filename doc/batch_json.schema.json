@@ -1,0 +1,346 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/speed47/spectre-meltdown-checker/dist/batch_json.schema.json",
+  "title": "spectre-meltdown-checker --batch json output",
+  "description": "Schema for the comprehensive JSON output produced by spectre-meltdown-checker.sh --batch json. format_version 1.",
+  "type": "object",
+  "required": ["meta", "system", "cpu", "cpu_microcode", "vulnerabilities"],
+  "additionalProperties": false,
+  "properties": {
+
+    "meta": {
+      "description": "Run metadata and option flags.",
+      "type": "object",
+      "required": [
+        "script_version", "format_version", "timestamp", "os", "mode",
+        "run_as_root", "reduced_accuracy", "paranoid", "sysfs_only",
+        "no_hw", "extra", "mocked"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "script_version": {
+          "description": "Script version string, e.g. '25.30.0250400123'.",
+          "type": ["string", "null"]
+        },
+        "format_version": {
+          "description": "JSON schema version. Incremented on backward-incompatible changes. Current value: 1.",
+          "type": "integer",
+          "const": 1
+        },
+        "timestamp": {
+          "description": "ISO 8601 UTC timestamp of when the scan started, e.g. '2025-04-07T12:00:00Z'.",
+          "type": ["string", "null"]
+        },
+        "os": {
+          "description": "Operating system name from uname -s, e.g. 'Linux', 'FreeBSD'.",
+          "type": ["string", "null"]
+        },
+        "mode": {
+          "description": "Operating mode: 'live' (default), 'no-runtime' (--no-runtime), 'no-hw' (--no-hw), or 'hw-only' (--hw-only).",
+          "type": "string",
+          "enum": ["live", "no-runtime", "no-hw", "hw-only"]
+        },
+        "run_as_root": {
+          "description": "Whether the script ran as root. Non-root scans skip MSR reads and may produce incomplete or inaccurate results.",
+          "type": "boolean"
+        },
+        "reduced_accuracy": {
+          "description": "True when the kernel image, config, or System.map was missing. Some checks fall back to weaker heuristics.",
+          "type": ["boolean", "null"]
+        },
+        "paranoid": {
+          "description": "True when --paranoid was set: stricter criteria (e.g. requires SMT disabled, IBPB always-on).",
+          "type": "boolean"
+        },
+        "sysfs_only": {
+          "description": "True when --sysfs-only was set: the script trusted the kernel's own sysfs report without independent detection.",
+          "type": "boolean"
+        },
+        "no_hw": {
+          "description": "True when --no-hw was set: hardware checks (MSR, CPUID) were skipped.",
+          "type": "boolean"
+        },
+        "extra": {
+          "description": "True when --extra was set: additional experimental checks were enabled.",
+          "type": "boolean"
+        },
+        "mocked": {
+          "description": "True when one or more CPU values were overridden for testing. Results do NOT reflect the real system.",
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+
+    "system": {
+      "description": "Kernel and host environment context.",
+      "type": ["object", "null"],
+      "required": [
+        "kernel_release", "kernel_version", "kernel_arch",
+        "kernel_image", "kernel_config", "kernel_version_string",
+        "kernel_cmdline", "cpu_count", "smt_enabled",
+        "hypervisor_host", "hypervisor_host_reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kernel_release": {
+          "description": "Output of uname -r (live mode only), e.g. '6.1.0-21-amd64'. Null in other modes.",
+          "type": ["string", "null"]
+        },
+        "kernel_version": {
+          "description": "Output of uname -v (live mode only), e.g. '#1 SMP Debian …'. Null in other modes.",
+          "type": ["string", "null"]
+        },
+        "kernel_arch": {
+          "description": "Output of uname -m (live mode only), e.g. 'x86_64'. Null in other modes.",
+          "type": ["string", "null"]
+        },
+        "kernel_image": {
+          "description": "Path to the kernel image passed via --kernel. Null in live mode.",
+          "type": ["string", "null"]
+        },
+        "kernel_config": {
+          "description": "Path to the kernel config passed via --config. Null if not provided.",
+          "type": ["string", "null"]
+        },
+        "kernel_version_string": {
+          "description": "Kernel version banner extracted from the image. Null if unavailable.",
+          "type": ["string", "null"]
+        },
+        "kernel_cmdline": {
+          "description": "Kernel command line from /proc/cmdline (live mode) or the image. Null if unavailable.",
+          "type": ["string", "null"]
+        },
+        "cpu_count": {
+          "description": "Number of logical CPUs detected (max core ID + 1). Null if undeterminable.",
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "smt_enabled": {
+          "description": "Whether SMT (HyperThreading) is currently enabled. Null if the script could not determine the state.",
+          "type": ["boolean", "null"]
+        },
+        "hypervisor_host": {
+          "description": "Whether this machine is detected as a VM host (running KVM, Xen, VMware, etc.). Null if undeterminable.",
+          "type": ["boolean", "null"]
+        },
+        "hypervisor_host_reason": {
+          "description": "Human-readable explanation of why hypervisor_host was set. Null if hypervisor_host is false or null.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+
+    "cpu": {
+      "description": "CPU hardware identification and capability flags. Null when --no-hw is active.",
+      "type": ["object", "null"],
+      "required": [
+        "vendor", "friendly_name", "family", "model", "stepping",
+        "cpuid", "platform_id", "hybrid", "codename",
+        "arm_part_list", "arm_arch_list", "capabilities"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "vendor": {
+          "description": "CPU vendor string, e.g. 'Intel', 'AuthenticAMD'.",
+          "type": ["string", "null"]
+        },
+        "friendly_name": {
+          "description": "Human-readable CPU model from /proc/cpuinfo, e.g. 'Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz'.",
+          "type": ["string", "null"]
+        },
+        "family": {
+          "description": "CPU family number.",
+          "type": ["integer", "null"]
+        },
+        "model": {
+          "description": "CPU model number.",
+          "type": ["integer", "null"]
+        },
+        "stepping": {
+          "description": "CPU stepping number.",
+          "type": ["integer", "null"]
+        },
+        "cpuid": {
+          "description": "Full CPUID leaf 1 EAX value as a hex string, e.g. '0x000906ed'. Null on some ARM CPUs.",
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-f]+$"
+        },
+        "platform_id": {
+          "description": "Intel platform ID from MSR 0x17. Null on AMD and ARM.",
+          "type": ["integer", "null"]
+        },
+        "hybrid": {
+          "description": "Whether this is a hybrid CPU (P-cores + E-cores, e.g. Alder Lake). Null if undeterminable.",
+          "type": ["boolean", "null"]
+        },
+        "codename": {
+          "description": "Intel CPU codename, e.g. 'Coffee Lake'. Null on AMD and ARM.",
+          "type": ["string", "null"]
+        },
+        "arm_part_list": {
+          "description": "Space-separated list of ARM part numbers detected across cores. Null on x86.",
+          "type": ["string", "null"]
+        },
+        "arm_arch_list": {
+          "description": "Space-separated list of ARM architecture levels detected across cores. Null on x86.",
+          "type": ["string", "null"]
+        },
+        "capabilities": {
+          "description": "CPU feature flags detected via CPUID and MSR reads. Each value is true (present), false (absent), or null (not applicable or could not be read).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "spec_ctrl":                      { "type": ["boolean", "null"], "description": "SPEC_CTRL MSR present (Intel; enables IBRS + IBPB via WRMSR)" },
+            "ibrs":                           { "type": ["boolean", "null"], "description": "Indirect Branch Restricted Speculation" },
+            "ibpb":                           { "type": ["boolean", "null"], "description": "Indirect Branch Prediction Barrier" },
+            "ibpb_ret":                       { "type": ["boolean", "null"], "description": "IBPB on return (enhanced form)" },
+            "stibp":                          { "type": ["boolean", "null"], "description": "Single Thread Indirect Branch Predictors" },
+            "ssbd":                           { "type": ["boolean", "null"], "description": "Speculative Store Bypass Disable" },
+            "l1d_flush":                      { "type": ["boolean", "null"], "description": "L1D cache flush instruction" },
+            "md_clear":                       { "type": ["boolean", "null"], "description": "VERW clears CPU buffers (MDS mitigation)" },
+            "arch_capabilities":              { "type": ["boolean", "null"], "description": "IA32_ARCH_CAPABILITIES MSR is present" },
+            "rdcl_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to RDCL (Meltdown-like attacks)" },
+            "ibrs_all":                       { "type": ["boolean", "null"], "description": "Enhanced IBRS always-on mode supported" },
+            "rsba":                           { "type": ["boolean", "null"], "description": "RSB may use return predictions from outside the RSB" },
+            "l1dflush_no":                    { "type": ["boolean", "null"], "description": "Not susceptible to L1D flush side-channel" },
+            "ssb_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Speculative Store Bypass" },
+            "mds_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to MDS" },
+            "taa_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to TSX Asynchronous Abort" },
+            "pschange_msc_no":                { "type": ["boolean", "null"], "description": "Page-size-change MSC not susceptible" },
+            "tsx_ctrl_msr":                   { "type": ["boolean", "null"], "description": "TSX_CTRL MSR is present" },
+            "tsx_ctrl_rtm_disable":           { "type": ["boolean", "null"], "description": "RTM disabled via TSX_CTRL" },
+            "tsx_ctrl_cpuid_clear":           { "type": ["boolean", "null"], "description": "CPUID HLE/RTM bits cleared via TSX_CTRL" },
+            "gds_ctrl":                       { "type": ["boolean", "null"], "description": "GDS_CTRL MSR present" },
+            "gds_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Gather Data Sampling" },
+            "gds_mitg_dis":                   { "type": ["boolean", "null"], "description": "GDS mitigation disabled" },
+            "gds_mitg_lock":                  { "type": ["boolean", "null"], "description": "GDS mitigation locked" },
+            "rfds_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to Register File Data Sampling" },
+            "rfds_clear":                     { "type": ["boolean", "null"], "description": "VERW clears register file stale data" },
+            "its_no":                         { "type": ["boolean", "null"], "description": "Not susceptible to Indirect Target Selection" },
+            "sbdr_ssdp_no":                   { "type": ["boolean", "null"], "description": "Not susceptible to SBDR/SSDP" },
+            "fbsdp_no":                       { "type": ["boolean", "null"], "description": "Not susceptible to FBSDP" },
+            "psdp_no":                        { "type": ["boolean", "null"], "description": "Not susceptible to PSDP" },
+            "fb_clear":                       { "type": ["boolean", "null"], "description": "Fill buffer cleared on idle/C6" },
+            "rtm":                            { "type": ["boolean", "null"], "description": "Restricted Transactional Memory (TSX RTM) present" },
+            "tsx_force_abort":                { "type": ["boolean", "null"], "description": "TSX_FORCE_ABORT MSR present" },
+            "tsx_force_abort_rtm_disable":    { "type": ["boolean", "null"], "description": "RTM disabled via TSX_FORCE_ABORT" },
+            "tsx_force_abort_cpuid_clear":    { "type": ["boolean", "null"], "description": "CPUID RTM cleared via TSX_FORCE_ABORT" },
+            "sgx":                            { "type": ["boolean", "null"], "description": "Software Guard Extensions present" },
+            "srbds":                          { "type": ["boolean", "null"], "description": "SRBDS affected" },
+            "srbds_on":                       { "type": ["boolean", "null"], "description": "SRBDS mitigation active" },
+            "amd_ssb_no":                     { "type": ["boolean", "null"], "description": "AMD: not susceptible to Speculative Store Bypass" },
+            "hygon_ssb_no":                   { "type": ["boolean", "null"], "description": "Hygon: not susceptible to Speculative Store Bypass" },
+            "ipred":                          { "type": ["boolean", "null"], "description": "Indirect Predictor Barrier support" },
+            "rrsba":                          { "type": ["boolean", "null"], "description": "Restricted RSB Alternate (Intel Retbleed mitigation)" },
+            "bhi":                            { "type": ["boolean", "null"], "description": "Branch History Injection mitigation support" },
+            "tsa_sq_no":                      { "type": ["boolean", "null"], "description": "Not susceptible to TSA-SQ" },
+            "tsa_l1_no":                      { "type": ["boolean", "null"], "description": "Not susceptible to TSA-L1" },
+            "verw_clear":                     { "type": ["boolean", "null"], "description": "VERW clears CPU buffers" },
+            "autoibrs":                       { "type": ["boolean", "null"], "description": "AMD AutoIBRS (equivalent to enhanced IBRS on Intel)" },
+            "sbpb":                           { "type": ["boolean", "null"], "description": "Selective Branch Predictor Barrier (AMD Inception mitigation)" },
+            "avx2":                           { "type": ["boolean", "null"], "description": "AVX2 supported (relevant to Downfall / GDS)" },
+            "avx512":                         { "type": ["boolean", "null"], "description": "AVX-512 supported (relevant to Downfall / GDS)" }
+          }
+        }
+      }
+    },
+
+    "cpu_microcode": {
+      "description": "Microcode version and firmware database status. Null under the same conditions as cpu.",
+      "type": ["object", "null"],
+      "required": [
+        "installed_version", "latest_version", "microcode_up_to_date",
+        "is_blacklisted", "message", "db_source", "db_info"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "installed_version": {
+          "description": "Currently running microcode revision as a hex string, e.g. '0xf4'. Null if unreadable.",
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-f]+$"
+        },
+        "latest_version": {
+          "description": "Latest known-good microcode version from the firmware database, as a hex string. Null if the CPU is not in the database.",
+          "type": ["string", "null"],
+          "pattern": "^0x[0-9a-f]+$"
+        },
+        "microcode_up_to_date": {
+          "description": "True when installed_version equals latest_version. Null if either is unavailable.",
+          "type": ["boolean", "null"]
+        },
+        "is_blacklisted": {
+          "description": "True when the installed microcode is known to cause instability and must be rolled back immediately.",
+          "type": "boolean"
+        },
+        "message": {
+          "description": "Human-readable note from the firmware database (e.g. changelog excerpt). Null if absent.",
+          "type": ["string", "null"]
+        },
+        "db_source": {
+          "description": "Which firmware database was used, e.g. 'Intel-SA', 'MCExtractor'. Null if unavailable.",
+          "type": ["string", "null"]
+        },
+        "db_info": {
+          "description": "Firmware database revision or date string. Null if unavailable.",
+          "type": ["string", "null"]
+        }
+      }
+    },
+
+    "vulnerabilities": {
+      "description": "Array of CVE check results, one per checked CVE, in check order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "cve", "name", "aliases", "cpu_affected",
+          "status", "vulnerable", "info",
+          "sysfs_status", "sysfs_message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "cve": {
+            "description": "CVE identifier, e.g. 'CVE-2017-5753'. May be 'CVE-0000-0001' for non-CVE checks such as SLS.",
+            "type": "string",
+            "pattern": "^CVE-[0-9]{4}-[0-9]+$"
+          },
+          "name": {
+            "description": "Short key name used across batch formats, e.g. 'SPECTRE VARIANT 1'.",
+            "type": "string"
+          },
+          "aliases": {
+            "description": "Full name including all known aliases, e.g. 'Spectre Variant 1, bounds check bypass'. Null if not in the registry.",
+            "type": ["string", "null"]
+          },
+          "cpu_affected": {
+            "description": "Whether this CPU's hardware design is affected by this CVE. False when hardware is architecturally immune.",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "Check outcome: 'OK'=not vulnerable or unaffected, 'VULN'=vulnerable, 'UNK'=could not determine.",
+            "type": "string",
+            "enum": ["OK", "VULN", "UNK"]
+          },
+          "vulnerable": {
+            "description": "Boolean encoding of status: false=OK, true=VULN, null=UNK.",
+            "type": ["boolean", "null"]
+          },
+          "info": {
+            "description": "Human-readable description of the specific mitigation state or reason for the verdict.",
+            "type": "string"
+          },
+          "sysfs_status": {
+            "description": "Status as reported by the kernel via /sys/devices/system/cpu/vulnerabilities/. Null if sysfs was not consulted for this CVE (older kernels, or CVE not tracked by the kernel).",
+            "type": ["string", "null"],
+            "enum": ["OK", "VULN", "UNK", null]
+          },
+          "sysfs_message": {
+            "description": "Raw text from the sysfs vulnerability file, e.g. 'Mitigation: PTI'. Null if sysfs was not consulted.",
+            "type": ["string", "null"]
+          }
+        }
+      }
+    }
+
+  }
+}

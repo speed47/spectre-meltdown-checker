@@ -25,21 +25,81 @@ jobs:
         mv spectre-meltdown-checker.sh dist/
     - name: check direct execution
       run: |
+        set -x
         expected=$(cat .github/workflows/expected_cve_count)
         cd dist
-        nb=$(sudo ./spectre-meltdown-checker.sh --batch json | jq '.[]|.CVE' | wc -l)
+
+        json=$(sudo ./spectre-meltdown-checker.sh --batch json || true)
+
+        # Validate JSON is well-formed (and show it if not)
+        echo "$json" | jq . >/dev/null || {
+          echo "Invalid JSON produced by spectre-meltdown-checker.sh"
+          echo "$json"
+          exit 1
+        }
+
+        # Validate required keys exist
+        for key in meta system cpu cpu_microcode vulnerabilities; do
+          echo "$json" | jq -e ".$key" >/dev/null || {
+            echo "Missing top-level key: $key"
+            echo "$json" | jq .
+            exit 1
+          }
+        done
+
+        # Use -r to get raw scalars (no quotes)
+        fmtver=$(echo "$json" | jq -r '.meta.format_version // empty')
+        if [ "$fmtver" != "1" ]; then
+          echo "Unexpected format_version: $fmtver"
+          echo "$json" | jq .
+          exit 1
+        fi
+
+        run_as_root=$(echo "$json" | jq -r '.meta.run_as_root // empty')
+        if [ "$run_as_root" != "true" ]; then
+          echo "Expected run_as_root=true, got: $run_as_root"
+          echo "$json" | jq .
+          exit 1
+        fi
+
+        mocked=$(echo "$json" | jq -r '.meta.mocked // "false"')
+        if [ "$mocked" = "true" ]; then
+          echo "mocked=true must never appear in production"
+          echo "$json" | jq .
+          exit 1
+        fi
+
+        # Count CVEs robustly (as a number)
+        nb=$(echo "$json" | jq -r '[.vulnerabilities[].cve] | length')
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
+          echo "$json" | jq '.vulnerabilities[].cve'
           exit 1
         else
           echo "OK $nb CVEs reported"
+        fi
+
+        # Validate json-terse backward compatibility
+        nb_terse=$(sudo ./spectre-meltdown-checker.sh --batch json-terse | jq -r 'map(.CVE) | length')
+        if [ "$nb_terse" -ne "$expected" ]; then
+          echo "json-terse backward compat broken: $nb_terse CVEs instead of $expected"
+          exit 1
+        else
+          echo "OK json-terse backward compat: $nb_terse CVEs"
         fi
     - name: check docker compose run execution
       run: |
         expected=$(cat .github/workflows/expected_cve_count)
         cd dist
         docker compose build
-        nb=$(docker compose run --rm spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
+        json=$(docker compose run --rm spectre-meltdown-checker --batch json || true)
+        echo "$json" | jq . > /dev/null
+        fmtver=$(echo "$json" | jq '.meta.format_version')
+        if [ "$fmtver" != "1" ]; then
+          echo "Unexpected format_version: $fmtver"
+          exit 1
+        fi
+        nb=$(echo "$json" | jq '.vulnerabilities[].cve' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
           exit 1
@@ -51,7 +111,14 @@ jobs:
         expected=$(cat .github/workflows/expected_cve_count)
         cd dist
         docker build -t spectre-meltdown-checker .
-        nb=$(docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker --batch json | jq '.[]|.CVE' | wc -l)
+        json=$(docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/modules:/lib/modules:ro spectre-meltdown-checker --batch json || true)
+        echo "$json" | jq . > /dev/null
+        fmtver=$(echo "$json" | jq '.meta.format_version')
+        if [ "$fmtver" != "1" ]; then
+          echo "Unexpected format_version: $fmtver"
+          exit 1
+        fi
+        nb=$(echo "$json" | jq '.vulnerabilities[].cve' | wc -l)
         if [ "$nb" -ne "$expected" ]; then
           echo "Invalid number of CVEs reported: $nb instead of $expected"
           exit 1
@@ -92,15 +159,18 @@ jobs:
         fi
     - name: create a pull request to ${{ github.ref_name }}-build
       run: |
+        # all the files in dist/* and .github/* must be moved as is to the -build branch root, move them out for now:
         tmpdir=$(mktemp -d)
         mv ./dist/* .github $tmpdir/
         rm -rf ./dist
+
         git fetch origin ${{ github.ref_name }}-build
         git checkout -f ${{ github.ref_name }}-build
         mv $tmpdir/* .
-        rm -rf src/
+        rm -rf src/ scripts/ img/
         mkdir -p .github
         rsync -vaP --delete $tmpdir/.github/ .github/
+
         git add --all
         echo =#=#= DIFF CACHED
         git diff --cached
