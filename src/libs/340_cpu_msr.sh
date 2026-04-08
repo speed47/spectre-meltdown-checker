@@ -52,7 +52,7 @@ write_msr_one_core() {
     core="$1"
     msr_dec=$(($2))
     msr=$(printf "0x%x" "$msr_dec")
-    value_dec=$(($3))
+    value_dec=$((${3:-0}))
     value=$(printf "0x%x" "$value_dec")
 
     ret_write_msr_msg='unknown error'
