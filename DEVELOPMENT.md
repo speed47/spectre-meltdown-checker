@@ -116,9 +116,9 @@ The entire tool is a single bash script with no external script dependencies. Ke
 Two JSON formats are available via `--batch`:
 
 - **`--batch json`** (comprehensive): A top-level object with five sections:
-  - `meta` — script version, format version, timestamp, run mode flags (`run_as_root`, `reduced_accuracy`, `mocked`, `paranoid`, `sysfs_only`, `no_hw`, `extra`)
+  - `meta` — script version, format version, timestamp, run mode flags (`run_as_root`, `reduced_accuracy`, `mocked`, `paranoid`, `sysfs_only`, `extra`)
   - `system` — kernel release/version/arch/cmdline, CPU count, SMT status, hypervisor host detection
-  - `cpu` — vendor, model name, family/model/stepping, CPUID, codename, ARM fields (`arm_part_list`, `arm_arch_list`), plus a `capabilities` sub-object containing all `cap_*` hardware flags as booleans/nulls/strings
+  - `cpu` — `arch` discriminator (`x86` or `arm`), vendor, friendly name, then an arch-specific sub-object (`cpu.x86` or `cpu.arm`) with identification fields (family/model/stepping/CPUID/codename for x86; part\_list/arch\_list for ARM) and a `capabilities` sub-object containing hardware flags as booleans/nulls
   - `cpu_microcode` — `installed_version`, `latest_version`, `microcode_up_to_date`, `is_blacklisted`, firmware DB source/info
   - `vulnerabilities` — array of per-CVE objects: `cve`, `name`, `aliases`, `cpu_affected`, `status`, `vulnerable`, `info`, `sysfs_status`, `sysfs_message`
 

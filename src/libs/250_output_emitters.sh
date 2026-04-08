@@ -68,7 +68,9 @@ _json_bool() {
 _build_json_meta() {
     local timestamp mode
     timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
-    if [ "$opt_no_hw" = 1 ]; then
+    if [ "$opt_hw_only" = 1 ]; then
+        mode="hw-only"
+    elif [ "$opt_no_hw" = 1 ]; then
         mode="no-hw"
     elif [ "$opt_runtime" = 0 ]; then
         mode="no-runtime"
@@ -81,7 +83,7 @@ _build_json_meta() {
     else
         run_as_root='false'
     fi
-    g_json_meta=$(printf '{"script_version":%s,"format_version":1,"timestamp":%s,"os":%s,"mode":"%s","run_as_root":%s,"reduced_accuracy":%s,"paranoid":%s,"sysfs_only":%s,"no_hw":%s,"extra":%s}' \
+    g_json_meta=$(printf '{"script_version":%s,"format_version":1,"timestamp":%s,"os":%s,"mode":"%s","run_as_root":%s,"reduced_accuracy":%s,"paranoid":%s,"sysfs_only":%s,"extra":%s}' \
         "$(_json_str "$VERSION")" \
         "$(_json_str "$timestamp")" \
         "$(_json_str "$g_os")" \
@@ -90,7 +92,6 @@ _build_json_meta() {
         "$(_json_bool "${g_bad_accuracy:-0}")" \
         "$(_json_bool "$opt_paranoid")" \
         "$(_json_bool "$opt_sysfs_only")" \
-        "$(_json_bool "$opt_no_hw")" \
         "$(_json_bool "$opt_extra")")
 }
 
@@ -134,87 +135,107 @@ _build_json_system() {
 # Sets: g_json_cpu
 # shellcheck disable=SC2034
 _build_json_cpu() {
-    local cpuid_hex ucode_hex codename caps
+    local cpuid_hex codename caps arch_sub arch_type
     if [ -n "${cpu_cpuid:-}" ]; then
         cpuid_hex=$(printf '0x%08x' "$cpu_cpuid")
     else
         cpuid_hex=''
     fi
-    if [ -n "${cpu_ucode:-}" ]; then
-        ucode_hex=$(printf '0x%x' "$cpu_ucode")
-    else
-        ucode_hex=''
-    fi
     codename=''
     if is_intel; then
         codename=$(get_intel_codename 2>/dev/null || true)
     fi
-    # Build capabilities sub-object
-    caps=$(printf '{"spec_ctrl":%s,"ibrs":%s,"ibpb":%s,"ibpb_ret":%s,"stibp":%s,"ssbd":%s,"l1d_flush":%s,"md_clear":%s,"arch_capabilities":%s,"rdcl_no":%s,"ibrs_all":%s,"rsba":%s,"l1dflush_no":%s,"ssb_no":%s,"mds_no":%s,"taa_no":%s,"pschange_msc_no":%s,"tsx_ctrl_msr":%s,"tsx_ctrl_rtm_disable":%s,"tsx_ctrl_cpuid_clear":%s,"gds_ctrl":%s,"gds_no":%s,"gds_mitg_dis":%s,"gds_mitg_lock":%s,"rfds_no":%s,"rfds_clear":%s,"its_no":%s,"sbdr_ssdp_no":%s,"fbsdp_no":%s,"psdp_no":%s,"fb_clear":%s,"rtm":%s,"tsx_force_abort":%s,"tsx_force_abort_rtm_disable":%s,"tsx_force_abort_cpuid_clear":%s,"sgx":%s,"srbds":%s,"srbds_on":%s,"amd_ssb_no":%s,"hygon_ssb_no":%s,"ipred":%s,"rrsba":%s,"bhi":%s,"tsa_sq_no":%s,"tsa_l1_no":%s,"verw_clear":%s,"autoibrs":%s,"sbpb":%s,"avx2":%s,"avx512":%s}' \
-        "$(_json_cap "${cap_spec_ctrl:-}")" \
-        "$(_json_cap "${cap_ibrs:-}")" \
-        "$(_json_cap "${cap_ibpb:-}")" \
-        "$(_json_cap "${cap_ibpb_ret:-}")" \
-        "$(_json_cap "${cap_stibp:-}")" \
-        "$(_json_cap "${cap_ssbd:-}")" \
-        "$(_json_cap "${cap_l1df:-}")" \
-        "$(_json_cap "${cap_md_clear:-}")" \
-        "$(_json_cap "${cap_arch_capabilities:-}")" \
-        "$(_json_cap "${cap_rdcl_no:-}")" \
-        "$(_json_cap "${cap_ibrs_all:-}")" \
-        "$(_json_cap "${cap_rsba:-}")" \
-        "$(_json_cap "${cap_l1dflush_no:-}")" \
-        "$(_json_cap "${cap_ssb_no:-}")" \
-        "$(_json_cap "${cap_mds_no:-}")" \
-        "$(_json_cap "${cap_taa_no:-}")" \
-        "$(_json_cap "${cap_pschange_msc_no:-}")" \
-        "$(_json_cap "${cap_tsx_ctrl_msr:-}")" \
-        "$(_json_cap "${cap_tsx_ctrl_rtm_disable:-}")" \
-        "$(_json_cap "${cap_tsx_ctrl_cpuid_clear:-}")" \
-        "$(_json_cap "${cap_gds_ctrl:-}")" \
-        "$(_json_cap "${cap_gds_no:-}")" \
-        "$(_json_cap "${cap_gds_mitg_dis:-}")" \
-        "$(_json_cap "${cap_gds_mitg_lock:-}")" \
-        "$(_json_cap "${cap_rfds_no:-}")" \
-        "$(_json_cap "${cap_rfds_clear:-}")" \
-        "$(_json_cap "${cap_its_no:-}")" \
-        "$(_json_cap "${cap_sbdr_ssdp_no:-}")" \
-        "$(_json_cap "${cap_fbsdp_no:-}")" \
-        "$(_json_cap "${cap_psdp_no:-}")" \
-        "$(_json_cap "${cap_fb_clear:-}")" \
-        "$(_json_cap "${cap_rtm:-}")" \
-        "$(_json_cap "${cap_tsx_force_abort:-}")" \
-        "$(_json_cap "${cap_tsx_force_abort_rtm_disable:-}")" \
-        "$(_json_cap "${cap_tsx_force_abort_cpuid_clear:-}")" \
-        "$(_json_cap "${cap_sgx:-}")" \
-        "$(_json_cap "${cap_srbds:-}")" \
-        "$(_json_cap "${cap_srbds_on:-}")" \
-        "$(_json_cap "${cap_amd_ssb_no:-}")" \
-        "$(_json_cap "${cap_hygon_ssb_no:-}")" \
-        "$(_json_cap "${cap_ipred:-}")" \
-        "$(_json_cap "${cap_rrsba:-}")" \
-        "$(_json_cap "${cap_bhi:-}")" \
-        "$(_json_cap "${cap_tsa_sq_no:-}")" \
-        "$(_json_cap "${cap_tsa_l1_no:-}")" \
-        "$(_json_cap "${cap_verw_clear:-}")" \
-        "$(_json_cap "${cap_autoibrs:-}")" \
-        "$(_json_cap "${cap_sbpb:-}")" \
-        "$(_json_cap "${cap_avx2:-}")" \
-        "$(_json_cap "${cap_avx512:-}")")
 
-    g_json_cpu=$(printf '{"vendor":%s,"friendly_name":%s,"family":%s,"model":%s,"stepping":%s,"cpuid":%s,"platform_id":%s,"hybrid":%s,"codename":%s,"arm_part_list":%s,"arm_arch_list":%s,"capabilities":%s}' \
-        "$(_json_str "${cpu_vendor:-}")" \
-        "$(_json_str "${cpu_friendly_name:-}")" \
-        "$(_json_num "${cpu_family:-}")" \
-        "$(_json_num "${cpu_model:-}")" \
-        "$(_json_num "${cpu_stepping:-}")" \
-        "$(_json_str "$cpuid_hex")" \
-        "$(_json_num "${cpu_platformid:-}")" \
-        "$(_json_bool "${cpu_hybrid:-}")" \
-        "$(_json_str "$codename")" \
-        "$(_json_str "${cpu_part_list:-}")" \
-        "$(_json_str "${cpu_arch_list:-}")" \
-        "$caps")
+    # Determine architecture type and build the arch-specific sub-object
+    case "${cpu_vendor:-}" in
+        GenuineIntel | AuthenticAMD | HygonGenuine)
+            arch_type='x86'
+            # Build x86 capabilities sub-object
+            caps=$(printf '{"spec_ctrl":%s,"ibrs":%s,"ibpb":%s,"ibpb_ret":%s,"stibp":%s,"ssbd":%s,"l1d_flush":%s,"md_clear":%s,"arch_capabilities":%s,"rdcl_no":%s,"ibrs_all":%s,"rsba":%s,"l1dflush_no":%s,"ssb_no":%s,"mds_no":%s,"taa_no":%s,"pschange_msc_no":%s,"tsx_ctrl_msr":%s,"tsx_ctrl_rtm_disable":%s,"tsx_ctrl_cpuid_clear":%s,"gds_ctrl":%s,"gds_no":%s,"gds_mitg_dis":%s,"gds_mitg_lock":%s,"rfds_no":%s,"rfds_clear":%s,"its_no":%s,"sbdr_ssdp_no":%s,"fbsdp_no":%s,"psdp_no":%s,"fb_clear":%s,"rtm":%s,"tsx_force_abort":%s,"tsx_force_abort_rtm_disable":%s,"tsx_force_abort_cpuid_clear":%s,"sgx":%s,"srbds":%s,"srbds_on":%s,"amd_ssb_no":%s,"hygon_ssb_no":%s,"ipred":%s,"rrsba":%s,"bhi":%s,"tsa_sq_no":%s,"tsa_l1_no":%s,"verw_clear":%s,"autoibrs":%s,"sbpb":%s,"avx2":%s,"avx512":%s}' \
+                "$(_json_cap "${cap_spec_ctrl:-}")" \
+                "$(_json_cap "${cap_ibrs:-}")" \
+                "$(_json_cap "${cap_ibpb:-}")" \
+                "$(_json_cap "${cap_ibpb_ret:-}")" \
+                "$(_json_cap "${cap_stibp:-}")" \
+                "$(_json_cap "${cap_ssbd:-}")" \
+                "$(_json_cap "${cap_l1df:-}")" \
+                "$(_json_cap "${cap_md_clear:-}")" \
+                "$(_json_cap "${cap_arch_capabilities:-}")" \
+                "$(_json_cap "${cap_rdcl_no:-}")" \
+                "$(_json_cap "${cap_ibrs_all:-}")" \
+                "$(_json_cap "${cap_rsba:-}")" \
+                "$(_json_cap "${cap_l1dflush_no:-}")" \
+                "$(_json_cap "${cap_ssb_no:-}")" \
+                "$(_json_cap "${cap_mds_no:-}")" \
+                "$(_json_cap "${cap_taa_no:-}")" \
+                "$(_json_cap "${cap_pschange_msc_no:-}")" \
+                "$(_json_cap "${cap_tsx_ctrl_msr:-}")" \
+                "$(_json_cap "${cap_tsx_ctrl_rtm_disable:-}")" \
+                "$(_json_cap "${cap_tsx_ctrl_cpuid_clear:-}")" \
+                "$(_json_cap "${cap_gds_ctrl:-}")" \
+                "$(_json_cap "${cap_gds_no:-}")" \
+                "$(_json_cap "${cap_gds_mitg_dis:-}")" \
+                "$(_json_cap "${cap_gds_mitg_lock:-}")" \
+                "$(_json_cap "${cap_rfds_no:-}")" \
+                "$(_json_cap "${cap_rfds_clear:-}")" \
+                "$(_json_cap "${cap_its_no:-}")" \
+                "$(_json_cap "${cap_sbdr_ssdp_no:-}")" \
+                "$(_json_cap "${cap_fbsdp_no:-}")" \
+                "$(_json_cap "${cap_psdp_no:-}")" \
+                "$(_json_cap "${cap_fb_clear:-}")" \
+                "$(_json_cap "${cap_rtm:-}")" \
+                "$(_json_cap "${cap_tsx_force_abort:-}")" \
+                "$(_json_cap "${cap_tsx_force_abort_rtm_disable:-}")" \
+                "$(_json_cap "${cap_tsx_force_abort_cpuid_clear:-}")" \
+                "$(_json_cap "${cap_sgx:-}")" \
+                "$(_json_cap "${cap_srbds:-}")" \
+                "$(_json_cap "${cap_srbds_on:-}")" \
+                "$(_json_cap "${cap_amd_ssb_no:-}")" \
+                "$(_json_cap "${cap_hygon_ssb_no:-}")" \
+                "$(_json_cap "${cap_ipred:-}")" \
+                "$(_json_cap "${cap_rrsba:-}")" \
+                "$(_json_cap "${cap_bhi:-}")" \
+                "$(_json_cap "${cap_tsa_sq_no:-}")" \
+                "$(_json_cap "${cap_tsa_l1_no:-}")" \
+                "$(_json_cap "${cap_verw_clear:-}")" \
+                "$(_json_cap "${cap_autoibrs:-}")" \
+                "$(_json_cap "${cap_sbpb:-}")" \
+                "$(_json_cap "${cap_avx2:-}")" \
+                "$(_json_cap "${cap_avx512:-}")")
+            arch_sub=$(printf '{"family":%s,"model":%s,"stepping":%s,"cpuid":%s,"platform_id":%s,"hybrid":%s,"codename":%s,"capabilities":%s}' \
+                "$(_json_num "${cpu_family:-}")" \
+                "$(_json_num "${cpu_model:-}")" \
+                "$(_json_num "${cpu_stepping:-}")" \
+                "$(_json_str "$cpuid_hex")" \
+                "$(_json_num "${cpu_platformid:-}")" \
+                "$(_json_bool "${cpu_hybrid:-}")" \
+                "$(_json_str "$codename")" \
+                "$caps")
+            ;;
+        ARM | CAVIUM | PHYTIUM)
+            arch_type='arm'
+            arch_sub=$(printf '{"part_list":%s,"arch_list":%s,"capabilities":{}}' \
+                "$(_json_str "${cpu_part_list:-}")" \
+                "$(_json_str "${cpu_arch_list:-}")")
+            ;;
+        *)
+            arch_type=''
+            arch_sub=''
+            ;;
+    esac
+
+    if [ -n "$arch_type" ]; then
+        g_json_cpu=$(printf '{"arch":"%s","vendor":%s,"friendly_name":%s,"%s":%s}' \
+            "$arch_type" \
+            "$(_json_str "${cpu_vendor:-}")" \
+            "$(_json_str "${cpu_friendly_name:-}")" \
+            "$arch_type" \
+            "$arch_sub")
+    else
+        g_json_cpu=$(printf '{"arch":null,"vendor":%s,"friendly_name":%s}' \
+            "$(_json_str "${cpu_vendor:-}")" \
+            "$(_json_str "${cpu_friendly_name:-}")")
+    fi
 }
 
 # Build the "cpu_microcode" section of the comprehensive JSON output
@@ -443,11 +464,22 @@ _build_prometheus_cpu_info() {
     cpu_labels=''
     [ -n "${cpu_vendor:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}vendor=\"$(_prom_escape "$cpu_vendor")\""
     [ -n "${cpu_friendly_name:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model=\"$(_prom_escape "$cpu_friendly_name")\""
-    [ -n "${cpu_family:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}family=\"$cpu_family\""
-    [ -n "${cpu_model:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model_id=\"$cpu_model\""
-    [ -n "${cpu_stepping:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}stepping=\"$cpu_stepping\""
-    [ -n "$cpuid_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}cpuid=\"$cpuid_hex\""
-    [ -n "$codename" ] && cpu_labels="${cpu_labels:+$cpu_labels,}codename=\"$(_prom_escape "$codename")\""
+    # arch-specific labels
+    case "${cpu_vendor:-}" in
+        GenuineIntel | AuthenticAMD | HygonGenuine)
+            cpu_labels="${cpu_labels:+$cpu_labels,}arch=\"x86\""
+            [ -n "${cpu_family:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}family=\"$cpu_family\""
+            [ -n "${cpu_model:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model_id=\"$cpu_model\""
+            [ -n "${cpu_stepping:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}stepping=\"$cpu_stepping\""
+            [ -n "$cpuid_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}cpuid=\"$cpuid_hex\""
+            [ -n "$codename" ] && cpu_labels="${cpu_labels:+$cpu_labels,}codename=\"$(_prom_escape "$codename")\""
+            ;;
+        ARM | CAVIUM | PHYTIUM)
+            cpu_labels="${cpu_labels:+$cpu_labels,}arch=\"arm\""
+            [ -n "${cpu_part_list:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}part_list=\"$(_prom_escape "$cpu_part_list")\""
+            [ -n "${cpu_arch_list:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}arch_list=\"$(_prom_escape "$cpu_arch_list")\""
+            ;;
+    esac
     [ -n "$smt_val" ] && cpu_labels="${cpu_labels:+$cpu_labels,}smt=\"$smt_val\""
     [ -n "$ucode_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode=\"$ucode_hex\""
     [ -n "$ucode_latest_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_latest=\"$ucode_latest_hex\""
