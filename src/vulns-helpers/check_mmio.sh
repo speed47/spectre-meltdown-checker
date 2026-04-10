@@ -165,7 +165,7 @@ check_mmio_linux() {
                 pstatus yellow NO
             fi
 
-            if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
                 pr_info_nol "* Kernel mitigation is enabled and active: "
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
                     mmio_mitigated=1
@@ -198,7 +198,7 @@ check_mmio_linux() {
             # compute mystatus and mymsg from our own logic
             if [ "$cap_fb_clear" = 1 ]; then
                 if [ -n "$kernel_mmio" ]; then
-                    if [ "$opt_runtime" = 1 ]; then
+                    if [ "$g_mode" = live ]; then
                         # mitigation must also be enabled
                         if [ "$mmio_mitigated" = 1 ]; then
                             if [ "$opt_paranoid" != 1 ] || [ "$mmio_smt_mitigated" = 1 ]; then

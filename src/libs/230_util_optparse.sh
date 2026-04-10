@@ -344,3 +344,16 @@ if [ "$opt_runtime" = 0 ] && [ -z "$opt_kernel" ] && [ -z "$opt_config" ] && [ -
     pr_warn "Option --no-runtime requires at least one of --kernel, --config, or --map"
     exit 255
 fi
+
+# Derive the canonical run mode from the option flags.
+# Modes: live (default), no-runtime (--no-runtime), no-hw (--no-hw), hw-only (--hw-only)
+# shellcheck disable=SC2034
+if [ "$opt_hw_only" = 1 ]; then
+    g_mode='hw-only'
+elif [ "$opt_no_hw" = 1 ]; then
+    g_mode='no-hw'
+elif [ "$opt_runtime" = 0 ]; then
+    g_mode='no-runtime'
+else
+    g_mode='live'
+fi

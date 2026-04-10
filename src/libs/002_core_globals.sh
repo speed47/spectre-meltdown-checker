@@ -125,6 +125,13 @@ opt_vmm=-1
 opt_allow_msr_write=0
 opt_cpu=0
 opt_explain=0
+# Canonical run mode, set at the end of option parsing.
+# Values: live, no-runtime, no-hw, hw-only
+g_mode='live'
+
+# Return 0 (true) if runtime state is accessible (procfs, sysfs, dmesg, debugfs).
+# True in live and hw-only modes; false in no-runtime and no-hw modes.
+has_runtime() { [ "$g_mode" = live ] || [ "$g_mode" = hw-only ]; }
 opt_paranoid=0
 opt_extra=0
 opt_mock=0

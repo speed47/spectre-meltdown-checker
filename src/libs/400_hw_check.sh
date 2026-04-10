@@ -18,7 +18,7 @@ if [ "$g_os" = Darwin ] || [ "$g_os" = VMkernel ]; then
 fi
 
 # check for mode selection inconsistency
-if [ "$opt_hw_only" = 1 ]; then
+if [ "$g_mode" = hw-only ]; then
     if [ "$opt_cve_all" = 0 ]; then
         show_usage
         echo "$0: error: incompatible modes specified, --hw-only vs --variant" >&2
@@ -89,7 +89,7 @@ if [ "$opt_cpu" != all ] && [ "$opt_cpu" -gt "$g_max_core_id" ]; then
     exit 255
 fi
 
-if [ "$opt_runtime" = 1 ]; then
+if has_runtime; then
     pr_info "Checking for vulnerabilities on current system"
 
     # try to find the image of the current running kernel
@@ -226,7 +226,7 @@ if [ -e "$opt_kernel" ]; then
     if ! command -v "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
         pr_debug "readelf not found"
         g_kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
-    elif [ "$opt_sysfs_only" = 1 ] || [ "$opt_hw_only" = 1 ]; then
+    elif [ "$opt_sysfs_only" = 1 ] || [ "$g_mode" = hw-only ]; then
         g_kernel_err='kernel image decompression skipped'
     else
         extract_kernel "$opt_kernel"
@@ -251,7 +251,7 @@ else
     fi
     if [ -n "$g_kernel_version" ]; then
         # in live mode, check if the img we found is the correct one
-        if [ "$opt_runtime" = 1 ]; then
+        if has_runtime; then
             pr_verbose "Kernel image is \033[35m$g_kernel_version"
             if ! echo "$g_kernel_version" | grep -qF "$(uname -r)"; then
                 pr_warn "Possible discrepancy between your running kernel '$(uname -r)' and the image '$g_kernel_version' we found ($opt_kernel), results might be incorrect"
@@ -283,7 +283,7 @@ sys_interface_check() {
     msg=''
     ret_sys_interface_check_fullmsg=''
 
-    if [ "$opt_runtime" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
+    if has_runtime && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
         :
     else
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_SYSFS_$(basename "$file")_RET=1")
@@ -352,7 +352,7 @@ sys_interface_check() {
 check_kernel_info() {
     local config_display
     pr_info "\033[1;34mKernel information\033[0m"
-    if [ "$opt_runtime" = 1 ]; then
+    if has_runtime; then
         pr_info "* Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
     elif [ -n "$g_kernel_version" ]; then
         pr_info "* Kernel is \033[35m$g_kernel_version\033[0m"
@@ -456,7 +456,7 @@ check_cpu() {
         ret=invalid
         pstatus yellow NO "unknown CPU"
     fi
-    if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
+    if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
             cap_ibrs='IBRS (cpuinfo)'
@@ -533,7 +533,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_ibpb='IBPB (cpuinfo)'
             pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
@@ -604,7 +604,7 @@ check_cpu() {
         ret=invalid
         pstatus yellow UNKNOWN "unknown CPU"
     fi
-    if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
+    if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
             cap_stibp='STIBP (cpuinfo)'
@@ -676,7 +676,7 @@ check_cpu() {
         fi
     fi
 
-    if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
+    if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
             cap_ssbd='SSBD (cpuinfo)'
@@ -740,7 +740,7 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
-    elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
         cap_l1df=1
@@ -760,7 +760,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_md_clear=1
             pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
@@ -830,7 +830,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
-        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
             cap_arch_capabilities=1

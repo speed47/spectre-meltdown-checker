@@ -118,7 +118,7 @@ The entire tool is a single bash script with no external script dependencies. Ke
 Two JSON formats are available via `--batch`:
 
 - **`--batch json`** (comprehensive): A top-level object with five sections:
-  - `meta` — script version, format version, timestamp, run mode flags (`run_as_root`, `reduced_accuracy`, `mocked`, `paranoid`, `sysfs_only`, `extra`)
+  - `meta` — script version, format version, timestamp, `mode` (`live`, `no-runtime`, `no-hw`, `hw-only`), run mode flags (`run_as_root`, `reduced_accuracy`, `mocked`, `paranoid`, `sysfs_only`, `extra`)
   - `system` — kernel release/version/arch/cmdline, CPU count, SMT status, hypervisor host detection
   - `cpu` — `arch` discriminator (`x86` or `arm`), vendor, friendly name, then an arch-specific sub-object (`cpu.x86` or `cpu.arm`) with identification fields (family/model/stepping/CPUID/codename for x86; part\_list/arch\_list for ARM) and a `capabilities` sub-object containing hardware flags as booleans/nulls
   - `cpu_microcode` — `installed_version`, `latest_version`, `microcode_up_to_date`, `is_blacklisted`, firmware DB source/info
@@ -161,7 +161,7 @@ This works because the kernel always has direct access to CPUID (it doesn't need
 **Rules:**
 - This is strictly a fallback: `read_cpuid` via `/dev/cpu/N/cpuid` remains the primary method.
 - Only use it when `read_cpuid` returned `READ_CPUID_RET_ERR` (device unavailable), **never** when it returned `READ_CPUID_RET_KO` (device available but bit is 0 — meaning the CPU/hypervisor explicitly reports the feature as absent).
-- Only in live mode (`$opt_runtime = 1`), since `/proc/cpuinfo` is not available in no-runtime mode.
+- Only in live mode (`$g_mode = live`), since `/proc/cpuinfo` is not available in other modes.
 - Only for CPUID bits that the kernel exposes as `/proc/cpuinfo` flags. Not all bits have a corresponding flag — only those listed in the kernel's `capflags.c`. If a bit has no `/proc/cpuinfo` flag, no fallback is possible.
 - The fallback depends on the running kernel being recent enough to know about the CPUID bit in question. An older kernel won't expose a flag it doesn't know about, so the fallback will silently not trigger — which is fine (we just stay at UNKNOWN, same as the ERR case without fallback).
 
@@ -184,7 +184,7 @@ read_cpuid 0x7 0x0 $EDX 31 1 1
 ret=$?
 if [ $ret = $READ_CPUID_RET_OK ]; then
     cap_ssbd='Intel SSBD'
-elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
+elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$g_mode" = live ]; then
     # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
     if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
         cap_ssbd='Intel SSBD (cpuinfo)'
@@ -417,16 +417,16 @@ This is where the real detection lives. Check for mitigations at each layer:
   ```
   The same applies to Phase 4 verdict messages: when the explanation or remediation advice differs between architectures (e.g. "CPU microcode update" vs "firmware/kernel update"), branch on `is_arm_kernel`/`is_x86_kernel` rather than on `cpu_vendor`, because `cpu_vendor` reflects the host, not the target kernel.
 
-- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs. All runtime-only checks — including `/proc/cpuinfo` flags — must be guarded by `if [ "$opt_runtime" = 1 ]`, both when collecting the evidence in Phase 2 and when using it in Phase 4. In Phase 4, use explicit live/no-runtime branches so that live-only variables (e.g. cpuinfo flags, MSR values) are never referenced in the no-runtime path.
+- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs. All runtime-only checks — including `/proc/cpuinfo` flags — must be guarded by `if [ "$g_mode" = live ]`, both when collecting the evidence in Phase 2 and when using it in Phase 4. In Phase 4, use explicit live/non-live branches so that live-only variables (e.g. cpuinfo flags, MSR values) are never referenced in the non-live path.
   ```sh
-  if [ "$opt_runtime" = 1 ]; then
+  if [ "$g_mode" = live ]; then
       read_msr 0xADDRESS
       ret=$?
       if [ "$ret" = "$READ_MSR_RET_OK" ]; then
           # check specific bits in ret_read_msr_value_lo / ret_read_msr_value_hi
       fi
   else
-      pstatus blue N/A "not testable in no-runtime mode"
+      pstatus blue N/A "not testable in non-live mode"
   fi
   ```
 
@@ -811,7 +811,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 
 - **Never hardcode kernel or microcode versions** - detect capabilities directly (design principles 2 and 3). Exception: when a microcode fix has no detectable indicator, hardcode fixing versions per CPU (see principle 3).
 - **Assume affected by default** - only mark a CPU as unaffected when there is positive evidence (design principle 4).
-- **Always handle both live and no-runtime modes** - use `$opt_runtime` to branch, and print `N/A "not testable in no-runtime mode"` for runtime-only checks when in no-runtime mode.
+- **Always handle both live and non-live modes** — use `$g_mode` to branch (`if [ "$g_mode" = live ]`), and print `N/A "not testable in non-live mode"` for runtime-only checks when not in live mode. Inside CVE checks, `live` is the only mode with runtime access (hw-only skips the CVE loop). Outside CVE checks (e.g. `check_cpu`), use the `has_runtime` helper which returns true for both `live` and `hw-only`.
 - **Use `explain()`** when reporting VULN to give actionable remediation advice (see "Cross-Cutting Features" above).
 - **Handle `--paranoid` and `--vmm`** when the CVE has stricter mitigation tiers or VMM-specific aspects (see "Cross-Cutting Features" above).
 - **Keep JSON output in sync** - when adding new `cap_*` variables, add them to `_build_json_cpu()` in `src/libs/250_output_emitters.sh` (see Step 2 JSON note above). Per-CVE fields are handled automatically.

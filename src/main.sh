@@ -14,7 +14,7 @@ fi
 
 pr_info
 
-if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
     pr_info "\033[1;34mHardware check\033[0m"
     check_cpu
     check_cpu_vulnerabilities
@@ -24,7 +24,7 @@ fi
 # Build JSON system/cpu/microcode sections (after check_cpu has populated cap_* vars and VMM detection)
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
     _build_json_system
-    if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+    if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
         _build_json_cpu
         _build_json_cpu_microcode
     fi
@@ -33,18 +33,22 @@ fi
 # Build Prometheus info metric lines (same timing requirement as JSON builders above)
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
     _build_prometheus_system_info
-    if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+    if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
         _build_prometheus_cpu_info
     fi
 fi
 
-# now run the checks the user asked for
-for cve in $g_supported_cve_list; do
-    if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
-        check_"$(echo "$cve" | tr - _)"
-        pr_info
-    fi
-done
+# now run the checks the user asked for (hw-only mode skips CVE checks)
+if [ "$g_mode" = hw-only ]; then
+    pr_info "Hardware-only mode, skipping vulnerability checks"
+else
+    for cve in $g_supported_cve_list; do
+        if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
+            check_"$(echo "$cve" | tr - _)"
+            pr_info
+        fi
+    done
+fi # g_mode != hw-only
 
 if [ -n "$g_final_summary" ]; then
     pr_info "> \033[46m\033[30mSUMMARY:\033[0m$g_final_summary"
@@ -171,15 +175,7 @@ fi
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
     prom_run_as_root='false'
     [ "$(id -u)" -eq 0 ] && prom_run_as_root='true'
-    if [ "$opt_hw_only" = 1 ]; then
-        prom_mode='hw-only'
-    elif [ "$opt_no_hw" = 1 ]; then
-        prom_mode='no-hw'
-    elif [ "$opt_runtime" = 0 ]; then
-        prom_mode='no-runtime'
-    else
-        prom_mode='live'
-    fi
+    prom_mode="$g_mode"
     prom_paranoid='false'
     [ "$opt_paranoid" = 1 ] && prom_paranoid='true'
     prom_sysfs_only='false'

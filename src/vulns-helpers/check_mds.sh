@@ -3,7 +3,7 @@
 check_mds_bsd() {
     local kernel_md_clear kernel_smt_allowed kernel_mds_enabled kernel_mds_state
     pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
-    if [ "$opt_runtime" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         if sysctl hw.mds_disable >/dev/null 2>&1; then
             pstatus green YES
             kernel_md_clear=1
@@ -76,7 +76,7 @@ check_mds_bsd() {
     else
         if [ "$cap_md_clear" = 1 ]; then
             if [ "$kernel_md_clear" = 1 ]; then
-                if [ "$opt_runtime" = 1 ]; then
+                if [ "$g_mode" = live ]; then
                     # mitigation must also be enabled
                     if [ "$kernel_mds_enabled" -ge 1 ]; then
                         if [ "$opt_paranoid" != 1 ] || [ "$kernel_smt_allowed" = 0 ]; then
@@ -95,7 +95,7 @@ check_mds_bsd() {
                 pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
             fi
         else
-            if [ "$kernel_md_clear" = 1 ] && [ "$opt_runtime" = 1 ]; then
+            if [ "$kernel_md_clear" = 1 ] && [ "$g_mode" = live ]; then
                 # no MD_CLEAR in microcode, but FreeBSD may still have software-only mitigation active
                 case "$kernel_mds_state" in
                     software*)
@@ -138,7 +138,7 @@ check_mds_linux() {
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
             kernel_md_clear_can_tell=1
-            if [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            if [ "$g_mode" = live ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
                 kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
                 pstatus green YES "$kernel_md_clear"
             fi
@@ -161,7 +161,7 @@ check_mds_linux() {
                 fi
             fi
 
-            if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
                 pr_info_nol "* Kernel mitigation is enabled and active: "
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
                     mds_mitigated=1
@@ -194,7 +194,7 @@ check_mds_linux() {
             # compute mystatus and mymsg from our own logic
             if [ "$cap_md_clear" = 1 ]; then
                 if [ -n "$kernel_md_clear" ]; then
-                    if [ "$opt_runtime" = 1 ]; then
+                    if [ "$g_mode" = live ]; then
                         # mitigation must also be enabled
                         if [ "$mds_mitigated" = 1 ]; then
                             if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then

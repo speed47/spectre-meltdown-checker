@@ -66,17 +66,8 @@ _json_bool() {
 # Sets: g_json_meta
 # shellcheck disable=SC2034
 _build_json_meta() {
-    local timestamp mode
+    local timestamp
     timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
-    if [ "$opt_hw_only" = 1 ]; then
-        mode="hw-only"
-    elif [ "$opt_no_hw" = 1 ]; then
-        mode="no-hw"
-    elif [ "$opt_runtime" = 0 ]; then
-        mode="no-runtime"
-    else
-        mode="live"
-    fi
     local run_as_root
     if [ "$(id -u)" -eq 0 ]; then
         run_as_root='true'
@@ -87,7 +78,7 @@ _build_json_meta() {
         "$(_json_str "$VERSION")" \
         "$(_json_str "$timestamp")" \
         "$(_json_str "$g_os")" \
-        "$mode" \
+        "$g_mode" \
         "$run_as_root" \
         "$(_json_bool "${g_bad_accuracy:-0}")" \
         "$(_json_bool "$opt_paranoid")" \
@@ -100,7 +91,7 @@ _build_json_meta() {
 # shellcheck disable=SC2034
 _build_json_system() {
     local kernel_release kernel_version kernel_arch smt_val
-    if [ "$opt_runtime" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         kernel_release=$(uname -r)
         kernel_version=$(uname -v)
         kernel_arch=$(uname -m)
@@ -404,7 +395,7 @@ _emit_prometheus() {
 # shellcheck disable=SC2034
 _build_prometheus_system_info() {
     local kernel_release kernel_arch hypervisor_host sys_labels
-    if [ "$opt_runtime" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         kernel_release=$(uname -r 2>/dev/null || true)
         kernel_arch=$(uname -m 2>/dev/null || true)
     else
