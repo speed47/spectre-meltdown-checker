@@ -132,50 +132,54 @@ check_mds_linux() {
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
-        pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
+        # MDS is Intel-only; skip x86-specific kernel/cpuinfo checks on non-x86 kernels
         kernel_md_clear=''
-        kernel_md_clear_can_tell=1
-        if [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
-            kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
-            pstatus green YES "$kernel_md_clear"
-        fi
-        if [ -z "$kernel_md_clear" ]; then
-            if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
-                kernel_md_clear_can_tell=0
-            elif [ -n "$g_kernel_err" ]; then
-                kernel_md_clear_can_tell=0
-            elif "${opt_arch_prefix}strings" "$g_kernel" | grep -q 'Clear CPU buffers'; then
-                pr_debug "md_clear: found 'Clear CPU buffers' string in kernel image"
-                kernel_md_clear='found md_clear implementation evidence in kernel image'
+        kernel_md_clear_can_tell=0
+        if is_x86_kernel; then
+            pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
+            kernel_md_clear_can_tell=1
+            if [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+                kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
                 pstatus green YES "$kernel_md_clear"
             fi
-        fi
-        if [ -z "$kernel_md_clear" ]; then
-            if [ "$kernel_md_clear_can_tell" = 1 ]; then
-                pstatus yellow NO
-            else
-                pstatus yellow UNKNOWN
+            if [ -z "$kernel_md_clear" ]; then
+                if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+                    kernel_md_clear_can_tell=0
+                elif [ -n "$g_kernel_err" ]; then
+                    kernel_md_clear_can_tell=0
+                elif "${opt_arch_prefix}strings" "$g_kernel" | grep -q 'Clear CPU buffers'; then
+                    pr_debug "md_clear: found 'Clear CPU buffers' string in kernel image"
+                    kernel_md_clear='found md_clear implementation evidence in kernel image'
+                    pstatus green YES "$kernel_md_clear"
+                fi
             fi
-        fi
+            if [ -z "$kernel_md_clear" ]; then
+                if [ "$kernel_md_clear_can_tell" = 1 ]; then
+                    pstatus yellow NO
+                else
+                    pstatus yellow UNKNOWN
+                fi
+            fi
 
-        if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
-            pr_info_nol "* Kernel mitigation is enabled and active: "
-            if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
-                mds_mitigated=1
-                pstatus green YES
-            else
-                mds_mitigated=0
-                pstatus yellow NO
+            if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+                pr_info_nol "* Kernel mitigation is enabled and active: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
+                    mds_mitigated=1
+                    pstatus green YES
+                else
+                    mds_mitigated=0
+                    pstatus yellow NO
+                fi
+                pr_info_nol "* SMT is either mitigated or disabled: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
+                    mds_smt_mitigated=1
+                    pstatus green YES
+                else
+                    mds_smt_mitigated=0
+                    pstatus yellow NO
+                fi
             fi
-            pr_info_nol "* SMT is either mitigated or disabled: "
-            if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
-                mds_smt_mitigated=1
-                pstatus green YES
-            else
-                mds_smt_mitigated=0
-                pstatus yellow NO
-            fi
-        fi
+        fi # is_x86_kernel
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
         msg="/sys vulnerability interface use forced, but it's not available!"

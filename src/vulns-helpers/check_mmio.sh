@@ -125,61 +125,65 @@ check_mmio_linux() {
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
-        pr_info_nol "* Kernel supports MMIO Stale Data mitigation: "
+        # MMIO Stale Data is Intel-only; skip x86-specific kernel/MSR checks on non-x86 kernels
         kernel_mmio=''
-        kernel_mmio_can_tell=1
-        if [ -n "$g_kernel_err" ]; then
-            kernel_mmio_can_tell=0
-        elif grep -q 'mmio_stale_data' "$g_kernel" 2>/dev/null; then
-            pr_debug "mmio: found 'mmio_stale_data' string in kernel image"
-            kernel_mmio='found MMIO Stale Data mitigation evidence in kernel image'
-            pstatus green YES "$kernel_mmio"
-        fi
-        if [ -z "$kernel_mmio" ] && [ -n "$opt_config" ] && grep -q '^CONFIG_MITIGATION_MMIO_STALE_DATA=y' "$opt_config"; then
-            kernel_mmio='found MMIO Stale Data mitigation config option enabled'
-            pstatus green YES "$kernel_mmio"
-        fi
-        if [ -z "$kernel_mmio" ] && [ -n "$opt_map" ]; then
-            if grep -qE 'mmio_select_mitigation|cpu_show_mmio_stale_data' "$opt_map"; then
-                kernel_mmio='found MMIO Stale Data mitigation function in System.map'
+        kernel_mmio_can_tell=0
+        if is_x86_kernel; then
+            pr_info_nol "* Kernel supports MMIO Stale Data mitigation: "
+            kernel_mmio_can_tell=1
+            if [ -n "$g_kernel_err" ]; then
+                kernel_mmio_can_tell=0
+            elif grep -q 'mmio_stale_data' "$g_kernel" 2>/dev/null; then
+                pr_debug "mmio: found 'mmio_stale_data' string in kernel image"
+                kernel_mmio='found MMIO Stale Data mitigation evidence in kernel image'
                 pstatus green YES "$kernel_mmio"
             fi
-        fi
-        if [ -z "$kernel_mmio" ]; then
-            if [ "$kernel_mmio_can_tell" = 1 ]; then
-                pstatus yellow NO
-            else
+            if [ -z "$kernel_mmio" ] && [ -n "$opt_config" ] && grep -q '^CONFIG_MITIGATION_MMIO_STALE_DATA=y' "$opt_config"; then
+                kernel_mmio='found MMIO Stale Data mitigation config option enabled'
+                pstatus green YES "$kernel_mmio"
+            fi
+            if [ -z "$kernel_mmio" ] && [ -n "$opt_map" ]; then
+                if grep -qE 'mmio_select_mitigation|cpu_show_mmio_stale_data' "$opt_map"; then
+                    kernel_mmio='found MMIO Stale Data mitigation function in System.map'
+                    pstatus green YES "$kernel_mmio"
+                fi
+            fi
+            if [ -z "$kernel_mmio" ]; then
+                if [ "$kernel_mmio_can_tell" = 1 ]; then
+                    pstatus yellow NO
+                else
+                    pstatus yellow UNKNOWN
+                fi
+            fi
+
+            pr_info_nol "* CPU microcode supports Fill Buffer clearing: "
+            if [ "$cap_fb_clear" = -1 ]; then
                 pstatus yellow UNKNOWN
-            fi
-        fi
-
-        pr_info_nol "* CPU microcode supports Fill Buffer clearing: "
-        if [ "$cap_fb_clear" = -1 ]; then
-            pstatus yellow UNKNOWN
-        elif [ "$cap_fb_clear" = 1 ]; then
-            pstatus green YES
-        else
-            pstatus yellow NO
-        fi
-
-        if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
-            pr_info_nol "* Kernel mitigation is enabled and active: "
-            if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
-                mmio_mitigated=1
+            elif [ "$cap_fb_clear" = 1 ]; then
                 pstatus green YES
             else
-                mmio_mitigated=0
                 pstatus yellow NO
             fi
-            pr_info_nol "* SMT is either mitigated or disabled: "
-            if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
-                mmio_smt_mitigated=1
-                pstatus green YES
-            else
-                mmio_smt_mitigated=0
-                pstatus yellow NO
+
+            if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+                pr_info_nol "* Kernel mitigation is enabled and active: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
+                    mmio_mitigated=1
+                    pstatus green YES
+                else
+                    mmio_mitigated=0
+                    pstatus yellow NO
+                fi
+                pr_info_nol "* SMT is either mitigated or disabled: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
+                    mmio_smt_mitigated=1
+                    pstatus green YES
+                else
+                    mmio_smt_mitigated=0
+                    pstatus yellow NO
+                fi
             fi
-        fi
+        fi # is_x86_kernel
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
         msg="/sys vulnerability interface use forced, but it's not available!"

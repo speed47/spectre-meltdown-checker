@@ -173,10 +173,8 @@ check_CVE_0000_0001_linux() {
             return
         fi
 
-        # --- arm64: no kernel mitigation available ---
-        local _sls_arch
-        _sls_arch=$(uname -m 2>/dev/null || echo unknown)
-        if echo "$_sls_arch" | grep -qw 'aarch64'; then
+        # --- ARM: no kernel mitigation available ---
+        if is_arm_kernel; then
             pvulnstatus "$cve" VULN "no kernel mitigation available for arm64 SLS (CVE-2020-13844)"
             explain "Your ARM processor is affected by Straight-Line Speculation (CVE-2020-13844).\n" \
                 "GCC and Clang support -mharden-sls=all for aarch64, which inserts SB (Speculation Barrier)\n" \
@@ -186,7 +184,12 @@ check_CVE_0000_0001_linux() {
             return
         fi
 
-        # --- method 1: kernel config check (x86_64) ---
+        # --- x86: config check and binary heuristic ---
+        if ! is_x86_kernel; then
+            pvulnstatus "$cve" UNK "SLS mitigation detection not supported for this kernel architecture"
+            return
+        fi
+
         local _sls_config=''
         if [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
             pr_info_nol "  * Kernel compiled with SLS mitigation: "
