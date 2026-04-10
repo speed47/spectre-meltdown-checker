@@ -105,8 +105,8 @@ The entire tool is a single bash script with no external script dependencies. Ke
 
 - **Output/logging functions** (~line 253): `pr_warn`, `pr_info`, `pr_verbose`, `pr_debug`, `explain`, `pstatus`, `pvulnstatus` - verbosity-aware output with color support
 - **CPU detection** (~line 2171): `parse_cpu_details`, `is_intel`/`is_amd`/`is_hygon`, `read_cpuid`, `read_msr`, `is_cpu_smt_enabled` - hardware identification via CPUID/MSR registers
-- **Kernel architecture detection** (`src/libs/365_kernel_arch.sh`): `is_arm_kernel`/`is_x86_kernel` - detects the target kernel's architecture (not the host CPU) using kernel artifacts (System.map symbols, kconfig, kernel image), with `cpu_vendor` as a fast path for live mode. Results are cached in `g_kernel_arch`. Use these helpers to guard arch-specific kernel/kconfig/System.map checks and to select the appropriate verdict messages
-- **CPU architecture detection** (`src/libs/360_cpu_smt.sh`): `is_x86_cpu`/`is_arm_cpu` - detects the host CPU's architecture via `cpu_vendor`. Use these to gate hardware operations (CPUID, MSR, microcode). Always use positive logic: `if is_x86_cpu` (not `if ! is_arm_cpu`)
+- **Kernel architecture detection** (`src/libs/365_kernel_arch.sh`): `is_arm_kernel`/`is_x86_kernel` - detects the **target kernel's** architecture (not the host CPU) using kernel artifacts (System.map symbols, kconfig, kernel image), with `cpu_vendor` as a fast path for live mode. Results are cached in `g_kernel_arch`. Use these helpers to guard arch-specific kernel/kconfig/System.map checks and to select the appropriate verdict messages. In no-hw mode, the target kernel may differ from the host CPU architecture.
+- **CPU architecture detection** (`src/libs/360_cpu_smt.sh`): `is_x86_cpu`/`is_arm_cpu` - detects the **host CPU's** architecture via `cpu_vendor`. Use these to gate hardware operations (CPUID, MSR, microcode) that require the physical CPU to be present. Always use positive logic: `if is_x86_cpu` (not `if ! is_arm_cpu`). These two sets of helpers are independent — a vuln check may need both, each guarding different lines.
 - **Microcode database** (embedded): Intel/AMD microcode version lookup via `read_mcedb`/`read_inteldb`; updated automatically via `.github/workflows/autoupdate.yml`
 - **Kernel analysis** (~line 1568): `extract_kernel`, `try_decompress` - extracts and inspects kernel images (handles gzip, bzip2, xz, lz4, zstd compression)
 - **Vulnerability checks**: 19 `check_CVE_<year>_<number>()` functions, each with `_linux()` and `_bsd()` variants. Uses whitelist logic (assumes affected unless proven otherwise)
@@ -396,9 +396,10 @@ This is where the real detection lives. Check for mitigations at each layer:
 
   Use **positive logic** — always `if is_x86_kernel` (not `if ! is_arm_kernel`) and `if is_x86_cpu` (not `if ! is_arm_cpu`). This ensures unknown architectures (MIPS, RISC-V, PowerPC) are handled safely by defaulting to "skip" rather than "execute."
 
-  Two sets of helpers serve different purposes:
-  - **`is_x86_kernel`/`is_arm_kernel`**: Gate kernel artifact checks (kernel image strings, kconfig, System.map).
-  - **`is_x86_cpu`/`is_arm_cpu`**: Gate hardware operations (CPUID, MSR, `/proc/cpuinfo` flags).
+  Two sets of helpers serve different purposes — in no-hw mode the host CPU and the kernel being inspected can be different architectures, so the correct guard depends on what is being checked:
+  - **`is_x86_kernel`/`is_arm_kernel`**: Gate checks that inspect **kernel artifacts** (kernel image strings, kconfig, System.map). These detect the architecture of the target kernel, not the host, so they work correctly in offline/no-hw mode when analyzing a foreign kernel.
+  - **`is_x86_cpu`/`is_arm_cpu`**: Gate **hardware operations** that require the host CPU to be a given architecture (CPUID, MSR reads, `/proc/cpuinfo` flags, microcode version checks). These always reflect the running host CPU.
+  - Within a single vuln check, you may need **both** guards independently — e.g. `is_x86_cpu` for the microcode/MSR check and `is_x86_kernel` for the kernel image grep, not one wrapping the other.
 
   Example:
   ```sh
