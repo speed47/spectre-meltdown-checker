@@ -59,7 +59,7 @@ Script metadata.  Always value `1`; all data is in labels.
 | Label | Values | Meaning |
 |---|---|---|
 | `version` | string | Script version (e.g. `25.30.0250400123`) |
-| `mode` | `live` / `offline` | `live` = running on the active kernel; `offline` = inspecting a kernel image |
+| `mode` | `live` / `no-runtime` / `no-hw` / `hw-only` | Operating mode (see below) |
 | `run_as_root` | `true` / `false` | Whether the script ran as root.  Non-root scans skip MSR reads and may miss mitigations |
 | `paranoid` | `true` / `false` | `--paranoid` mode: stricter criteria (e.g. requires SMT disabled) |
 | `sysfs_only` | `true` / `false` | `--sysfs-only` mode: only the kernel's own sysfs report was used, not independent detection |
@@ -340,16 +340,22 @@ smc_vulnerability_status == 1
 
 ## Caveats and edge cases
 
-**Offline mode (`--kernel`)**
+**No-runtime mode (`--no-runtime`)**
 `smc_system_info` will have no `kernel_release` or `kernel_arch` labels (those
 come from `uname`, which reports the running kernel, not the inspected one).
-`mode="offline"` in `smc_build_info` signals this.  Offline mode is primarily
-useful for pre-deployment auditing, not fleet runtime monitoring.
+`mode="no-runtime"` in `smc_build_info` signals this.  No-runtime mode is
+primarily useful for pre-deployment auditing, not fleet runtime monitoring.
 
-**`--no-hw`**
+**No-hardware mode (`--no-hw`)**
 `smc_cpu_info` is not emitted.  CPU and microcode labels are absent from all
 queries.  CVE checks that rely on hardware capability detection (`cap_*` flags,
-MSR reads) will report `unknown` status.
+MSR reads) will report `unknown` status.  `mode="no-hw"` in `smc_build_info`
+signals this.
+
+**Hardware-only mode (`--hw-only`)**
+Only hardware detection is performed; CVE checks are skipped.  `smc_cpu_info`
+is emitted but no `smc_vuln` metrics appear.  `mode="hw-only"` in
+`smc_build_info` signals this.
 
 **`--sysfs-only`**
 The script trusts the kernel's sysfs report (`/sys/devices/system/cpu/vulnerabilities/`)

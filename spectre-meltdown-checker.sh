@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.32.0410694'
+VERSION='26.32.0410728'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -180,6 +180,13 @@ opt_vmm=-1
 opt_allow_msr_write=0
 opt_cpu=0
 opt_explain=0
+# Canonical run mode, set at the end of option parsing.
+# Values: live, no-runtime, no-hw, hw-only
+g_mode='live'
+
+# Return 0 (true) if runtime state is accessible (procfs, sysfs, dmesg, debugfs).
+# True in live and hw-only modes; false in no-runtime and no-hw modes.
+has_runtime() { [ "$g_mode" = live ] || [ "$g_mode" = hw-only ]; }
 opt_paranoid=0
 opt_extra=0
 opt_mock=0
@@ -2317,6 +2324,19 @@ if [ "$opt_runtime" = 0 ] && [ -z "$opt_kernel" ] && [ -z "$opt_config" ] && [ -
     exit 255
 fi
 
+# Derive the canonical run mode from the option flags.
+# Modes: live (default), no-runtime (--no-runtime), no-hw (--no-hw), hw-only (--hw-only)
+# shellcheck disable=SC2034
+if [ "$opt_hw_only" = 1 ]; then
+    g_mode='hw-only'
+elif [ "$opt_no_hw" = 1 ]; then
+    g_mode='no-hw'
+elif [ "$opt_runtime" = 0 ]; then
+    g_mode='no-runtime'
+else
+    g_mode='live'
+fi
+
 # >>>>>> libs/240_output_status.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -2411,17 +2431,8 @@ _json_bool() {
 # Sets: g_json_meta
 # shellcheck disable=SC2034
 _build_json_meta() {
-    local timestamp mode
+    local timestamp
     timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
-    if [ "$opt_hw_only" = 1 ]; then
-        mode="hw-only"
-    elif [ "$opt_no_hw" = 1 ]; then
-        mode="no-hw"
-    elif [ "$opt_runtime" = 0 ]; then
-        mode="no-runtime"
-    else
-        mode="live"
-    fi
     local run_as_root
     if [ "$(id -u)" -eq 0 ]; then
         run_as_root='true'
@@ -2432,7 +2443,7 @@ _build_json_meta() {
         "$(_json_str "$VERSION")" \
         "$(_json_str "$timestamp")" \
         "$(_json_str "$g_os")" \
-        "$mode" \
+        "$g_mode" \
         "$run_as_root" \
         "$(_json_bool "${g_bad_accuracy:-0}")" \
         "$(_json_bool "$opt_paranoid")" \
@@ -2445,7 +2456,7 @@ _build_json_meta() {
 # shellcheck disable=SC2034
 _build_json_system() {
     local kernel_release kernel_version kernel_arch smt_val
-    if [ "$opt_runtime" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         kernel_release=$(uname -r)
         kernel_version=$(uname -v)
         kernel_arch=$(uname -m)
@@ -2749,7 +2760,7 @@ _emit_prometheus() {
 # shellcheck disable=SC2034
 _build_prometheus_system_info() {
     local kernel_release kernel_arch hypervisor_host sys_labels
-    if [ "$opt_runtime" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         kernel_release=$(uname -r 2>/dev/null || true)
         kernel_arch=$(uname -m 2>/dev/null || true)
     else
@@ -4116,6 +4127,129 @@ has_zenbleed_fixed_firmware() {
     return $g_zenbleed_fw
 }
 
+# >>>>>> libs/365_kernel_arch.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# Kernel architecture detection helpers.
+# Detects the target kernel's architecture regardless of the host system,
+# enabling correct behavior in offline cross-inspection (e.g. x86 host
+# analyzing an ARM kernel image or System.map).
+
+# Global cache; populated by _detect_kernel_arch on first call.
+# Values: 'arm', 'x86', 'unknown'
+g_kernel_arch=''
+
+# Internal: populate g_kernel_arch using all available information sources,
+# in order from most to least reliable.
+_detect_kernel_arch() {
+    # Return immediately if already detected
+    [ -n "$g_kernel_arch" ] && return 0
+
+    # arm64_sys_ is the ARM64 syscall table symbol prefix; present in any
+    # ARM64 System.map (or /proc/kallsyms) and in the kernel image itself.
+    # sys_call_table + vector_swi is the ARM (32-bit) equivalent.
+    if [ -n "$opt_map" ]; then
+        if grep -q 'arm64_sys_' "$opt_map" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+        if grep -q ' vector_swi$' "$opt_map" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+    fi
+    if [ -n "$g_kernel" ]; then
+        if grep -q 'arm64_sys_' "$g_kernel" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+    fi
+
+    # Kconfig is definitive when available
+    if [ -n "$opt_config" ]; then
+        if grep -qE '^CONFIG_(ARM64|ARM)=y' "$opt_config" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+        if grep -qE '^CONFIG_X86(_64)?=y' "$opt_config" 2>/dev/null; then
+            g_kernel_arch='x86'
+            return 0
+        fi
+    fi
+
+    # Cross-compilation prefix as a last resort (e.g. --arch-prefix aarch64-linux-gnu-)
+    case "${opt_arch_prefix:-}" in
+        aarch64-* | arm64-* | arm-* | armv*-)
+            g_kernel_arch='arm'
+            return 0
+            ;;
+        x86_64-* | i686-* | i?86-*)
+            g_kernel_arch='x86'
+            return 0
+            ;;
+    esac
+
+    # Last resort: if no artifacts identified the arch, assume the target
+    # kernel matches the host CPU. This covers live mode when no kernel
+    # image, config, or System.map is available.
+    if is_x86_cpu; then
+        g_kernel_arch='x86'
+        return 0
+    fi
+    if is_arm_cpu; then
+        g_kernel_arch='arm'
+        return 0
+    fi
+
+    g_kernel_arch='unknown'
+    return 0
+}
+
+# Return 0 (true) if the target kernel is ARM (32 or 64-bit), 1 otherwise.
+is_arm_kernel() {
+    _detect_kernel_arch
+    [ "$g_kernel_arch" = 'arm' ]
+}
+
+# Return 0 (true) if the target kernel is x86/x86_64, 1 otherwise.
+is_x86_kernel() {
+    _detect_kernel_arch
+    [ "$g_kernel_arch" = 'x86' ]
+}
+
+# Compare the target kernel's architecture against the host CPU.
+# If they differ, hardware reads (CPUID, MSR, sysfs) would reflect the host,
+# not the target kernel — force no-hw mode to avoid misleading results.
+# Sets: g_mode (when mismatch detected)
+# Callers: src/main.sh (after check_kernel_info, before check_cpu)
+check_kernel_cpu_arch_mismatch() {
+    local host_arch
+    _detect_kernel_arch
+
+    host_arch='unknown'
+    if is_x86_cpu; then
+        host_arch='x86'
+    elif is_arm_cpu; then
+        host_arch='arm'
+    fi
+
+    # Unsupported CPU architecture (MIPS, RISC-V, PowerPC, ...): force no-hw
+    # since we have no hardware-level checks for these platforms
+    if [ "$host_arch" = 'unknown' ]; then
+        pr_warn "Unsupported CPU architecture (vendor: $cpu_vendor), forcing no-hw mode"
+        g_mode='no-hw'
+        return 0
+    fi
+
+    # If kernel arch is unknown, we can't tell if there's a mismatch
+    [ "$g_kernel_arch" = 'unknown' ] && return 0
+    [ "$host_arch" = "$g_kernel_arch" ] && return 0
+
+    pr_warn "Target kernel architecture ($g_kernel_arch) differs from host CPU ($host_arch), forcing no-hw mode"
+    g_mode='no-hw'
+}
+
 # >>>>>> libs/370_hw_vmm.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -4298,7 +4432,7 @@ if [ "$g_os" = Darwin ] || [ "$g_os" = VMkernel ]; then
 fi
 
 # check for mode selection inconsistency
-if [ "$opt_hw_only" = 1 ]; then
+if [ "$g_mode" = hw-only ]; then
     if [ "$opt_cve_all" = 0 ]; then
         show_usage
         echo "$0: error: incompatible modes specified, --hw-only vs --variant" >&2
@@ -4369,7 +4503,7 @@ if [ "$opt_cpu" != all ] && [ "$opt_cpu" -gt "$g_max_core_id" ]; then
     exit 255
 fi
 
-if [ "$opt_runtime" = 1 ]; then
+if has_runtime; then
     pr_info "Checking for vulnerabilities on current system"
 
     # try to find the image of the current running kernel
@@ -4506,7 +4640,7 @@ if [ -e "$opt_kernel" ]; then
     if ! command -v "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
         pr_debug "readelf not found"
         g_kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
-    elif [ "$opt_sysfs_only" = 1 ] || [ "$opt_hw_only" = 1 ]; then
+    elif [ "$opt_sysfs_only" = 1 ] || [ "$g_mode" = hw-only ]; then
         g_kernel_err='kernel image decompression skipped'
     else
         extract_kernel "$opt_kernel"
@@ -4531,7 +4665,7 @@ else
     fi
     if [ -n "$g_kernel_version" ]; then
         # in live mode, check if the img we found is the correct one
-        if [ "$opt_runtime" = 1 ]; then
+        if has_runtime; then
             pr_verbose "Kernel image is \033[35m$g_kernel_version"
             if ! echo "$g_kernel_version" | grep -qF "$(uname -r)"; then
                 pr_warn "Possible discrepancy between your running kernel '$(uname -r)' and the image '$g_kernel_version' we found ($opt_kernel), results might be incorrect"
@@ -4563,7 +4697,7 @@ sys_interface_check() {
     msg=''
     ret_sys_interface_check_fullmsg=''
 
-    if [ "$opt_runtime" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
+    if has_runtime && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
         :
     else
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_SYSFS_$(basename "$file")_RET=1")
@@ -4632,7 +4766,7 @@ sys_interface_check() {
 check_kernel_info() {
     local config_display
     pr_info "\033[1;34mKernel information\033[0m"
-    if [ "$opt_runtime" = 1 ]; then
+    if has_runtime; then
         pr_info "* Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
     elif [ -n "$g_kernel_version" ]; then
         pr_info "* Kernel is \033[35m$g_kernel_version\033[0m"
@@ -4736,7 +4870,7 @@ check_cpu() {
         ret=invalid
         pstatus yellow NO "unknown CPU"
     fi
-    if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
+    if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
             cap_ibrs='IBRS (cpuinfo)'
@@ -4813,7 +4947,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_ibpb='IBPB (cpuinfo)'
             pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
@@ -4884,7 +5018,7 @@ check_cpu() {
         ret=invalid
         pstatus yellow UNKNOWN "unknown CPU"
     fi
-    if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
+    if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
             cap_stibp='STIBP (cpuinfo)'
@@ -4956,7 +5090,7 @@ check_cpu() {
         fi
     fi
 
-    if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ]; then
+    if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
             cap_ssbd='SSBD (cpuinfo)'
@@ -5020,7 +5154,7 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
-    elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
         cap_l1df=1
@@ -5040,7 +5174,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_md_clear=1
             pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
@@ -5110,7 +5244,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
-        elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
             cap_arch_capabilities=1
@@ -5814,7 +5948,7 @@ check_cve() {
 check_mds_bsd() {
     local kernel_md_clear kernel_smt_allowed kernel_mds_enabled kernel_mds_state
     pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
-    if [ "$opt_runtime" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         if sysctl hw.mds_disable >/dev/null 2>&1; then
             pstatus green YES
             kernel_md_clear=1
@@ -5887,7 +6021,7 @@ check_mds_bsd() {
     else
         if [ "$cap_md_clear" = 1 ]; then
             if [ "$kernel_md_clear" = 1 ]; then
-                if [ "$opt_runtime" = 1 ]; then
+                if [ "$g_mode" = live ]; then
                     # mitigation must also be enabled
                     if [ "$kernel_mds_enabled" -ge 1 ]; then
                         if [ "$opt_paranoid" != 1 ] || [ "$kernel_smt_allowed" = 0 ]; then
@@ -5906,7 +6040,7 @@ check_mds_bsd() {
                 pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
             fi
         else
-            if [ "$kernel_md_clear" = 1 ] && [ "$opt_runtime" = 1 ]; then
+            if [ "$kernel_md_clear" = 1 ] && [ "$g_mode" = live ]; then
                 # no MD_CLEAR in microcode, but FreeBSD may still have software-only mitigation active
                 case "$kernel_mds_state" in
                     software*)
@@ -5949,7 +6083,7 @@ check_mds_linux() {
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
             kernel_md_clear_can_tell=1
-            if [ "$opt_runtime" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            if [ "$g_mode" = live ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
                 kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
                 pstatus green YES "$kernel_md_clear"
             fi
@@ -5972,7 +6106,7 @@ check_mds_linux() {
                 fi
             fi
 
-            if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
                 pr_info_nol "* Kernel mitigation is enabled and active: "
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
                     mds_mitigated=1
@@ -6005,7 +6139,7 @@ check_mds_linux() {
             # compute mystatus and mymsg from our own logic
             if [ "$cap_md_clear" = 1 ]; then
                 if [ -n "$kernel_md_clear" ]; then
-                    if [ "$opt_runtime" = 1 ]; then
+                    if [ "$g_mode" = live ]; then
                         # mitigation must also be enabled
                         if [ "$mds_mitigated" = 1 ]; then
                             if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
@@ -6227,7 +6361,7 @@ check_mmio_linux() {
                 pstatus yellow NO
             fi
 
-            if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
                 pr_info_nol "* Kernel mitigation is enabled and active: "
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
                     mmio_mitigated=1
@@ -6260,7 +6394,7 @@ check_mmio_linux() {
             # compute mystatus and mymsg from our own logic
             if [ "$cap_fb_clear" = 1 ]; then
                 if [ -n "$kernel_mmio" ]; then
-                    if [ "$opt_runtime" = 1 ]; then
+                    if [ "$g_mode" = live ]; then
                         # mitigation must also be enabled
                         if [ "$mmio_mitigated" = 1 ]; then
                             if [ "$opt_paranoid" != 1 ] || [ "$mmio_smt_mitigated" = 1 ]; then
@@ -6897,7 +7031,7 @@ check_CVE_2017_5715_linux() {
             g_ibpb_supported=''
             g_ibpb_enabled=''
 
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 # in live mode, we can check for the ibrs_enabled file in debugfs
                 # all versions of the patches have it (NOT the case of IBPB or KPTI)
                 g_ibrs_can_tell=1
@@ -7048,7 +7182,7 @@ check_CVE_2017_5715_linux() {
             fi
 
             pr_info_nol "    * IBRS enabled and active: "
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 if [ "$g_ibpb_enabled" = 2 ]; then
                     # if ibpb=2, ibrs is forcefully=0
                     pstatus blue NO "IBPB used instead of IBRS in all kernel entrypoints"
@@ -7099,7 +7233,7 @@ check_CVE_2017_5715_linux() {
             fi
 
             pr_info_nol "    * IBPB enabled and active: "
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 case "$g_ibpb_enabled" in
                     "")
                         if [ "$g_ibrs_supported" = 1 ]; then
@@ -7182,7 +7316,7 @@ check_CVE_2017_5715_linux() {
                 #
                 # since 5.15.28, this is now "Retpolines" as the implementation was switched to a generic one,
                 # so we look for both "retpoline" and "retpolines"
-                if [ "$opt_runtime" = 1 ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                if [ "$g_mode" = live ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
                     if echo "$ret_sys_interface_check_fullmsg" | grep -qwi -e retpoline -e retpolines; then
                         if echo "$ret_sys_interface_check_fullmsg" | grep -qwi minimal; then
                             retpoline_compiler=0
@@ -7233,7 +7367,7 @@ check_CVE_2017_5715_linux() {
 
             # only Red Hat has a tunable to disable it on runtime
             retp_enabled=-1
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 if [ -e "$g_specex_knob_dir/retp_enabled" ]; then
                     retp_enabled=$(cat "$g_specex_knob_dir/retp_enabled" 2>/dev/null)
                     pr_debug "retpoline: found $g_specex_knob_dir/retp_enabled=$retp_enabled"
@@ -7263,7 +7397,7 @@ check_CVE_2017_5715_linux() {
             if is_vulnerable_to_empty_rsb || [ "$opt_verbose" -ge 2 ]; then
                 pr_info_nol "  * Kernel supports RSB filling: "
                 rsb_filling=0
-                if [ "$opt_runtime" = 1 ] && [ "$opt_no_sysfs" != 1 ]; then
+                if [ "$g_mode" = live ] && [ "$opt_no_sysfs" != 1 ]; then
                     # if we're live and we aren't denied looking into /sys, let's do it
                     if echo "$ret_sys_interface_check_fullmsg" | grep -qw RSB; then
                         rsb_filling=1
@@ -7356,7 +7490,7 @@ check_CVE_2017_5715_linux() {
                     *", IBPB"* | *"; IBPB"*) v2_ibpb_mode=conditional ;;
                     *) v2_ibpb_mode=disabled ;;
                 esac
-            elif [ "$opt_runtime" = 1 ]; then
+            elif [ "$g_mode" = live ]; then
                 case "$g_ibpb_enabled" in
                     2) v2_ibpb_mode=always-on ;;
                     1) v2_ibpb_mode=conditional ;;
@@ -7454,7 +7588,7 @@ check_CVE_2017_5715_linux() {
                             *"PBRSB-eIBRS: Vulnerable"*) v2_pbrsb_status=vulnerable ;;
                             *) v2_pbrsb_status=unknown ;;
                         esac
-                    elif [ "$opt_runtime" != 1 ] && [ -n "$g_kernel" ]; then
+                    elif [ "$g_mode" != live ] && [ -n "$g_kernel" ]; then
                         if grep -q 'PBRSB-eIBRS' "$g_kernel" 2>/dev/null; then
                             v2_pbrsb_status=sw-sequence
                         else
@@ -7485,7 +7619,7 @@ check_CVE_2017_5715_linux() {
                     *"BHI: Vulnerable"*) v2_bhi_status=vulnerable ;;
                     *) v2_bhi_status=unknown ;;
                 esac
-            elif [ "$opt_runtime" != 1 ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
+            elif [ "$g_mode" != live ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
                 if grep -q '^CONFIG_\(MITIGATION_\)\?SPECTRE_BHI' "$opt_config"; then
                     if [ "$cap_bhi" = 1 ]; then
                         v2_bhi_status=bhi_dis_s
@@ -7509,7 +7643,7 @@ check_CVE_2017_5715_linux() {
             esac
 
             # --- v2_vuln_module ---
-            if [ "$opt_runtime" = 1 ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
+            if [ "$g_mode" = live ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 pr_info_nol "  * Non-retpoline module loaded: "
                 if echo "$ret_sys_interface_check_fullmsg" | grep -q 'vulnerable module loaded'; then
                     v2_vuln_module=1
@@ -7610,7 +7744,7 @@ check_CVE_2017_5715_linux() {
                     if [ -n "${SMC_MOCK_UNPRIVILEGED_BPF_DISABLED:-}" ]; then
                         _ebpf_disabled="$SMC_MOCK_UNPRIVILEGED_BPF_DISABLED"
                         g_mocked=1
-                    elif [ "$opt_runtime" = 1 ] && [ -r "$g_procfs/sys/kernel/unprivileged_bpf_disabled" ]; then
+                    elif [ "$g_mode" = live ] && [ -r "$g_procfs/sys/kernel/unprivileged_bpf_disabled" ]; then
                         _ebpf_disabled=$(cat "$g_procfs/sys/kernel/unprivileged_bpf_disabled" 2>/dev/null)
                         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_UNPRIVILEGED_BPF_DISABLED='$_ebpf_disabled'")
                     fi
@@ -7798,7 +7932,7 @@ check_CVE_2017_5715_linux() {
                 pvulnstatus "$cve" OK "Full IBPB is mitigating the vulnerability"
 
             # No-runtime mode fallback
-            elif [ "$opt_runtime" != 1 ]; then
+            elif [ "$g_mode" != live ]; then
                 if [ "$retpoline" = 1 ] && [ -n "$g_ibpb_supported" ]; then
                     pvulnstatus "$cve" OK "no-runtime mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
                 elif [ -n "$g_ibrs_supported" ] && [ -n "$g_ibpb_supported" ]; then
@@ -8001,60 +8135,48 @@ check_CVE_2017_5753_linux() {
         # For no-runtime analysis of these old kernels, match the specific instruction patterns.
         if [ -z "$v1_kernel_mitigated" ]; then
             pr_info_nol "* Kernel has array_index_mask_nospec (v4.15 binary pattern): "
-            # vanilla: look for the Linus' mask aka array_index_mask_nospec()
-            # that is inlined at least in raw_copy_from_user (__get_user_X symbols)
-            #mov PER_CPU_VAR(current_task), %_ASM_DX
-            #cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
-            #jae bad_get_user
-            # /* array_index_mask_nospec() are the 2 opcodes that follow */
-            #+sbb %_ASM_DX, %_ASM_DX
-            #+and %_ASM_DX, %_ASM_AX
-            #ASM_STAC
-            # x86 64bits: jae(0x0f 0x83 0x?? 0x?? 0x?? 0x??) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
-            # x86 32bits: cmp(0x3b 0x82 0x?? 0x?? 0x00 0x00) jae(0x73 0x??) sbb(0x19 0xd2) and(0x21 0xd0)
-            #
-            # arm32
-            ##ifdef CONFIG_THUMB2_KERNEL
-            ##define CSDB	".inst.w 0xf3af8014"
-            ##else
-            ##define CSDB	".inst	0xe320f014"     e320f014
-            ##endif
-            #asm volatile(
-            #	"cmp	%1, %2\n"      e1500003
-            #"	sbc	%0, %1, %1\n"  e0c03000
-            #CSDB
-            #: "=r" (mask)
-            #: "r" (idx), "Ir" (sz)
-            #: "cc");
-            #
-            # http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
             v1_mask_nospec=''
             if [ -n "$g_kernel_err" ]; then
                 pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-            elif ! command -v perl >/dev/null 2>&1; then
-                pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-            else
-                perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
-                ret=$?
-                if [ "$ret" -eq 0 ]; then
-                    pstatus green YES "x86 64 bits array_index_mask_nospec()"
-                    v1_mask_nospec="x86 64 bits array_index_mask_nospec"
+            elif is_x86_kernel; then
+                # x86: binary pattern matching for array_index_mask_nospec()
+                # x86 64bits: jae(0x0f 0x83 ....) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
+                # x86 32bits: cmp(0x3b 0x82 .. .. 0x00 0x00) jae(0x73 ..) sbb(0x19 0xd2) and(0x21 0xd0)
+                if ! command -v perl >/dev/null 2>&1; then
+                    pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
                 else
-                    perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
+                    perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
                     ret=$?
                     if [ "$ret" -eq 0 ]; then
-                        pstatus green YES "x86 32 bits array_index_mask_nospec()"
-                        v1_mask_nospec="x86 32 bits array_index_mask_nospec"
+                        pstatus green YES "x86 64 bits array_index_mask_nospec()"
+                        v1_mask_nospec="x86 64 bits array_index_mask_nospec"
                     else
-                        ret=$("${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
-                        if [ "$ret" -gt 0 ]; then
-                            pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
-                            v1_mask_nospec="arm 32 bits array_index_mask_nospec"
+                        perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
+                        ret=$?
+                        if [ "$ret" -eq 0 ]; then
+                            pstatus green YES "x86 32 bits array_index_mask_nospec()"
+                            v1_mask_nospec="x86 32 bits array_index_mask_nospec"
                         else
                             pstatus yellow NO
                         fi
                     fi
                 fi
+            elif is_arm_kernel; then
+                # arm32: match CSDB instruction (0xf3af8014 Thumb2 or 0xe320f014 ARM) preceded by sbc+cmp
+                # http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
+                if ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+                    pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+                else
+                    ret=$("${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
+                    if [ "$ret" -gt 0 ]; then
+                        pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
+                        v1_mask_nospec="arm 32 bits array_index_mask_nospec"
+                    else
+                        pstatus yellow NO
+                    fi
+                fi
+            else
+                pstatus yellow NO
             fi
         fi
 
@@ -8072,67 +8194,69 @@ check_CVE_2017_5753_linux() {
             pstatus yellow NO
         fi
 
-        pr_info_nol "* Kernel has mask_nospec64 (arm64): "
-        #.macro	mask_nospec64, idx, limit, tmp
-        #sub	\tmp, \idx, \limit
-        #bic	\tmp, \tmp, \idx
-        #and	\idx, \idx, \tmp, asr #63
-        #csdb
-        #.endm
-        #$ aarch64-linux-gnu-objdump -d vmlinux | grep -w bic -A1 -B1 | grep -w sub -A2 | grep -w and -B2
-        #ffffff8008082e44:       cb190353        sub     x19, x26, x25
-        #ffffff8008082e48:       8a3a0273        bic     x19, x19, x26
-        #ffffff8008082e4c:       8a93ff5a        and     x26, x26, x19, asr #63
-        #ffffff8008082e50:       d503229f        hint    #0x14
-        # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
-        #
-        # if we already have a detection, don't bother disassembling the kernel, the answer is no.
-        if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
-            pstatus yellow NO
-        elif [ -n "$g_kernel_err" ]; then
-            pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-        elif ! command -v perl >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-        elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
-        else
-            "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'
-            ret=$?
-            if [ "$ret" -eq 9 ]; then
-                pstatus green YES "mask_nospec64 macro is present and used"
-                v1_mask_nospec="arm64 mask_nospec64"
-            else
+        if is_arm_kernel; then
+            pr_info_nol "* Kernel has mask_nospec64 (arm64): "
+            #.macro	mask_nospec64, idx, limit, tmp
+            #sub	\tmp, \idx, \limit
+            #bic	\tmp, \tmp, \idx
+            #and	\idx, \idx, \tmp, asr #63
+            #csdb
+            #.endm
+            #$ aarch64-linux-gnu-objdump -d vmlinux | grep -w bic -A1 -B1 | grep -w sub -A2 | grep -w and -B2
+            #ffffff8008082e44:       cb190353        sub     x19, x26, x25
+            #ffffff8008082e48:       8a3a0273        bic     x19, x19, x26
+            #ffffff8008082e4c:       8a93ff5a        and     x26, x26, x19, asr #63
+            #ffffff8008082e50:       d503229f        hint    #0x14
+            # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
+            #
+            # if we already have a detection, don't bother disassembling the kernel, the answer is no.
+            if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
                 pstatus yellow NO
+            elif [ -n "$g_kernel_err" ]; then
+                pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+            elif ! command -v perl >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
+            elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+            else
+                "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'
+                ret=$?
+                if [ "$ret" -eq 9 ]; then
+                    pstatus green YES "mask_nospec64 macro is present and used"
+                    v1_mask_nospec="arm64 mask_nospec64"
+                else
+                    pstatus yellow NO
+                fi
             fi
-        fi
 
-        pr_info_nol "* Kernel has array_index_nospec (arm64): "
-        # in 4.19+ kernels, the mask_nospec64 asm64 macro is replaced by array_index_nospec, defined in nospec.h, and used in invoke_syscall()
-        # ffffff8008090a4c:       2a0203e2        mov     w2, w2
-        # ffffff8008090a50:       eb0200bf        cmp     x5, x2
-        # ffffff8008090a54:       da1f03e2        ngc     x2, xzr
-        # ffffff8008090a58:       d503229f        hint    #0x14
-        # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
-        #
-        # if we already have a detection, don't bother disassembling the kernel, the answer is no.
-        if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
-            pstatus yellow NO
-        elif [ -n "$g_kernel_err" ]; then
-            pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-        elif ! command -v perl >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-        elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
-        else
-            "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\smov\s+(w\d+),\s+(w\d+)/ && $r[1]=~/\scmp\s+(x\d+),\s+(x\d+)/ && $r[2]=~/\sngc\s+$2,/ && exit(9); shift @r if @r>3'
-            ret=$?
-            if [ "$ret" -eq 9 ]; then
-                pstatus green YES "array_index_nospec macro is present and used"
-                v1_mask_nospec="arm64 array_index_nospec"
-            else
+            pr_info_nol "* Kernel has array_index_nospec (arm64): "
+            # in 4.19+ kernels, the mask_nospec64 asm64 macro is replaced by array_index_nospec, defined in nospec.h, and used in invoke_syscall()
+            # ffffff8008090a4c:       2a0203e2        mov     w2, w2
+            # ffffff8008090a50:       eb0200bf        cmp     x5, x2
+            # ffffff8008090a54:       da1f03e2        ngc     x2, xzr
+            # ffffff8008090a58:       d503229f        hint    #0x14
+            # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
+            #
+            # if we already have a detection, don't bother disassembling the kernel, the answer is no.
+            if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
                 pstatus yellow NO
+            elif [ -n "$g_kernel_err" ]; then
+                pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+            elif ! command -v perl >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
+            elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+            else
+                "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\smov\s+(w\d+),\s+(w\d+)/ && $r[1]=~/\scmp\s+(x\d+),\s+(x\d+)/ && $r[2]=~/\sngc\s+$2,/ && exit(9); shift @r if @r>3'
+                ret=$?
+                if [ "$ret" -eq 9 ]; then
+                    pstatus green YES "array_index_nospec macro is present and used"
+                    v1_mask_nospec="arm64 array_index_nospec"
+                else
+                    pstatus yellow NO
+                fi
             fi
-        fi
+        fi # is_arm_kernel
 
     elif [ "$sys_interface_available" = 0 ]; then
         msg="/sys vulnerability interface use forced, but it's not available!"
@@ -8293,7 +8417,7 @@ check_CVE_2017_5754_linux() {
 
         mount_debugfs
         pr_info_nol "  * PTI enabled and active: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             dmesg_grep="Kernel/User page tables isolation: enabled"
             dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
             dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
@@ -8359,7 +8483,7 @@ check_CVE_2017_5754_linux() {
     is_xen_dom0 && xen_pv_domo=1
     is_xen_domU && xen_pv_domu=1
 
-    if [ "$opt_runtime" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         # checking whether we're running under Xen PV 64 bits. If yes, we are affected by affected_variant3
         # (unless we are a Dom0)
         pr_info_nol "* Running as a Xen PV DomU: "
@@ -8375,7 +8499,7 @@ check_CVE_2017_5754_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ "$kpti_enabled" = 1 ]; then
                 pvulnstatus "$cve" OK "PTI mitigates the vulnerability"
             elif [ "$xen_pv_domo" = 1 ]; then
@@ -8539,7 +8663,7 @@ check_CVE_2018_12207_linux() {
         fi
 
         pr_info_nol "* iTLB Multihit mitigation enabled and active: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qF 'Mitigation'; then
                     pstatus green YES "$ret_sys_interface_check_fullmsg"
@@ -8566,7 +8690,7 @@ check_CVE_2018_12207_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$opt_sysfs_only" != 1 ]; then
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
                 pvulnstatus "$cve" VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
             else
@@ -8690,7 +8814,7 @@ check_CVE_2018_3620_linux() {
         fi
 
         pr_info_nol "* PTE inversion enabled and active: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -q 'Mitigation: PTE Inversion'; then
                     pstatus green YES
@@ -8719,7 +8843,7 @@ check_CVE_2018_3620_linux() {
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$opt_sysfs_only" != 1 ]; then
             if [ "$pteinv_supported" = 1 ]; then
-                if [ "$pteinv_active" = 1 ] || [ "$opt_runtime" != 1 ]; then
+                if [ "$pteinv_active" = 1 ] || [ "$g_mode" != live ]; then
                     pvulnstatus "$cve" OK "PTE inversion mitigates the vulnerability"
                 else
                     pvulnstatus "$cve" VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
@@ -8791,7 +8915,7 @@ check_CVE_2018_3639_linux() {
     fi
     if [ "$opt_sysfs_only" != 1 ]; then
         pr_info_nol "* Kernel supports disabling speculative store bypass (SSB): "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if grep -Eq 'Speculation.?Store.?Bypass:' "$g_procfs/self/status" 2>/dev/null; then
                 kernel_ssb="found in $g_procfs/self/status"
                 pr_debug "found Speculation.Store.Bypass: in $g_procfs/self/status"
@@ -8830,7 +8954,7 @@ check_CVE_2018_3639_linux() {
         fi
 
         kernel_ssbd_enabled=-1
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             # https://elixir.bootlin.com/linux/v5.0/source/fs/proc/array.c#L340
             pr_info_nol "* SSB mitigation is enabled and active: "
             if grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+thread' "$g_procfs/self/status" 2>/dev/null; then
@@ -8879,7 +9003,7 @@ check_CVE_2018_3639_linux() {
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ -n "$cap_ssbd" ]; then
             if [ -n "$kernel_ssb" ]; then
-                if [ "$opt_runtime" = 1 ]; then
+                if [ "$g_mode" = live ]; then
                     if [ "$kernel_ssbd_enabled" -gt 0 ]; then
                         pvulnstatus "$cve" OK "your CPU and kernel both support SSBD and mitigation is enabled"
                     else
@@ -9105,14 +9229,19 @@ check_CVE_2018_3646_linux() {
         pr_info "* Mitigation 1 (KVM)"
         pr_info_nol "  * EPT is disabled: "
         ept_disabled=-1
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if ! [ -r "$SYS_MODULE_BASE/kvm_intel/parameters/ept" ]; then
                 pstatus blue N/A "the kvm_intel module is not loaded"
-            elif [ "$(cat "$SYS_MODULE_BASE/kvm_intel/parameters/ept")" = N ]; then
-                pstatus green YES
-                ept_disabled=1
             else
-                pstatus yellow NO
+                ept_value="$(cat "$SYS_MODULE_BASE/kvm_intel/parameters/ept" 2>/dev/null || echo ERROR)"
+                if [ "$ept_value" = N ]; then
+                    pstatus green YES
+                    ept_disabled=1
+                elif [ "$ept_value" = ERROR ]; then
+                    pstatus yellow UNK "Couldn't read $SYS_MODULE_BASE/kvm_intel/parameters/ept"
+                else
+                    pstatus yellow NO
+                fi
             fi
         else
             pstatus blue N/A "not testable in no-runtime mode"
@@ -9120,7 +9249,7 @@ check_CVE_2018_3646_linux() {
 
         pr_info "* Mitigation 2"
         pr_info_nol "  * L1D flush is supported by kernel: "
-        if [ "$opt_runtime" = 1 ] && grep -qw flush_l1d "$g_procfs/cpuinfo"; then
+        if [ "$g_mode" = live ] && grep -qw flush_l1d "$g_procfs/cpuinfo"; then
             l1d_kernel="found flush_l1d in $g_procfs/cpuinfo"
         fi
         if [ -z "$l1d_kernel" ]; then
@@ -9142,7 +9271,7 @@ check_CVE_2018_3646_linux() {
         fi
 
         pr_info_nol "  * L1D flush enabled: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 # vanilla: VMX: $l1dstatus, SMT $smtstatus
                 # Red Hat: VMX: SMT $smtstatus, L1D $l1dstatus
@@ -9192,7 +9321,7 @@ check_CVE_2018_3646_linux() {
         fi
 
         pr_info_nol "  * Hardware-backed L1D flush supported: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if grep -qw flush_l1d "$g_procfs/cpuinfo" || [ -n "$l1d_xen_hardware" ]; then
                 pstatus green YES "performance impact of the mitigation will be greatly reduced"
             else
@@ -9351,7 +9480,7 @@ check_CVE_2019_11135_linux() {
         fi
 
         pr_info_nol "* TAA mitigation enabled and active: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qE '^Mitigation'; then
                     pstatus green YES "$ret_sys_interface_check_fullmsg"
@@ -9375,7 +9504,7 @@ check_CVE_2019_11135_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
             pvulnstatus "$cve" VULN "Your kernel doesn't support TAA mitigation, update it"
         else
@@ -9505,7 +9634,7 @@ check_CVE_2020_0543_linux() {
             pstatus yellow NO
         fi
         pr_info_nol "* SRBDS mitigation control is enabled and active: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qE '^Mitigation'; then
                     pstatus green YES "$ret_sys_interface_check_fullmsg"
@@ -9534,7 +9663,7 @@ check_CVE_2020_0543_linux() {
                     # SRBDS mitigation control is enabled
                     if [ -z "$msg" ]; then
                         # if msg is empty, sysfs check didn't fill it, rely on our own test
-                        if [ "$opt_runtime" = 1 ]; then
+                        if [ "$g_mode" = live ]; then
                             # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
                             pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
                         fi
@@ -9548,7 +9677,7 @@ check_CVE_2020_0543_linux() {
                 elif [ "$cap_srbds_on" = 0 ]; then
                     # SRBDS mitigation control is disabled
                     if [ -z "$msg" ]; then
-                        if [ "$opt_runtime" = 1 ]; then
+                        if [ "$g_mode" = live ]; then
                             # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
                             pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
                         fi
@@ -9825,7 +9954,7 @@ check_CVE_2022_29900_linux() {
         # Zen/Zen+/Zen2: check IBPB microcode support and SMT
         if [ "$cpu_family" = $((0x17)) ]; then
             pr_info_nol "* CPU supports IBPB: "
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 if [ -n "$cap_ibpb" ]; then
                     pstatus green YES "$cap_ibpb"
                 else
@@ -9868,7 +9997,7 @@ check_CVE_2022_29900_linux() {
                         "doesn't fully protect cross-thread speculation."
                 elif [ -z "$kernel_unret" ] && [ -z "$kernel_ibpb_entry" ]; then
                     pvulnstatus "$cve" VULN "Your kernel doesn't have either UNRET_ENTRY or IBPB_ENTRY compiled-in"
-                elif [ "$smt_enabled" = 0 ] && [ -z "$cap_ibpb" ] && [ "$opt_runtime" = 1 ]; then
+                elif [ "$smt_enabled" = 0 ] && [ -z "$cap_ibpb" ] && [ "$g_mode" = live ]; then
                     pvulnstatus "$cve" VULN "SMT is enabled and your microcode doesn't support IBPB"
                     explain "Update your CPU microcode to get IBPB support, or disable SMT by adding\n" \
                         "\`nosmt\` to your kernel command line."
@@ -9992,7 +10121,7 @@ check_CVE_2022_29901_linux() {
         fi
 
         pr_info_nol "* CPU supports Enhanced IBRS (IBRS_ALL): "
-        if [ "$opt_runtime" = 1 ] || [ "$cap_ibrs_all" != -1 ]; then
+        if [ "$g_mode" = live ] || [ "$cap_ibrs_all" != -1 ]; then
             if [ "$cap_ibrs_all" = 1 ]; then
                 pstatus green YES
             elif [ "$cap_ibrs_all" = 0 ]; then
@@ -10005,7 +10134,7 @@ check_CVE_2022_29901_linux() {
         fi
 
         pr_info_nol "* CPU has RSB Alternate Behavior (RSBA): "
-        if [ "$opt_runtime" = 1 ] || [ "$cap_rsba" != -1 ]; then
+        if [ "$g_mode" = live ] || [ "$cap_rsba" != -1 ]; then
             if [ "$cap_rsba" = 1 ]; then
                 pstatus yellow YES "this CPU is affected by RSB underflow"
             elif [ "$cap_rsba" = 0 ]; then
@@ -10213,7 +10342,7 @@ check_CVE_2022_40982_linux() {
         if [ -n "$kernel_gds" ]; then
             pr_info_nol "* Kernel has disabled AVX as a mitigation: "
 
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 # Check dmesg message to see whether AVX has been disabled
                 dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'
                 dmesgret=$?
@@ -10647,7 +10776,7 @@ check_CVE_2023_20588_linux() {
         pr_info_nol "* DIV0 mitigation enabled and active: "
         cpuinfo_div0=''
         dmesg_div0=''
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'div0' "$g_procfs/cpuinfo" 2>/dev/null; then
                 cpuinfo_div0=1
                 pstatus green YES "div0 found in $g_procfs/cpuinfo bug flags"
@@ -10687,7 +10816,7 @@ check_CVE_2023_20588_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         if [ "$opt_sysfs_only" != 1 ]; then
-            if [ "$opt_runtime" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 # live mode: cpuinfo div0 flag is the strongest proof the mitigation is active
                 if [ "$cpuinfo_div0" = 1 ] || [ "$dmesg_div0" = 1 ]; then
                     _cve_2023_20588_pvulnstatus_smt
@@ -10754,7 +10883,7 @@ check_CVE_2023_20593_linux() {
             pstatus yellow NO
         fi
         pr_info_nol "* Zenbleed kernel mitigation enabled and active: "
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             # read the DE_CFG MSR, we want to check the 9th bit
             # don't do it on non-Zen2 AMD CPUs or later, aka Family 17h,
             # as the behavior could be unknown on others
@@ -10808,7 +10937,7 @@ check_CVE_2023_20593_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         zenbleed_print_vuln=0
-        if [ "$opt_runtime" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ "$fp_backup_fix" = 1 ] && [ "$ucode_zenbleed" = 1 ]; then
                 # this should never happen, but if it does, it's interesting to know
                 pvulnstatus "$cve" OK "Both your CPU microcode and kernel are mitigating Zenbleed"
@@ -11055,7 +11184,7 @@ check_CVE_2023_28746_linux() {
             pstatus yellow NO
         fi
 
-        if [ "$opt_runtime" = 1 ] && [ "$sys_interface_available" = 1 ]; then
+        if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
             pr_info_nol "* RFDS mitigation is enabled and active: "
             if echo "$ret_sys_interface_check_fullmsg" | grep -qi '^Mitigation'; then
                 rfds_mitigated=1
@@ -11078,7 +11207,7 @@ check_CVE_2023_28746_linux() {
         if [ "$opt_sysfs_only" != 1 ]; then
             if [ "$cap_rfds_clear" = 1 ]; then
                 if [ -n "$kernel_rfds" ]; then
-                    if [ "$opt_runtime" = 1 ]; then
+                    if [ "$g_mode" = live ]; then
                         if [ "$rfds_mitigated" = 1 ]; then
                             pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
                         else
@@ -11865,7 +11994,7 @@ fi
 
 pr_info
 
-if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
     pr_info "\033[1;34mHardware check\033[0m"
     check_cpu
     check_cpu_vulnerabilities
@@ -11875,7 +12004,7 @@ fi
 # Build JSON system/cpu/microcode sections (after check_cpu has populated cap_* vars and VMM detection)
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
     _build_json_system
-    if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+    if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
         _build_json_cpu
         _build_json_cpu_microcode
     fi
@@ -11884,18 +12013,22 @@ fi
 # Build Prometheus info metric lines (same timing requirement as JSON builders above)
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
     _build_prometheus_system_info
-    if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+    if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
         _build_prometheus_cpu_info
     fi
 fi
 
-# now run the checks the user asked for
-for cve in $g_supported_cve_list; do
-    if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
-        check_"$(echo "$cve" | tr - _)"
-        pr_info
-    fi
-done
+# now run the checks the user asked for (hw-only mode skips CVE checks)
+if [ "$g_mode" = hw-only ]; then
+    pr_info "Hardware-only mode, skipping vulnerability checks"
+else
+    for cve in $g_supported_cve_list; do
+        if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
+            check_"$(echo "$cve" | tr - _)"
+            pr_info
+        fi
+    done
+fi # g_mode != hw-only
 
 if [ -n "$g_final_summary" ]; then
     pr_info "> \033[46m\033[30mSUMMARY:\033[0m$g_final_summary"
@@ -12022,15 +12155,7 @@ fi
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
     prom_run_as_root='false'
     [ "$(id -u)" -eq 0 ] && prom_run_as_root='true'
-    if [ "$opt_hw_only" = 1 ]; then
-        prom_mode='hw-only'
-    elif [ "$opt_no_hw" = 1 ]; then
-        prom_mode='no-hw'
-    elif [ "$opt_runtime" = 0 ]; then
-        prom_mode='no-runtime'
-    else
-        prom_mode='live'
-    fi
+    prom_mode="$g_mode"
     prom_paranoid='false'
     [ "$opt_paranoid" = 1 ] && prom_paranoid='true'
     prom_sysfs_only='false'
