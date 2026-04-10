@@ -105,6 +105,7 @@ The entire tool is a single bash script with no external script dependencies. Ke
 
 - **Output/logging functions** (~line 253): `pr_warn`, `pr_info`, `pr_verbose`, `pr_debug`, `explain`, `pstatus`, `pvulnstatus` - verbosity-aware output with color support
 - **CPU detection** (~line 2171): `parse_cpu_details`, `is_intel`/`is_amd`/`is_hygon`, `read_cpuid`, `read_msr`, `is_cpu_smt_enabled` - hardware identification via CPUID/MSR registers
+- **Kernel architecture detection** (`src/libs/365_kernel_arch.sh`): `is_arm64_kernel`/`is_x86_kernel` - detects the target kernel's architecture (not the host CPU) using kernel artifacts (System.map symbols, kconfig, kernel image), with `cpu_vendor` as a fast path for live mode. Results are cached in `g_kernel_arch`. Use these helpers to guard arch-specific kernel/kconfig/System.map checks and to select the appropriate verdict messages
 - **Microcode database** (embedded): Intel/AMD microcode version lookup via `read_mcedb`/`read_inteldb`; updated automatically via `.github/workflows/autoupdate.yml`
 - **Kernel analysis** (~line 1568): `extract_kernel`, `try_decompress` - extracts and inspects kernel images (handles gzip, bzip2, xz, lz4, zstd compression)
 - **Vulnerability checks**: 19 `check_CVE_<year>_<number>()` functions, each with `_linux()` and `_bsd()` variants. Uses whitelist logic (assumes affected unless proven otherwise)
@@ -389,6 +390,19 @@ This is where the real detection lives. Check for mitigations at each layer:
     ```
 
   Each source may independently be unavailable (no-runtime mode without the file, or stripped kernel), so check all that are present. A match in any one confirms kernel support.
+
+  **Architecture awareness:** Kernel symbols, kconfig options, and kernel-image strings are architecture-specific. An x86 host may be inspecting an ARM64 kernel (or vice versa) in offline mode, so always guard arch-specific checks with `is_arm64_kernel` or `is_x86_kernel` from `src/libs/365_kernel_arch.sh`. This prevents searching for irrelevant strings (e.g. x86 `spec_store_bypass` in an ARM64 kernel image) and ensures verdict messages and `explain` text match the target architecture (e.g. "update CPU microcode" for x86 vs "update firmware for SMCCC ARCH_WORKAROUND_2" for ARM). Example:
+  ```sh
+  # x86-specific kernel image search: skip on ARM64 kernels
+  if [ -n "$g_kernel" ] && ! is_arm64_kernel; then
+      mitigation=$("${opt_arch_prefix}strings" "$g_kernel" | grep x86_specific_string)
+  fi
+  # ARM64-specific System.map search: skip on x86 kernels
+  if [ -n "$opt_map" ] && is_arm64_kernel; then
+      mitigation=$(grep -w arm64_mitigation_function "$opt_map")
+  fi
+  ```
+  The same applies to Phase 4 verdict messages: when the explanation or remediation advice differs between architectures (e.g. "CPU microcode update" vs "firmware/kernel update"), branch on `is_arm64_kernel`/`is_x86_kernel` rather than on `cpu_vendor`, because `cpu_vendor` reflects the host, not the target kernel.
 
 - **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs. All runtime-only checks — including `/proc/cpuinfo` flags — must be guarded by `if [ "$opt_runtime" = 1 ]`, both when collecting the evidence in Phase 2 and when using it in Phase 4. In Phase 4, use explicit live/no-runtime branches so that live-only variables (e.g. cpuinfo flags, MSR values) are never referenced in the no-runtime path.
   ```sh
@@ -789,6 +803,7 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 - **Handle `--paranoid` and `--vmm`** when the CVE has stricter mitigation tiers or VMM-specific aspects (see "Cross-Cutting Features" above).
 - **Keep JSON output in sync** - when adding new `cap_*` variables, add them to `_build_json_cpu()` in `src/libs/250_output_emitters.sh` (see Step 2 JSON note above). Per-CVE fields are handled automatically.
 - **All indentation must use 4 spaces** (CI enforces this via `fmt-check`; the vim modeline `et` enables expandtab).
+- **Guard arch-specific checks with `is_arm64_kernel`/`is_x86_kernel`** - kernel image strings, kconfig symbols, and System.map functions are architecture-specific. Use the helpers from `src/libs/365_kernel_arch.sh` to avoid searching for irrelevant symbols and to select correct verdict messages. Never use `cpu_vendor` to branch on architecture in Phase 2/4 — it reflects the host, not the target kernel being inspected.
 - **Stay POSIX-compatible** - no bashisms, no GNU-only flags in portable code paths.
 
 ## Function documentation headers

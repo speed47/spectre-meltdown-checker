@@ -2,6 +2,11 @@
 
 check_kernel_info
 
+# Detect arch mismatch between host CPU and target kernel (e.g. x86 host
+# inspecting an ARM kernel): force no-hw mode so CPUID/MSR/sysfs reads
+# from the host don't pollute the results.
+check_kernel_cpu_arch_mismatch
+
 # Build JSON meta and system sections early (after kernel info is resolved)
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
     _build_json_meta
