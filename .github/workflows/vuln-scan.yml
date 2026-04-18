@@ -78,11 +78,20 @@ jobs:
           SCAN_DATE: ${{ github.run_started_at }}
         with:
           model: claude-opus-4-7
+          claude_args: |
+            --model claude-sonnet-4-6 --allowedTools "Read,Write,Edit,Bash,Grep,Glob,WebFetch"
           prompt: |
             Read the full task instructions from .github/workflows/daily_vuln_scan_prompt.md and execute them end-to-end. That file fully specifies: sources to poll, how to read and update state/seen.json, the 25-hour window, which rss_YYYY-MM-DD_*.md files to write, and the run guardrails. Use $SCAN_DATE (env var) as "now" for time-window decisions.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          allowed_tools: "Read,Write,Edit,Bash,Grep,Glob,WebFetch"
-          timeout_minutes: 15
+
+      - name: Upload Claude execution log
+        if: always()         # keep the log even if the scan step failed
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-execution-log-${{ github.run_id }}
+          path: ${{ steps.scan.outputs.execution_file }}
+          retention-days: 30
+          if-no-files-found: warn
 
       # ---- Persist outputs -------------------------------------------------
       - name: Prune state (keep only entries from the last 30 days)
