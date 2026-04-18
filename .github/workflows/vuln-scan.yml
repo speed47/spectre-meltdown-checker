@@ -78,7 +78,8 @@ jobs:
           SCAN_DATE: ${{ github.run_started_at }}
         with:
           model: claude-opus-4-7
-          prompt_file: .github/workflows/daily_vuln_scan_prompt.md
+          prompt: |
+            Read the full task instructions from .github/workflows/daily_vuln_scan_prompt.md and execute them end-to-end. That file fully specifies: sources to poll, how to read and update state/seen.json, the 25-hour window, which rss_YYYY-MM-DD_*.md files to write, and the run guardrails. Use $SCAN_DATE (env var) as "now" for time-window decisions.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_tools: "Read,Write,Edit,Bash,Grep,Glob,WebFetch"
           timeout_minutes: 15
