@@ -153,6 +153,12 @@ g_smc_cpu_info_line=''
 
 # CVE Registry: single source of truth for all CVE metadata.
 # Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases
+#
+# Two ranges of placeholder IDs are reserved when no real CVE applies:
+#   CVE-0000-NNNN: permanent placeholder for supplementary checks (--extra only)
+#                  that will never receive a real CVE (e.g. SLS, compile-time hardening).
+#   CVE-9999-NNNN: temporary placeholder for real vulnerabilities awaiting CVE
+#                  assignment. Rename across the codebase once the real CVE is issued.
 readonly CVE_REGISTRY='
 CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass
 CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection
@@ -186,6 +192,7 @@ CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
 CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
 CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
 CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
+CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
 '
 
 # Derive the supported CVE list from the registry

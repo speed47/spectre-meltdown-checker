@@ -291,7 +291,12 @@ Before writing code, verify the CVE meets the inclusion criteria (see "CVE Inclu
 
 ### Step 1: Create the Vulnerability File
 
-Create `src/vulns/CVE-YYYY-NNNNN.sh`. The file header must follow this exact format:
+Create `src/vulns/CVE-YYYY-NNNNN.sh`. When no real CVE applies, two placeholder ranges are reserved:
+
+- **`CVE-0000-NNNN`** — permanent placeholder for supplementary `--extra`-only checks that will never receive a real CVE (e.g. SLS / compile-time hardening).
+- **`CVE-9999-NNNN`** — temporary placeholder for real vulnerabilities awaiting CVE assignment. Once the real CVE is issued, rename the file, the registry entry, the `--variant` alias, and the function symbols across the codebase.
+
+The file header must follow this exact format:
 
 - **Line 1**: vim modeline (`# vim: set ts=4 sw=4 sts=4 et:`)
 - **Line 2**: 31 `#` characters (`###############################`)
