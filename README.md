@@ -38,6 +38,7 @@ CVE | Name | Aliases
 [CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack, L1 | TSA-L1
 [CVE-2025-40300](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-40300) | VM-Exit Stale Branch Prediction | VMScape
 [CVE-2024-45332](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-45332) | Branch Privilege Injection | BPI
+[CVE-2025-54505](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-54505) | AMD Zen1 Floating-Point Divider Stale Data Leak | FPDSS
 
 ## Am I at risk?
 
@@ -77,6 +78,7 @@ CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel
 CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2025-40300 (VMScape) | ✅ | ✅ | 💥 | ✅ | Kernel update (IBPB on VM-exit)
 CVE-2024-45332 (BPI) | 💥 | ✅ | 💥 | ✅ | Microcode update
+CVE-2025-54505 (FPDSS) | 💥 | 💥 | 💥 | 💥 | Kernel update
 
 > 💥 Data can be leaked across this boundary.
 
@@ -206,6 +208,10 @@ After a guest VM exits to the host, stale branch predictions from the guest can 
 **CVE-2024-45332 — Branch Privilege Injection (BPI)**
 
 A race condition in the branch predictor update mechanism of Intel processors (Coffee Lake through Raptor Lake, plus some server and Atom parts) allows user-space branch predictions to briefly influence kernel-space speculative execution, undermining eIBRS and IBPB protections. This means systems relying solely on eIBRS for Spectre V2 mitigation may not be fully protected without the microcode fix. Mitigation requires a microcode update (intel-microcode 20250512+) that fixes the asynchronous branch predictor update timing so that eIBRS and IBPB work as originally intended. No kernel changes are required. Performance impact is negligible.
+
+**CVE-2025-54505 — AMD Zen1 Floating-Point Divider Stale Data Leak (FPDSS)**
+
+On AMD Zen1 and Zen+ processors (EPYC 7001, EPYC Embedded 3000, Athlon 3000 with Radeon, Ryzen 3000 with Radeon, Ryzen PRO 3000 with Radeon Vega), the hardware floating-point divider can retain partial quotient data from previous operations. Under certain circumstances, those results can be leaked to another thread sharing the same divider, crossing any privilege boundary. This was assigned CVE-2025-54505 and published by AMD as AMD-SB-7053 on 2026-04-17. Mitigation requires a kernel update (mainline commit e55d98e77561, "x86/CPU: Fix FPDSS on Zen1", Linux 7.1) that sets bit 9 (ZEN1_DENORM_FIX_BIT) of MSR 0xc0011028 (MSR_AMD64_FP_CFG) unconditionally on every Zen1 CPU at boot, disabling the hardware optimization responsible for the leak. No microcode update is required: the chicken bit is present in Zen1 silicon from the factory and is independent of microcode revision. Performance impact is limited to a small reduction in floating-point divide throughput, which is why AMD does not enable the bit by default in hardware.
 
 </details>
 

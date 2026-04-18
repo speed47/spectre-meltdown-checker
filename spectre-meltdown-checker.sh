@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.32.0410743'
+VERSION='26.33.0418638'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -208,6 +208,12 @@ g_smc_cpu_info_line=''
 
 # CVE Registry: single source of truth for all CVE metadata.
 # Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases
+#
+# Two ranges of placeholder IDs are reserved when no real CVE applies:
+#   CVE-0000-NNNN: permanent placeholder for supplementary checks (--extra only)
+#                  that will never receive a real CVE (e.g. SLS, compile-time hardening).
+#   CVE-9999-NNNN: temporary placeholder for real vulnerabilities awaiting CVE
+#                  assignment. Rename across the codebase once the real CVE is issued.
 readonly CVE_REGISTRY='
 CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass
 CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection
@@ -241,6 +247,7 @@ CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
 CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
 CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
 CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
+CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
 '
 
 # Derive the supported CVE list from the registry
@@ -738,8 +745,9 @@ is_cpu_affected() {
     affected_srbds=''
     affected_mmio=''
     affected_sls=''
-    # DIV0, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
+    # DIV0, FPDSS, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
     _set_immune div0
+    _set_immune fpdss
     _set_immune zenbleed
     _set_immune inception
     # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
@@ -1237,12 +1245,22 @@ is_cpu_affected() {
         fi
         _set_immune variantl1tf
 
-        # DIV0 (Zen1 only)
+        # DIV0 (Zen1/Zen+)
         # 77245f1c3c64 (v6.5, initial model list): family 0x17 models 0x00-0x2f, 0x50-0x5f
-        # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all Zen1
-        # All Zen1 CPUs are family 0x17, models 0x00-0x2f and 0x50-0x5f
+        # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all ZEN1-flagged CPUs
+        # The kernel's X86_FEATURE_ZEN1 covers family 0x17 models 0x00-0x2f and 0x50-0x5f,
+        # which spans both Zen1 (Summit Ridge, Naples, Raven Ridge, Snowy Owl) and Zen+
+        # (Pinnacle Ridge, Picasso, Dali, Colfax) products -- all using the same divider silicon.
         amd_legacy_erratum "$(amd_model_range 0x17 0x00 0x0 0x2f 0xf)" && _set_vuln div0
         amd_legacy_erratum "$(amd_model_range 0x17 0x50 0x0 0x5f 0xf)" && _set_vuln div0
+
+        # FPDSS: same Zen1/Zen+ cohort as DIV0 (both applied unconditionally in init_amd_zen1()).
+        # e55d98e77561 (v7.1): unconditional in init_amd_zen1(); CVE-2025-54505 / AMD-SB-7053.
+        # AMD-SB-7053 only enumerates a subset (EPYC 7001, EPYC Embedded 3000, Athlon/Ryzen 3000
+        # with Radeon, Ryzen PRO 3000 with Radeon Vega), but the kernel mitigates the full
+        # ZEN1 cohort, so we flag all of it to match the kernel's behavior.
+        # shellcheck disable=SC2154
+        [ "$affected_div0" = 0 ] && _set_vuln fpdss
 
         # Zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && _set_vuln zenbleed
@@ -1453,7 +1471,7 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: div0=$affected_div0 zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
+        pr_debug "is_cpu_affected: final results: div0=$affected_div0 fpdss=$affected_fpdss zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
         pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls mmio=$affected_mmio"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
@@ -2149,7 +2167,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, fpdss, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
                 exit 0
                 ;;
             1)
@@ -2222,6 +2240,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             div0)
                 opt_cve_list="$opt_cve_list CVE-2023-20588"
+                opt_cve_all=0
+                ;;
+            fpdss)
+                opt_cve_list="$opt_cve_list CVE-2025-54505"
                 opt_cve_all=0
                 ;;
             zenbleed)
@@ -11980,6 +12002,160 @@ check_CVE_2025_40300_bsd() {
     fi
 }
 
+# >>>>>> vulns/CVE-2025-54505.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2025-54505, FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
+
+check_CVE_2025_54505() {
+    check_cve 'CVE-2025-54505'
+}
+
+# Print remediation advice for FPDSS when reporting VULN
+# Callers: check_CVE_2025_54505_linux
+_cve_2025_54505_explain_fix() {
+    explain "Update your kernel to one that carries commit e55d98e77561 (\"x86/CPU: Fix FPDSS on Zen1\", mainline Linux 7.1),\n " \
+        "or the equivalent backport from your distribution. The kernel sets bit 9 of MSR 0xc0011028 unconditionally on\n " \
+        "every Zen1 CPU at boot, which disables the hardware optimization responsible for the leak.\n " \
+        "To manually mitigate the issue right now, you may use the following command:\n " \
+        "\`wrmsr -a 0xc0011028 \$((\$(rdmsr -c 0xc0011028) | (1<<9)))\`,\n " \
+        "however note that this manual mitigation will only be active until the next reboot.\n " \
+        "No microcode update is required: the chicken bit is present on every Zen1 CPU."
+}
+
+check_CVE_2025_54505_linux() {
+    local status sys_interface_available msg kernel_mitigated dmesg_fpdss msr_fpdss ret
+    status=UNK
+    sys_interface_available=0
+    msg=''
+    # No sysfs interface exists for this vulnerability (no /sys/devices/system/cpu/vulnerabilities/fpdss).
+    # sys_interface_available stays 0.
+    #
+    # Kernel source inventory for FPDSS, traced via git blame:
+    #
+    # --- sysfs messages ---
+    # none: this vulnerability has no sysfs entry
+    #
+    # --- Kconfig symbols ---
+    # none: the mitigation is unconditional, not configurable (no CONFIG_* knob)
+    #
+    # --- kernel functions (for $opt_map / System.map) ---
+    # none: the fix is two inline lines in init_amd_zen1(), no dedicated function
+    #
+    # --- dmesg ---
+    # e55d98e77561 (v7.1, initial fix): "AMD Zen1 FPDSS bug detected, enabling mitigation."
+    #   (printed via pr_notice_once on every Zen1 CPU)
+    #
+    # --- /proc/cpuinfo bugs field ---
+    # none: no X86_BUG_FPDSS flag defined; no cpuinfo exposure
+    #
+    # --- MSR ---
+    # e55d98e77561 (v7.1): MSR_AMD64_FP_CFG = 0xc0011028, bit 9 = ZEN1_DENORM_FIX_BIT
+    #   kernel calls msr_set_bit() unconditionally on any Zen1 CPU in init_amd_zen1().
+    #   The bit is present in Zen1 silicon independently of microcode (no microcode
+    #   revision gate in the kernel, unlike Zenbleed which uses amd_zenbleed_microcode[]).
+    #
+    # --- CPU affection logic (for is_cpu_affected) ---
+    # e55d98e77561 (v7.1): applied unconditionally in init_amd_zen1(), i.e. all Zen1
+    #   AMD: family 0x17 models 0x00-0x2f, 0x50-0x5f (same cohort as DIV0)
+    # vendor scope: AMD only (Zen1 microarchitecture)
+    #
+    # --- stable backports ---
+    # as of this writing, no stable/LTS backport has landed; only mainline (Linux 7.1).
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        pr_info_nol "* Kernel supports FPDSS mitigation: "
+        kernel_mitigated=''
+        if [ -n "$g_kernel_err" ]; then
+            pstatus yellow UNKNOWN "$g_kernel_err"
+        elif is_x86_kernel && grep -q 'AMD Zen1 FPDSS bug detected' "$g_kernel"; then
+            kernel_mitigated="found FPDSS mitigation message in kernel image"
+            pstatus green YES "$kernel_mitigated"
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "* FPDSS mitigation enabled and active: "
+        msr_fpdss=''
+        dmesg_fpdss=''
+        if [ "$g_mode" = live ] && is_x86_cpu && is_cpu_affected "$cve"; then
+            # guard with is_cpu_affected to avoid #GP on non-Zen1 CPUs where 0xc0011028 is undefined
+            read_msr 0xc0011028
+            ret=$?
+            if [ "$ret" = "$READ_MSR_RET_OK" ]; then
+                if [ $((ret_read_msr_value_lo >> 9 & 1)) -eq 1 ]; then
+                    msr_fpdss=1
+                    pstatus green YES "ZEN1_DENORM_FIX_BIT set in FP_CFG MSR"
+                else
+                    msr_fpdss=0
+                    pstatus yellow NO "ZEN1_DENORM_FIX_BIT is cleared in FP_CFG MSR"
+                fi
+            else
+                # MSR unreadable (lockdown, no msr module, etc.): fall back to dmesg
+                dmesg_grep 'AMD Zen1 FPDSS bug detected'
+                ret=$?
+                if [ "$ret" -eq 0 ]; then
+                    dmesg_fpdss=1
+                    pstatus green YES "FPDSS mitigation message found in dmesg"
+                elif [ "$ret" -eq 2 ]; then
+                    pstatus yellow UNKNOWN "couldn't read MSR and dmesg is truncated"
+                else
+                    pstatus yellow UNKNOWN "couldn't read MSR and no FPDSS message in dmesg"
+                fi
+            fi
+        elif [ "$g_mode" = live ]; then
+            pstatus blue N/A "CPU is incompatible"
+        else
+            pstatus blue N/A "not testable in no-runtime mode"
+        fi
+    elif [ "$sys_interface_available" = 0 ]; then
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$g_mode" = live ]; then
+                if [ "$msr_fpdss" = 1 ] || [ "$dmesg_fpdss" = 1 ]; then
+                    pvulnstatus "$cve" OK "ZEN1_DENORM_FIX_BIT is set in FP_CFG MSR, mitigation is active"
+                elif [ "$msr_fpdss" = 0 ]; then
+                    pvulnstatus "$cve" VULN "ZEN1_DENORM_FIX_BIT is cleared in FP_CFG MSR, FPDSS can leak data between threads"
+                    _cve_2025_54505_explain_fix
+                elif [ -n "$kernel_mitigated" ]; then
+                    # MSR unreadable at runtime, but kernel image carries the mitigation code
+                    # and init_amd_zen1() sets the bit unconditionally, so mitigation is active
+                    pvulnstatus "$cve" OK "kernel image carries FPDSS mitigation code (init_amd_zen1 sets the MSR bit unconditionally at boot)"
+                else
+                    pvulnstatus "$cve" VULN "your kernel doesn't support FPDSS mitigation"
+                    _cve_2025_54505_explain_fix
+                fi
+            else
+                if [ -n "$kernel_mitigated" ]; then
+                    pvulnstatus "$cve" OK "Mitigation: FPDSS message found in kernel image"
+                else
+                    pvulnstatus "$cve" VULN "your kernel doesn't support FPDSS mitigation"
+                    _cve_2025_54505_explain_fix
+                fi
+            fi
+        else
+            pvulnstatus "$cve" "$status" "no sysfs interface available for this CVE, use --no-sysfs to check"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2025_54505_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
 # >>>>>> main.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -12375,7 +12551,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v349+i20260227+615b
+# %%% MCEDB v349+i20260227+1cce
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
