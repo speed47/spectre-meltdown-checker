@@ -74,6 +74,7 @@ jobs:
       # state/seen.json, the 25-hour window, the output files to write,
       # and how to rewrite state/seen.json at the end of the run.
       - name: Research for online mentions of new vulns
+        id: scan
         uses: anthropics/claude-code-action@v1
         env:
           SCAN_DATE: ${{ github.run_started_at }}
