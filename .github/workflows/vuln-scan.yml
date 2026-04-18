@@ -1,0 +1,117 @@
+name: Daily transient-execution vulnerability scan
+
+on:
+  schedule:
+    - cron: '42 8 * * *'
+  workflow_dispatch: {}   # allow manual trigger
+
+permissions:
+  contents: read
+  actions: read           # needed to list/download previous run artifacts
+
+concurrency:
+  group: vuln-scan
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository (for grep-based dedup against existing checks)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      # ---- Load previous state ---------------------------------------------
+      # Find the most recent successful run of THIS workflow (other than the
+      # current one) and pull its `vuln-scan-state` artifact. On the very
+      # first run there will be none — that's fine, we start empty.
+      - name: Find previous successful run id
+        id: prev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          run_id=$(gh run list \
+            --workflow="${{ github.workflow }}" \
+            --status=success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          if [ -n "$run_id" ]; then
+            echo "Found previous successful run: $run_id"
+          else
+            echo "No previous successful run — starting from empty state."
+          fi
+
+      - name: Download previous state artifact
+        if: steps.prev.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        continue-on-error: true   # tolerate retention expiry
+        with:
+          name: vuln-scan-state
+          path: state/
+          run-id: ${{ steps.prev.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Ensure state file exists
+        run: |
+          mkdir -p state
+          if [ ! -f state/seen.json ]; then
+            echo '{"last_run": null, "seen": {}}' > state/seen.json
+            echo "Initialized empty state."
+          fi
+          echo "State size: $(wc -c < state/seen.json) bytes"
+
+      # ---- Run the scan ----------------------------------------------------
+      # Runs Claude Code (Opus) against daily_vuln_scan_prompt.md.
+      # That prompt file fully specifies: sources to poll, how to read
+      # state/seen.json, the 25-hour window, the output files to write,
+      # and how to rewrite state/seen.json at the end of the run.
+      - name: Run vulnerability scan with Claude Opus
+        uses: anthropics/claude-code-base-action@v1
+        env:
+          SCAN_DATE: ${{ github.run_started_at }}
+        with:
+          model: claude-opus-4-7
+          prompt_file: .github/workflows/daily_vuln_scan_prompt.md
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Read,Write,Edit,Bash,Grep,Glob,WebFetch"
+          timeout_minutes: 15
+
+      # ---- Persist outputs -------------------------------------------------
+      - name: Prune state (keep only entries from the last 30 days)
+        run: |
+          python3 - <<'PY'
+          import json, datetime, pathlib
+          p = pathlib.Path("state/seen.json")
+          data = json.loads(p.read_text())
+          cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=30)).isoformat()
+          before = len(data.get("seen", {}))
+          data["seen"] = {
+              k: v for k, v in data.get("seen", {}).items()
+              if v.get("seen_at", "9999") >= cutoff
+          }
+          after = len(data["seen"])
+          p.write_text(json.dumps(data, indent=2, sort_keys=True))
+          print(f"Pruned state: {before} -> {after} entries")
+          PY
+
+      - name: Upload new state artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vuln-scan-state
+          path: state/seen.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Upload daily report
+        uses: actions/upload-artifact@v4
+        with:
+          name: vuln-scan-report-${{ github.run_id }}
+          path: rss_*.md
+          retention-days: 90
+          if-no-files-found: warn
