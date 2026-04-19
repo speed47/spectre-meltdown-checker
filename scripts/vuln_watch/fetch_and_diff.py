@@ -31,6 +31,7 @@ from . import state
 
 CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}")
 DEFAULT_WINDOW_HOURS = 25
+DEFAULT_RECONSIDER_AGE_DAYS = 7
 MAX_ITEMS_PER_FEED = 200
 SNIPPET_MAX = 400
 NEW_ITEMS_PATH = pathlib.Path("new_items.json")
@@ -362,27 +363,59 @@ def _resolve_window_hours() -> float:
         return float(DEFAULT_WINDOW_HOURS)
 
 
-def backlog_to_reconsider(data: dict[str, Any]) -> list[dict[str, Any]]:
+def _resolve_reconsider_age_days() -> float:
+    """Pick up RECONSIDER_AGE_DAYS from the environment. Entries whose last
+    review (reconsidered_at, or first_seen if never reconsidered) is more
+    recent than this many days ago are skipped. 0 = reconsider everything
+    every run (no throttle)."""
+    raw = os.environ.get("RECONSIDER_AGE_DAYS", "").strip()
+    if not raw:
+        return float(DEFAULT_RECONSIDER_AGE_DAYS)
+    try:
+        v = float(raw)
+        if v < 0:
+            raise ValueError("must be >= 0")
+        return v
+    except ValueError:
+        print(f"warning: ignoring invalid RECONSIDER_AGE_DAYS={raw!r}, "
+              f"using {DEFAULT_RECONSIDER_AGE_DAYS}", file=sys.stderr)
+        return float(DEFAULT_RECONSIDER_AGE_DAYS)
+
+
+def backlog_to_reconsider(
+    data: dict[str, Any],
+    scan_now: datetime.datetime,
+    min_age_days: float = DEFAULT_RECONSIDER_AGE_DAYS,
+) -> list[dict[str, Any]]:
     """Walk state.seen and emit toimplement/tocheck entries for re-review.
 
-    Each entry carries enough context that Claude can re-grep ./checker/
-    and decide whether the prior classification still holds. Items in
-    `unrelated` are skipped — those are settled.
+    Throttle: skip entries whose "last review" timestamp is more recent
+    than `min_age_days` ago. "Last review" is `reconsidered_at` if Claude
+    has already reconsidered the entry at least once, otherwise
+    `first_seen` (the initial classification was itself a review). With
+    `min_age_days=0` the throttle is disabled — every qualifying entry
+    is emitted on every run.
 
+    Items in `unrelated` are never emitted — those are settled.
     A CVE alias pointing at this canonical is included in `extracted_cves`
     so Claude sees every known CVE for the item without having to consult
     the full alias map.
     """
     seen = data.get("seen", {})
     aliases = data.get("aliases", {})
-    # Reverse-index aliases: canonical -> [alt, ...]
     by_canonical: dict[str, list[str]] = {}
     for alt, canon in aliases.items():
         by_canonical.setdefault(canon, []).append(alt)
 
+    # Any entry whose last review is newer than this ISO cutoff is throttled.
+    cutoff = (scan_now - datetime.timedelta(days=min_age_days)).isoformat()
+
     out: list[dict[str, Any]] = []
     for canonical, rec in seen.items():
         if rec.get("bucket") not in ("toimplement", "tocheck"):
+            continue
+        last_reviewed = rec.get("reconsidered_at") or rec.get("first_seen") or ""
+        if min_age_days > 0 and last_reviewed and last_reviewed > cutoff:
             continue
         cves: list[str] = []
         if canonical.startswith("CVE-"):
@@ -398,6 +431,7 @@ def backlog_to_reconsider(data: dict[str, Any]) -> list[dict[str, Any]]:
             "urls":           list(rec.get("urls") or []),
             "extracted_cves": cves,
             "first_seen":     rec.get("first_seen"),
+            "reconsidered_at": rec.get("reconsidered_at"),
         })
     return out
 
@@ -428,6 +462,7 @@ def main() -> int:
     scan_now = now_from_scan_date(args.scan_date)
     scan_date_iso = scan_now.isoformat()
     window_hours = _resolve_window_hours()
+    reconsider_age_days = _resolve_reconsider_age_days()
     data = state.load()
     cutoff = compute_cutoff(scan_now, data.get("last_run"), window_hours)
 
@@ -491,7 +526,7 @@ def main() -> int:
     # Persist updated HTTP cache metadata regardless of whether Claude runs.
     state.save(data)
 
-    reconsider = backlog_to_reconsider(data)
+    reconsider = backlog_to_reconsider(data, scan_now, reconsider_age_days)
 
     out = {
         "scan_date": scan_date_iso,
@@ -520,7 +555,11 @@ def main() -> int:
     print(f"Window:       {window_hours:g} h")
     print(f"Cutoff:       {cutoff.isoformat()}")
     print(f"New items:    {len(all_new)}")
-    print(f"Reconsider:   {len(reconsider)} existing toimplement/tocheck entries")
+    if reconsider_age_days == 0:
+        print(f"Reconsider:   {len(reconsider)} (throttle disabled)")
+    else:
+        print(f"Reconsider:   {len(reconsider)} (throttle: "
+              f"skip entries reviewed <{reconsider_age_days:g}d ago)")
     for s, v in per_source.items():
         print(f"  {s:14s} status={str(v['status']):>16} new={v['new']}")
 
