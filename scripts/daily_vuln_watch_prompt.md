@@ -5,20 +5,47 @@ workflow step has already fetched all configured sources, applied HTTP
 conditional caching, deduped against prior state, and written the pre-filtered
 list of new items to `new_items.json`. Your only job is to classify each item.
 
-## What counts as "relevant"
+## Scope — read the authoritative docs before classifying
 
-spectre-meltdown-checker detects, reports, and suggests mitigations for CPU
-vulnerabilities such as: Spectre v1/v2/v4, Meltdown, Foreshadow/L1TF, MDS
-(ZombieLoad/RIDL/Fallout), TAA, SRBDS, iTLB Multihit, Zenbleed, Downfall (GDS),
-Retbleed, Inception, SRSO, BHI, RFDS, Reptar, FP-DSS, and any similar
-microarchitectural side-channel or speculative-execution issue on x86
-(Intel/AMD) or ARM CPUs. It also surfaces related hardware mitigation features
-(SMAP/SMEP/UMIP/IBPB/eIBRS/STIBP…) when they gate the remediation for a tracked
-CVE.
+The project's own docs define what belongs in this tool. **Read them early
+in the run** (once per run; Claude caches, these don't change daily):
 
-It does **not** track generic software CVEs, GPU driver bugs, networking
-stacks, filesystem bugs, userspace crypto issues, or unrelated kernel
-subsystems.
+1. **`./checker/DEVELOPMENT.md`** — "Project Mission" section. What the
+   script does, what it explicitly does not do, its platform scope
+   (Linux + BSD on x86/amd64/ARM/ARM64).
+2. **`./checker/dist/doc/FAQ.md`** — the section titled
+   _"Which rules are governing the support of a CVE in this tool?"_.
+   This is the **operative test**:
+   > A CVE belongs in scope when mitigating it requires **kernel
+   > modifications, microcode modifications, or both** — and those
+   > modifications are **detectable** by this tool (no hardcoded kernel
+   > versions; look for actual mechanisms).
+3. **`./checker/dist/doc/UNSUPPORTED_CVE_LIST.md`** — explicit list of
+   CVEs ruled out, grouped by reason:
+   - _Already covered by a parent CVE check_ (e.g. SpectreRSB ⊂ Spectre V2).
+   - _No detectable kernel/microcode mitigation_ (vendor won't fix, GPU
+     driver-only, userspace-only, etc.).
+   - _Not a transient / speculative execution vulnerability at all_.
+
+Match incoming items against those exclusion patterns. If a CVE is a
+subvariant of a covered parent, or has no kernel/microcode mitigation
+this tool can detect, or is simply not a transient-execution issue, it
+is **unrelated** — not `tocheck`. Out-of-scope items with zero ambiguity
+should not linger in the `tocheck` backlog.
+
+In-scope shortlist (for quick reference; the README's CVE table is the
+authoritative source): Spectre v1/v2/v4, Meltdown, Foreshadow/L1TF,
+MDS (ZombieLoad/RIDL/Fallout), TAA, SRBDS, iTLB Multihit, MMIO Stale
+Data, Retbleed, Zenbleed, Downfall (GDS), Inception/SRSO, DIV0, Reptar,
+RFDS, ITS, TSA-SQ/TSA-L1, VMScape, BPI, FP-DSS — and similar
+microarchitectural side-channel / speculative-execution issues on
+Intel / AMD / ARM CPUs with a detectable mitigation.
+
+Explicitly out of scope: generic software CVEs, GPU driver bugs,
+networking stacks, filesystem bugs, userspace crypto issues, unrelated
+kernel subsystems, CPU bugs that the industry has decided not to mitigate
+(nothing for the tool to check), and CVEs fixed by userspace/SDK updates
+only.
 
 ## Inputs
 
@@ -73,31 +100,59 @@ subsystems.
 
 For each item in `items`, pick exactly one bucket:
 
-- **toimplement** — a clearly-identified new transient-execution / CPU
-  side-channel vulnerability in scope, **and not already covered by this
-  repo**. To verify the second half: grep `./checker/` for each entry of
-  `extracted_cves` *and* for any codename in the title (e.g., "FP-DSS",
-  "Inception"). If either matches existing code, demote to `tocheck`.
-- **tocheck** — plausibly in-scope but ambiguous: mitigation-only feature
-  (LASS, IBT, APIC-virt, etc.); item seemingly already implemented but worth
-  confirming scope; unclear applicability (e.g. embedded-only ARM SKU);
-  CVE-ID pending; contradictory info across sources.
-- **unrelated** — everything else.
+- **toimplement** — clearly in-scope per the FAQ test (kernel/microcode
+  mitigation exists AND is detectable by this tool), and **not already
+  covered** by `./checker/`. Verify the second half: grep `./checker/`
+  for each `extracted_cves` entry *and* for any codename in the title
+  (e.g., "FP-DSS", "Inception"). If either matches, the right bucket is
+  `unrelated` (already covered) or `tocheck` (maintainer should confirm
+  whether an existing check handles the new variant).
+- **tocheck** — there is a **specific question a maintainer must answer**
+  before this can be filed anywhere else. Examples:
+  - Ambiguity about whether an existing check (e.g. parent Spectre V2)
+    transitively covers this new sub-variant, or whether a fresh entry
+    is warranted.
+  - Embedded-only ARM SKU and it's unclear if the tool's ARM support
+    reaches that class of SKU.
+  - Vendor advisory published without a CVE ID yet, but the vuln looks
+    in-scope; revisit once the CVE is assigned.
+  - Contradictory statements across sources about whether a mitigation
+    is detectable (kernel-patch vs. userspace-only vs. microcode).
 
-Tie-breakers: prefer `tocheck` over `unrelated` when uncertain. Prefer
-`tocheck` over `toimplement` when the CVE ID is still "reserved" / "pending" —
-false positives in `toimplement` waste human time more than false positives
-in `tocheck`.
+  **Do NOT use `tocheck` as a catch-all** for "I'm not sure". Most items
+  have a clear answer once you consult UNSUPPORTED_CVE_LIST.md and the
+  FAQ rule. If you can articulate the specific question a maintainer
+  needs to answer — `tocheck`. If the only reason is "maybe?" — it's
+  `unrelated`.
 
-`WebFetch` is available for resolving `tocheck` ambiguity. Budget: **3
-follow-ups per run total**. Do not use it for items you already plan to file
-as `unrelated` or `toimplement`.
+- **unrelated** — everything else. Including:
+  - Matches a pattern in UNSUPPORTED_CVE_LIST.md (subvariant of covered
+    parent, no detectable mitigation, not transient-execution).
+  - Fails the FAQ rule (userspace-only fix, driver update, industry
+    decided not to mitigate).
+  - Non-CPU security topic (kernel filesystem bug, network stack, crypto
+    library, GPU driver, compiler flag change, distro release notes).
+
+**Tie-breakers** (note the direction — this used to bias the other way):
+- Prefer `unrelated` over `tocheck` when the item matches a category in
+  UNSUPPORTED_CVE_LIST.md or plainly fails the FAQ rule. Growing the
+  `tocheck` backlog with obvious-unrelateds wastes human time more than
+  a confident `unrelated` does.
+- Prefer `tocheck` over `toimplement` when the CVE is still "reserved" /
+  "pending" — false positives in `toimplement` create phantom work.
+
+`WebFetch` is available for resolving genuine `tocheck` ambiguity.
+Budget: **3 follow-ups per run total**. Do not use it for items you
+already plan to file as `unrelated` or `toimplement`.
 
 ## Reconsideration rules (for `reconsider` entries)
 
 Each `reconsider` entry is an item *already* in state under `current_bucket`
 = `toimplement` or `tocheck`, from a prior run. Re-examine it against the
-**current** `./checker/` tree and current knowledge. You may:
+**current** `./checker/` tree and the scope docs above. This pass is the
+right place to prune the `tocheck` backlog: prior runs (before these
+scope docs were wired in) may have hedged on items that now have a clear
+`unrelated` answer — demote them aggressively. You may:
 
 - **Demote** `toimplement` → `tocheck` or `unrelated` if the checker now
   covers the CVE/codename (grep confirms), or if reinterpreting the
