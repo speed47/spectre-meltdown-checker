@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: '25'
+      reconsider_age_days:
+        description: 'Only reconsider backlog entries last reviewed ≥ N days ago (0 = all, default 7)'
+        required: false
+        type: string
+        default: '7'
 
 permissions:
   contents: read
@@ -98,7 +103,8 @@ jobs:
         env:
           SCAN_DATE: ${{ github.run_started_at }}
           # Cron runs have no `inputs` context, so the fallback kicks in.
-          WINDOW_HOURS: ${{ inputs.window_hours || '25' }}
+          WINDOW_HOURS:         ${{ inputs.window_hours || '25' }}
+          RECONSIDER_AGE_DAYS:  ${{ inputs.reconsider_age_days || '7' }}
         run: python -m scripts.vuln_watch.fetch_and_diff
 
       # ---- Fetch checker code so Claude can grep it for coverage ---------
