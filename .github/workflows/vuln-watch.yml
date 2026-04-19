@@ -3,7 +3,22 @@ name: Online search for vulns
 on:
   schedule:
     - cron: '42 8 * * *'
-  workflow_dispatch: {}   # allow manual trigger
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Claude model to use (cron runs default to Sonnet)'
+        required: false
+        type: choice
+        default: claude-sonnet-4-6
+        options:
+          - claude-sonnet-4-6
+          - claude-opus-4-7
+          - claude-haiku-4-5-20251001
+      window_hours:
+        description: 'Lookback window in hours (cron runs use 25)'
+        required: false
+        type: string
+        default: '25'
 
 permissions:
   contents: read
@@ -82,6 +97,8 @@ jobs:
         id: diff
         env:
           SCAN_DATE: ${{ github.run_started_at }}
+          # Cron runs have no `inputs` context, so the fallback kicks in.
+          WINDOW_HOURS: ${{ inputs.window_hours || '25' }}
         run: python -m scripts.vuln_watch.fetch_and_diff
 
       # ---- Fetch checker code so Claude can grep it for coverage ---------
@@ -91,7 +108,7 @@ jobs:
       # Claude this is the canonical source of truth for "is CVE-X already
       # implemented?". Only fetched on days with something to classify.
       - name: Checkout checker code (test branch) for coverage grep
-        if: steps.diff.outputs.new_count != '0'
+        if: steps.diff.outputs.new_count != '0' || steps.diff.outputs.reconsider_count != '0'
         uses: actions/checkout@v5
         with:
           ref: test
@@ -100,9 +117,13 @@ jobs:
           persist-credentials: false
 
       # ---- Classify new items with Claude (skipped when nothing is new) ---
-      - name: Run classifier with Claude Opus
+      # Model selection: a manual workflow_dispatch run picks from a dropdown
+      # (defaulting to Sonnet). Scheduled cron runs have no `inputs` context,
+      # so the `|| 'claude-sonnet-4-6'` fallback kicks in — cron always uses
+      # Sonnet to keep the daily cost floor low.
+      - name: Run classifier with Claude
         id: classify
-        if: steps.diff.outputs.new_count != '0'
+        if: steps.diff.outputs.new_count != '0' || steps.diff.outputs.reconsider_count != '0'
         uses: anthropics/claude-code-action@v1
         env:
           SCAN_DATE: ${{ github.run_started_at }}
@@ -114,11 +135,11 @@ jobs:
             Write the three watch_${TODAY}_*.md files and classifications.json.
             Use $SCAN_DATE as the canonical timestamp.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # model + tool allowlist now pass through claude_args (v1 dropped
-          # the dedicated `model:` and `allowed_tools:` inputs). Job-level
+          # model + tool allowlist pass through claude_args (v1 dropped the
+          # dedicated `model:` and `allowed_tools:` inputs). Job-level
           # `timeout-minutes: 20` above bounds total runtime.
           claude_args: |
-            --model claude-opus-4-7
+            --model ${{ inputs.model || 'claude-sonnet-4-6' }}
             --allowedTools "Read,Write,Edit,Bash,Grep,Glob,WebFetch"
 
       - name: Upload Claude execution log
