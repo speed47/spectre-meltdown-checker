@@ -362,6 +362,46 @@ def _resolve_window_hours() -> float:
         return float(DEFAULT_WINDOW_HOURS)
 
 
+def backlog_to_reconsider(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Walk state.seen and emit toimplement/tocheck entries for re-review.
+
+    Each entry carries enough context that Claude can re-grep ./checker/
+    and decide whether the prior classification still holds. Items in
+    `unrelated` are skipped — those are settled.
+
+    A CVE alias pointing at this canonical is included in `extracted_cves`
+    so Claude sees every known CVE for the item without having to consult
+    the full alias map.
+    """
+    seen = data.get("seen", {})
+    aliases = data.get("aliases", {})
+    # Reverse-index aliases: canonical -> [alt, ...]
+    by_canonical: dict[str, list[str]] = {}
+    for alt, canon in aliases.items():
+        by_canonical.setdefault(canon, []).append(alt)
+
+    out: list[dict[str, Any]] = []
+    for canonical, rec in seen.items():
+        if rec.get("bucket") not in ("toimplement", "tocheck"):
+            continue
+        cves: list[str] = []
+        if canonical.startswith("CVE-"):
+            cves.append(canonical)
+        for alt in by_canonical.get(canonical, []):
+            if alt.startswith("CVE-") and alt not in cves:
+                cves.append(alt)
+        out.append({
+            "canonical_id":   canonical,
+            "current_bucket": rec.get("bucket"),
+            "title":          rec.get("title") or "",
+            "sources":        list(rec.get("sources") or []),
+            "urls":           list(rec.get("urls") or []),
+            "extracted_cves": cves,
+            "first_seen":     rec.get("first_seen"),
+        })
+    return out
+
+
 def candidate_ids(item: dict[str, Any]) -> list[str]:
     """All identifiers under which this item might already be known."""
     seen: set[str] = set()
@@ -451,19 +491,25 @@ def main() -> int:
     # Persist updated HTTP cache metadata regardless of whether Claude runs.
     state.save(data)
 
+    reconsider = backlog_to_reconsider(data)
+
     out = {
         "scan_date": scan_date_iso,
         "window_cutoff": cutoff.isoformat(),
         "per_source": per_source,
         "items": all_new,
+        "reconsider": reconsider,
     }
     args.output.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
 
-    # GitHub Actions step outputs
+    # GitHub Actions step outputs. Downstream `if:` conditions gate the
+    # classify step on `new_count || reconsider_count`; both must be 0
+    # for Claude to be skipped.
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if gh_out:
         with open(gh_out, "a") as f:
             f.write(f"new_count={len(all_new)}\n")
+            f.write(f"reconsider_count={len(reconsider)}\n")
             failures = [
                 s for s, v in per_source.items()
                 if not (isinstance(v["status"], int) and v["status"] in (200, 304))
@@ -474,6 +520,7 @@ def main() -> int:
     print(f"Window:       {window_hours:g} h")
     print(f"Cutoff:       {cutoff.isoformat()}")
     print(f"New items:    {len(all_new)}")
+    print(f"Reconsider:   {len(reconsider)} existing toimplement/tocheck entries")
     for s, v in per_source.items():
         print(f"  {s:14s} status={str(v['status']):>16} new={v['new']}")
 

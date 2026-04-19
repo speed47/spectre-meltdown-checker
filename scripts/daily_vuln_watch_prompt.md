@@ -28,10 +28,7 @@ subsystems.
   {
     "scan_date": "2026-04-18T14:24:43+00:00",
     "window_cutoff": "2026-04-17T13:24:43+00:00",
-    "per_source": {
-      "phoronix": {"status": 200, "new": 2, "total_in_feed": 75},
-      "oss-sec":  {"status": 304, "new": 0}
-    },
+    "per_source": { "phoronix": {"status": 200, "new": 2, "total_in_feed": 75} },
     "items": [
       {
         "source": "phoronix",
@@ -44,13 +41,27 @@ subsystems.
         "vendor_ids": [],
         "snippet": "first 400 chars of description, tags stripped"
       }
+    ],
+    "reconsider": [
+      {
+        "canonical_id":   "INTEL-SA-00145",
+        "current_bucket": "toimplement",
+        "title":          "Lazy FP State Restore",
+        "sources":        ["intel-psirt"],
+        "urls":           ["https://www.intel.com/.../intel-sa-00145.html"],
+        "extracted_cves": [],
+        "first_seen":     "2026-04-19T09:41:44+00:00"
+      }
     ]
   }
   ```
 
-  `items` is already: (a) within the time window, (b) not known to prior
-  state under any of its alt-IDs. If `items` is empty, your only job is to
-  write the three stub output files with `(no new items in this window)`.
+  - `items` are fresh observations from today's fetch: already inside the
+    time window and not yet present in state under any alt-ID.
+  - `reconsider` holds existing `toimplement`/`tocheck` entries from state,
+    submitted for re-review each run (see the "Reconsideration" section
+    below). On days where both arrays are empty, write stub output files
+    with `(no new items in this window)`.
 
 - `./checker/` is a checkout of the **`test`** branch of this repo (the
   development branch where coded-but-unreleased CVE checks live). This is
@@ -82,6 +93,30 @@ in `tocheck`.
 follow-ups per run total**. Do not use it for items you already plan to file
 as `unrelated` or `toimplement`.
 
+## Reconsideration rules (for `reconsider` entries)
+
+Each `reconsider` entry is an item *already* in state under `current_bucket`
+= `toimplement` or `tocheck`, from a prior run. Re-examine it against the
+**current** `./checker/` tree and current knowledge. You may:
+
+- **Demote** `toimplement` → `tocheck` or `unrelated` if the checker now
+  covers the CVE/codename (grep confirms), or if reinterpreting the
+  advisory shows it's out of scope.
+- **Demote** `tocheck` → `unrelated` if new context settles the ambiguity
+  as out-of-scope.
+- **Promote** `tocheck` → `toimplement` if you now have firm evidence it's
+  a real, in-scope, not-yet-covered CVE.
+- **Leave it unchanged** (same bucket) — emit a record anyway; it's cheap
+  and documents that the reconsideration happened today.
+- **Reassign the canonical ID** — if a CVE has since been assigned to a
+  vendor advisory (e.g., an INTEL-SA that previously had no CVE), put the
+  CVE in `extracted_cves` and use it as the new `canonical_id`. The merge
+  step will rekey the record under the CVE and keep the old ID as an alias.
+
+For every reconsider record you emit, set `"reconsider": true` in its
+classification entry — this tells the merge step to **overwrite** the
+stored bucket (including demotions), not just promote.
+
 ## Outputs
 
 Compute `TODAY` = the `YYYY-MM-DD` prefix of `scan_date`. Write three files at
@@ -90,6 +125,11 @@ the repo root, overwriting if present:
 - `watch_${TODAY}_toimplement.md`
 - `watch_${TODAY}_tocheck.md`
 - `watch_${TODAY}_unrelated.md`
+
+These delta files cover the **`items`** array only — they answer "what
+did today's fetch surface". Reconsider decisions update state (and surface
+in the `current_*.md` snapshots the merge step rewrites); don't duplicate
+them here.
 
 Each file uses level-2 headers per source short-name, then one bullet per
 item: the stable ID, the permalink, and 1–2 sentences of context.
@@ -112,6 +152,9 @@ otherwise empty):
 - per-source counts (from per_source): ...
 - fetch failures (status != 200/304): ...
 - total classified this run: toimplement=<n>, tocheck=<n>, unrelated=<n>
+- reconsidered: <n> entries re-reviewed; <list any bucket transitions, e.g.
+  "CVE-2018-3665: toimplement -> tocheck (now covered at src/vulns/...)">,
+  or "no transitions" if every reconsider kept its existing bucket.
 ```
 
 ## `classifications.json` — required side-channel for the merge step
@@ -134,14 +177,27 @@ record per item in `new_items.json.items`:
 
 Rules:
 
-- One record per input item. Same `stable_id` as in `new_items.json`.
+- One record per input item (`items` + `reconsider`). For items, use the
+  same `stable_id` as in `new_items.json`. For reconsider entries, use the
+  entry's `canonical_id` from state as the record's `stable_id`.
 - `canonical_id`: prefer the first `extracted_cves` entry if any; otherwise
   the item's `stable_id`. **Use the same `canonical_id` for multiple items
   that are really the same CVE from different sources** — the merge step
   will collapse them into one entry and add alias rows automatically.
+- **Populate `extracted_cves` / `canonical_id` from context when the feed
+  didn't.** If the title, body, or a well-known transient-execution codename
+  mapping lets you identify a CVE the feed didn't emit (e.g., "Lazy FP
+  State Restore" → `CVE-2018-3665`, "LazyFP" → same, "FP-DSS" → whatever
+  CVE AMD/Intel assigned), put the CVE in `extracted_cves` and use it as
+  `canonical_id`. This prevents Intel's CVE-less listing entries from
+  creating orphan `INTEL-SA-NNNNN` records in the backlog.
 - `sources` / `urls`: arrays; default to the item's own single source and
   permalink if you didn't enrich further.
-- If `new_items.json.items` is empty, write `[]`.
+- **`reconsider: true`** — set on every record that corresponds to an
+  input from the `reconsider` array. The merge step uses this flag to
+  overwrite the stored bucket instead of merging by "strongest wins" —
+  this is what enables demotions.
+- If both `items` and `reconsider` are empty, write `[]`.
 
 ## Guardrails
 
