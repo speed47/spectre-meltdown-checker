@@ -124,6 +124,17 @@ A branch predictor initialization issue specific to Intel's Lion Cove microarchi
 
 These CVEs are real vulnerabilities, but no kernel or microcode fix has been issued, the mitigation is delegated to individual software, or the fix is not detectable by this tool.
 
+## CVE-2018-3665 — Lazy FP State Restore (LazyFP)
+
+- **Advisory:** [INTEL-SA-00145](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/lazy-fp-state-restore.html)
+- **Research paper:** [LazyFP: Leaking FPU Register State using Microarchitectural Side-Channels (Stecklina & Prescher, 2018)](https://arxiv.org/abs/1806.07480)
+- **Affected CPUs:** Intel Core family (Sandy Bridge through Kaby Lake) when lazy FPU switching is in use
+- **CVSS:** 4.3 (Medium)
+
+Intel CPUs using lazy FPU state switching may speculatively expose another process's FPU/SSE/AVX register contents (including AES round keys and other cryptographic material) across context switches. The `#NM` (device-not-available) exception normally used to trigger lazy restore is delivered late enough that dependent instructions can transiently execute against the stale FPU state before the fault squashes them.
+
+**Why out of scope:** The Linux mitigation is to use eager FPU save/restore, which was already the default on Intel CPUs with XSAVEOPT well before disclosure, and was then hard-enforced upstream by the removal of all lazy FPU code in Linux 4.14 (Andy Lutomirski's "x86/fpu: Hard-disable lazy FPU mode" cleanup). There is no `/sys/devices/system/cpu/vulnerabilities/` entry, no CPUID flag, no MSR, and no kernel config option that reflects this mitigation — detection on a running kernel would require hardcoding kernel version ranges, which is against this tool's design principles (same rationale as CVE-2019-15902). In practice, any supported kernel today is eager-FPU-only, and CPUs advertising XSAVEOPT/XSAVES cannot enter the vulnerable lazy-switching mode regardless of kernel configuration.
+
 ## CVE-2018-9056 — BranchScope
 
 - **Issue:** [#169](https://github.com/speed47/spectre-meltdown-checker/issues/169)
