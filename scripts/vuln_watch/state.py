@@ -49,6 +49,15 @@ def empty() -> dict[str, Any]:
 
 def load(path: pathlib.Path = STATE_PATH) -> dict[str, Any]:
     if not path.exists():
+        # Fallback: a committed bootstrap seed, used to bridge a workflow
+        # rename (old workflow_id's artifacts are invisible to the new one).
+        # Remove the bootstrap file once one successful run has produced a
+        # normal artifact, otherwise it will shadow any future first-run.
+        bootstrap = path.parent / f"{path.name}.bootstrap"
+        if bootstrap.exists():
+            print(f"state: seeding from {bootstrap} (no prior-run artifact found)")
+            path = bootstrap
+    if not path.exists():
         return empty()
     data = json.loads(path.read_text())
     return _migrate(data)

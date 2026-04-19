@@ -1,0 +1,824 @@
+{
+  "aliases": {
+    "CVE-2018-3615": "CVE-2018-3646",
+    "CVE-2018-3620": "CVE-2018-3646",
+    "CVE-2025-54505": "https://www.phoronix.com/news/AMD-FP-DSS-Zen-1-Bug",
+    "CVE-2026-33691": "https://seclists.org/oss-sec/2026/q2/175",
+    "CVE-2026-41113": "https://seclists.org/oss-sec/2026/q2/176",
+    "CVE-2026-4519": "CVE-2026-4786",
+    "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-33055": "CVE-2026-33055",
+    "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-33056": "CVE-2026-33056",
+    "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-4786": "CVE-2026-4786",
+    "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-5160": "CVE-2026-5160",
+    "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-6100": "CVE-2026-6100",
+    "https://seclists.org/oss-sec/2026/q2/173": "CVE-2026-33691",
+    "https://seclists.org/oss-sec/2026/q2/176": "CVE-2026-41113",
+    "https://transient.fail/": "CVE-2019-11091"
+  },
+  "last_run": "2026-04-19T14:06:07.928573+00:00",
+  "schema_version": 2,
+  "seen": {
+    "AMD-SB-7050": {
+      "bucket": "tocheck",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "amd-psirt"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "AMD-SB-7053": {
+      "bucket": "toimplement",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "amd-psirt"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2017-5715": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2017-5715",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2017-5753": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2017-5753",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2017-5754": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2017-5754",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2018-12126": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2018-12126",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2018-12127": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2018-12127",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2018-12130": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2018-12130",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2018-3639": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2018-3639",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2018-3640": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2018-3640",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2018-3646": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2018-3615",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2018-3665": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2018-3665",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2019-11091": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2019-11091",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2019-11135": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "transient-fail"
+      ],
+      "title": "CVE-2019-11135",
+      "urls": [
+        "https://transient.fail/"
+      ]
+    },
+    "CVE-2025-66335": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-25917": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-30898": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-30912": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-32228": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-32690": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-33055": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "msrc"
+      ],
+      "title": "CVE-2026-33055 tar-rs incorrectly ignores PAX size headers if header size is nonzero",
+      "urls": [
+        "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-33055"
+      ]
+    },
+    "CVE-2026-33056": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "msrc"
+      ],
+      "title": "CVE-2026-33056 tar-rs: unpack_in can chmod arbitrary directories by following symlinks",
+      "urls": [
+        "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-33056"
+      ]
+    },
+    "CVE-2026-33691": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "Re: [CVE-2026-33691] OWASP CRS whitespace padding bypass vulnerability",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/173",
+        "https://seclists.org/oss-sec/2026/q2/174",
+        "https://seclists.org/oss-sec/2026/q2/175"
+      ]
+    },
+    "CVE-2026-39314": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-40170": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-40948": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-41113": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "CVE-2026-41113: RCE in sagredo fork of qmail",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/176"
+      ]
+    },
+    "CVE-2026-41254": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": []
+    },
+    "CVE-2026-4786": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "msrc"
+      ],
+      "title": "CVE-2026-4786 Incomplete mitigation of CVE-2026-4519, %action expansion for command injection to webbrowser.open()",
+      "urls": [
+        "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-4786"
+      ]
+    },
+    "CVE-2026-5160": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "msrc"
+      ],
+      "title": "CVE-2026-5160",
+      "urls": [
+        "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-5160"
+      ]
+    },
+    "CVE-2026-6100": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "msrc"
+      ],
+      "title": "CVE-2026-6100 Use-after-free in lzma.LZMADecompressor, bz2.BZ2Decompressor, and gzip.GzipFile after re-use under memory pressure",
+      "urls": [
+        "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2026-6100"
+      ]
+    },
+    "https://lwn.net/Articles/1066156/": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "lwn"
+      ],
+      "title": "",
+      "urls": [
+        "https://lwn.net/Articles/1066156/"
+      ]
+    },
+    "https://lwn.net/Articles/1067029/": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "lwn"
+      ],
+      "title": "",
+      "urls": [
+        "https://lwn.net/Articles/1067029/"
+      ]
+    },
+    "https://lwn.net/Articles/1068400/": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "lwn"
+      ],
+      "title": "",
+      "urls": [
+        "https://lwn.net/Articles/1068400/"
+      ]
+    },
+    "https://lwn.net/Articles/1068473/": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "lwn"
+      ],
+      "title": "Seven stable kernels for Saturday",
+      "urls": [
+        "https://lwn.net/Articles/1068473/"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/164": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/164"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/167": {
+      "bucket": "toimplement",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/167"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/169": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/169"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/170": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/170"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/171": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/171"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/172": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T09:01:57Z",
+      "seen_at": "2026-04-19T09:01:57Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/172"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/173": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T09:01:57Z",
+      "seen_at": "2026-04-19T09:01:57Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/173"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/174": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T09:01:57Z",
+      "seen_at": "2026-04-19T09:01:57Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/174"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/175": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T09:01:57Z",
+      "seen_at": "2026-04-19T09:01:57Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/175"
+      ]
+    },
+    "https://seclists.org/oss-sec/2026/q2/176": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T09:01:57Z",
+      "seen_at": "2026-04-19T09:01:57Z",
+      "sources": [
+        "oss-sec"
+      ],
+      "title": "",
+      "urls": [
+        "https://seclists.org/oss-sec/2026/q2/176"
+      ]
+    },
+    "https://www.phoronix.com/news/AMD-2026-New-SMCA-Bank-Types": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "Linux 7.1 Adds New AMD SMCA Bank Types, Presumably For Upcoming EPYC Venice",
+      "urls": [
+        "https://www.phoronix.com/news/AMD-2026-New-SMCA-Bank-Types"
+      ]
+    },
+    "https://www.phoronix.com/news/AMD-FP-DSS-Zen-1-Bug": {
+      "bucket": "toimplement",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/AMD-FP-DSS-Zen-1-Bug"
+      ]
+    },
+    "https://www.phoronix.com/news/AMD-Harvested-GPUs-Linux": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "Valve Developer Further Improves Old AMD GPUs: HD 7870 XT Finally Working On Linux",
+      "urls": [
+        "https://www.phoronix.com/news/AMD-Harvested-GPUs-Linux"
+      ]
+    },
+    "https://www.phoronix.com/news/AMD-RDNA4m-RADV-ACO": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/AMD-RDNA4m-RADV-ACO"
+      ]
+    },
+    "https://www.phoronix.com/news/CachyOS-Super-Charged-Linux-7.0": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "CachyOS Rolls Out A Super-Charged Linux 7.0 Kernel",
+      "urls": [
+        "https://www.phoronix.com/news/CachyOS-Super-Charged-Linux-7.0"
+      ]
+    },
+    "https://www.phoronix.com/news/GNOME-Graphs-2.0-Maps-Transit": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/GNOME-Graphs-2.0-Maps-Transit"
+      ]
+    },
+    "https://www.phoronix.com/news/GhostBSD-26.1-R15.0p2": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "GhostBSD 26.1 Now Based On FreeBSD 15.0, Switches to XLibre X Server",
+      "urls": [
+        "https://www.phoronix.com/news/GhostBSD-26.1-R15.0p2"
+      ]
+    },
+    "https://www.phoronix.com/news/KDE-Plasma-6.7-Session": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/KDE-Plasma-6.7-Session"
+      ]
+    },
+    "https://www.phoronix.com/news/Linux-7.1-Block-Changes": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "Linux 7.1 Sees RAID Fixes, IO_uring Enhancements",
+      "urls": [
+        "https://www.phoronix.com/news/Linux-7.1-Block-Changes"
+      ]
+    },
+    "https://www.phoronix.com/news/Linux-7.1-Crypto-QAT-Zstd": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "Intel QAT Zstd, QAT Gen6 Improvements Merged For Linux 7.1",
+      "urls": [
+        "https://www.phoronix.com/news/Linux-7.1-Crypto-QAT-Zstd"
+      ]
+    },
+    "https://www.phoronix.com/news/Linux-7.1-HRTIMER-Overhaul": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/Linux-7.1-HRTIMER-Overhaul"
+      ]
+    },
+    "https://www.phoronix.com/news/Linux-7.1-New-NTFS-Driver": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/Linux-7.1-New-NTFS-Driver"
+      ]
+    },
+    "https://www.phoronix.com/news/Linux-7.1-Scheduler": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/Linux-7.1-Scheduler"
+      ]
+    },
+    "https://www.phoronix.com/news/Linux-7.1-Sound": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "Linux 7.1 Sound Code Adds Bus Keepers: Aiming For Better Apple Silicon Support",
+      "urls": [
+        "https://www.phoronix.com/news/Linux-7.1-Sound"
+      ]
+    },
+    "https://www.phoronix.com/news/Wine-11.7-Released": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/news/Wine-11.7-Released"
+      ]
+    },
+    "https://www.phoronix.com/news/WireGuard-For-Windows-1.0": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-19T14:06:07.928573+00:00",
+      "seen_at": "2026-04-19T14:06:07.928573+00:00",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "WireGuard For Windows Reaches v1.0",
+      "urls": [
+        "https://www.phoronix.com/news/WireGuard-For-Windows-1.0"
+      ]
+    },
+    "https://www.phoronix.com/review/ubuntu-2604-xe2-lunar-lake": {
+      "bucket": "unrelated",
+      "first_seen": "2026-04-18T14:24:43Z",
+      "seen_at": "2026-04-18T14:24:43Z",
+      "sources": [
+        "phoronix"
+      ],
+      "title": "",
+      "urls": [
+        "https://www.phoronix.com/review/ubuntu-2604-xe2-lunar-lake"
+      ]
+    }
+  },
+  "sources": {
+    "amd-psirt": {
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Sun, 19 Apr 2026 11:14:54 GMT",
+      "last_status": 200
+    },
+    "arm-spec": {
+      "etag": "\"c31f3bde81531617e355836b0f44bb05:1775559058.494352\"",
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Tue, 07 Apr 2026 10:50:58 GMT",
+      "last_status": 200
+    },
+    "cert-cc": {
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Fri, 17 Apr 2026 16:57:16 GMT",
+      "last_status": 200
+    },
+    "cisa": {
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_status": 200
+    },
+    "comsec-eth": {
+      "etag": "W/\"ad4d6e03055d4fc084e06c1140e33311\"",
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Fri, 17 Apr 2026 18:23:42 GMT",
+      "last_status": 200
+    },
+    "intel-psirt": {
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_status": 200
+    },
+    "lwn": {
+      "etag": "\"7a7f043e5c25da73032a33e230cd5adc23dce68d29b294dfdcaf96dcaf23a08c\"",
+      "hwm_id": "https://lwn.net/Articles/1068473/",
+      "hwm_published_at": "2026-04-18T15:48:08+00:00",
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_status": 200
+    },
+    "msrc": {
+      "etag": "\"0x8DE9DE3F08E081D\"",
+      "hwm_id": "CVE-2026-4786",
+      "hwm_published_at": "2026-04-19T08:01:53+00:00",
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Sun, 19 Apr 2026 07:19:05 GMT",
+      "last_status": 200
+    },
+    "oss-sec": {
+      "etag": "\"3ac0-64fc0e1ee44d0\"",
+      "hwm_id": "CVE-2026-41113",
+      "hwm_published_at": "2026-04-18T19:12:07+00:00",
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Sat, 18 Apr 2026 19:15:03 GMT",
+      "last_status": 200
+    },
+    "phoronix": {
+      "hwm_id": "https://www.phoronix.com/news/AMD-Harvested-GPUs-Linux",
+      "hwm_published_at": "2026-04-19T13:25:50+00:00",
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_status": 200
+    },
+    "project-zero": {
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Tue, 31 Mar 2026 22:50:42 GMT",
+      "last_status": 200
+    },
+    "transient-fail": {
+      "etag": "W/\"67ab337f-158c5\"",
+      "hwm_id": null,
+      "hwm_published_at": null,
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Tue, 11 Feb 2025 11:24:47 GMT",
+      "last_status": 200
+    },
+    "vusec": {
+      "etag": "W/\"6391ad5e2c03310cced577acfca52f46\"",
+      "last_fetched_at": "2026-04-19T14:02:00.309888+00:00",
+      "last_modified": "Mon, 16 Mar 2026 09:18:55 GMT",
+      "last_status": 200
+    }
+  }
+}
