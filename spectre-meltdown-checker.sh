@@ -13,11 +13,12 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.26.0404682'
+VERSION='26.33.0420460'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
-readonly DEBUGFS_BASE="/sys/kernel/debug"
+readonly SYSKERNEL_BASE="/sys/kernel"
+readonly DEBUGFS_BASE="$SYSKERNEL_BASE/debug"
 readonly SYS_MODULE_BASE="/sys/module"
 readonly CPU_DEV_BASE="/dev/cpu"
 readonly BSD_CPUCTL_DEV_BASE="/dev/cpuctl"
@@ -26,12 +27,12 @@ trap 'exit_cleanup' EXIT
 trap 'pr_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
 # Clean up temporary files and undo module/mount side effects on exit
 exit_cleanup() {
-    local saved_ret
-    saved_ret=$?
+    local saved_ret=$?
     # cleanup the temp decompressed config & kernel image
     [ -n "${g_dumped_config:-}" ] && [ -f "$g_dumped_config" ] && rm -f "$g_dumped_config"
     [ -n "${g_kerneltmp:-}" ] && [ -f "$g_kerneltmp" ] && rm -f "$g_kerneltmp"
     [ -n "${g_kerneltmp2:-}" ] && [ -f "$g_kerneltmp2" ] && rm -f "$g_kerneltmp2"
+    [ -n "${g_sls_text_tmp:-}" ] && [ -f "$g_sls_text_tmp" ] && rm -f "$g_sls_text_tmp"
     [ -n "${g_mcedb_tmp:-}" ] && [ -f "$g_mcedb_tmp" ] && rm -f "$g_mcedb_tmp"
     [ -n "${g_intel_tmp:-}" ] && [ -d "$g_intel_tmp" ] && rm -rf "$g_intel_tmp"
     [ -n "${g_linuxfw_tmp:-}" ] && [ -f "$g_linuxfw_tmp" ] && rm -f "$g_linuxfw_tmp"
@@ -57,62 +58,60 @@ fi
 show_usage() {
     # shellcheck disable=SC2086
     cat <<EOF
-	Usage:
-		Live mode (auto):   $(basename $0) [options]
-		Live mode (manual): $(basename $0) [options] <[--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]> --live
-		Offline mode:       $(basename $0) [options] <[--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]>
-
 	Modes:
-		Two modes are available.
+		* Live mode:          $(basename $0) [options] [--kernel <kimage>] [--config <kconfig>] [--map <mapfile>]
+			Inspect the currently running kernel within the context of the CPU it's running on.
+			You can optionally specify --kernel, --config, or --map to help the script locate files it couldn't auto-detect
 
-		First mode is the "live" mode (default), it does its best to find information about the currently running kernel.
-		To run under this mode, just start the script without any option (you can also use --live explicitly)
+		* No-runtime mode:    $(basename $0) [options] --no-runtime <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
+			Inspect the CPU hardware, but skips all running-kernel artifacts (/sys, /proc, dmesg).
+			Use this when you have a kernel image different from the kernel you're running but want to check it against this CPU.
 
-		Second mode is the "offline" mode, where you can inspect a non-running kernel.
-		This mode is automatically enabled when you specify the location of the kernel file, config and System.map files:
+		* No-hardware mode:   $(basename $0) [options] --no-hw <--kernel <kimage>> [--config <kconfig>] [--map <mapfile>]
+			Ignore both CPU hardware and running-kernel artifacts. Use this for pure static analysis of a kernel image,
+			for example when inspecting a kernel targeted for another system or CPU.
 
-		--kernel kernel_file	specify a (possibly compressed) Linux or BSD kernel file
-		--config kernel_config	specify a kernel config file (Linux only)
-		--map kernel_map_file	specify a kernel System.map file (Linux only)
+		* Hardware-only mode: $(basename $0) [options] --hw-only
+			Only inspect the CPU hardware, and report information and affectedness per vulnerability.
 
-		If you want to use live mode while specifying the location of the kernel, config or map file yourself,
-		you can add --live to the above options, to tell the script to run in live mode instead of the offline mode,
-		which is enabled by default when at least one file is specified on the command line.
+	Vulnerability selection:
+		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked.
+					can be used multiple times (e.g. --variant 3a --variant l1tf). For a list use 'help'.
+		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
+					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
 
-	Options:
+	Check scope:
+		--no-sysfs		don't use the /sys interface even if present [Linux]
+		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
+
+	Strictness:
+		--paranoid		require all mitigations to be enabled to the fullest extent, including those that
+					are not strictly necessary but provide defense in depth (e.g. SMT disabled, IBPB
+					always-on); without this flag, the script follows the security community consensus
+		--extra			run additional checks for issues that don't have a CVE but are still security-relevant,
+					such as compile-time mitigations not enabled by default (e.g. Straight-Line Speculation)
+
+	Hardware and platform:
+		--cpu [#,all]		interact with CPUID and MSR of CPU core number #, or all (default: CPU core 0)
+		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
+		--allow-msr-write	allow probing for write-only MSRs, this might produce kernel logs or be blocked by your system
+		--arch-prefix PREFIX	specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
+					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
+		--coreos		special mode for CoreOS (use an ephemeral toolbox to inspect kernel) [Linux]
+
+	Output:
+		--batch FORMAT		produce machine readable output; FORMAT is one of:
+					text (default), short, json, json-terse, nrpe, prometheus
 		--no-color		don't use color codes
 		--verbose, -v		increase verbosity level, possibly several times
 		--explain		produce an additional human-readable explanation of actions to take to mitigate a vulnerability
-		--paranoid		require IBPB to deem Variant 2 as mitigated
-					also require SMT disabled + unconditional L1D flush to deem Foreshadow-NG VMM as mitigated
-					also require SMT disabled to deem MDS vulnerabilities mitigated
 
-		--no-sysfs		don't use the /sys interface even if present [Linux]
-		--sysfs-only		only use the /sys interface, don't run our own checks [Linux]
-		--coreos		special mode for CoreOS (use an ephemeral toolbox to inspect kernel) [Linux]
-
-		--arch-prefix PREFIX	specify a prefix for cross-inspecting a kernel of a different arch, for example "aarch64-linux-gnu-",
-					so that invoked tools will be prefixed with this (i.e. aarch64-linux-gnu-objdump)
-		--batch text		produce machine readable output, this is the default if --batch is specified alone
-		--batch short		produce only one line with the vulnerabilities separated by spaces
-		--batch json		produce JSON output formatted for Puppet, Ansible, Chef...
-		--batch nrpe		produce machine readable output formatted for NRPE
-		--batch prometheus      produce output for consumption by prometheus-node-exporter
-
-		--variant VARIANT	specify which variant you'd like to check, by default all variants are checked.
-					can be used multiple times (e.g. --variant 3a --variant l1tf)
-					for a list of supported VARIANT parameters, use --variant help
-		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
-					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
-		--hw-only		only check for CPU information, don't check for any variant
-		--no-hw			skip CPU information and checks, if you're inspecting a kernel not to be run on this host
-		--vmm [auto,yes,no]	override the detection of the presence of a hypervisor, default: auto
-		--no-intel-db		don't use the builtin Intel DB of affected processors
-		--allow-msr-write	allow probing for write-only MSRs, this might produce kernel logs or be blocked by your system
-		--cpu [#,all]		interact with CPUID and MSR of CPU core number #, or all (default: CPU core 0)
+	Firmware database:
 		--update-fwdb		update our local copy of the CPU microcodes versions database (using the awesome
 					MCExtractor project and the Intel firmwares GitHub repository)
 		--update-builtin-fwdb	same as --update-fwdb but update builtin DB inside the script itself
+
+	Debug:
 		--dump-mock-data	used to mimick a CPU on an other system, mainly used to help debugging this script
 
 	Return codes:
@@ -164,7 +163,7 @@ g_os=$(uname -s)
 opt_kernel=''
 opt_config=''
 opt_map=''
-opt_live=-1
+opt_runtime=1
 opt_no_color=0
 opt_batch=0
 opt_batch_format='text'
@@ -181,16 +180,40 @@ opt_vmm=-1
 opt_allow_msr_write=0
 opt_cpu=0
 opt_explain=0
+# Canonical run mode, set at the end of option parsing.
+# Values: live, no-runtime, no-hw, hw-only
+g_mode='live'
+
+# Return 0 (true) if runtime state is accessible (procfs, sysfs, dmesg, debugfs).
+# True in live and hw-only modes; false in no-runtime and no-hw modes.
+has_runtime() { [ "$g_mode" = live ] || [ "$g_mode" = hw-only ]; }
 opt_paranoid=0
+opt_extra=0
 opt_mock=0
-opt_intel_db=1
 
 g_critical=0
 g_unknown=0
-g_nrpe_vuln=''
+g_nrpe_total=0
+g_nrpe_vuln_count=0
+g_nrpe_unk_count=0
+g_nrpe_vuln_ids=''
+g_nrpe_vuln_details=''
+g_nrpe_unk_details=''
+g_smc_vuln_output=''
+g_smc_ok_count=0
+g_smc_vuln_count=0
+g_smc_unk_count=0
+g_smc_system_info_line=''
+g_smc_cpu_info_line=''
 
 # CVE Registry: single source of truth for all CVE metadata.
 # Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases
+#
+# Two ranges of placeholder IDs are reserved when no real CVE applies:
+#   CVE-0000-NNNN: permanent placeholder for supplementary checks (--extra only)
+#                  that will never receive a real CVE (e.g. SLS, compile-time hardening).
+#   CVE-9999-NNNN: temporary placeholder for real vulnerabilities awaiting CVE
+#                  assignment. Rename across the codebase once the real CVE is issued.
 readonly CVE_REGISTRY='
 CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass
 CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection
@@ -207,6 +230,10 @@ CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable me
 CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)
 CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)
 CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)
+CVE-2022-21123|SBDR|mmio|Shared Buffers Data Read (SBDR), MMIO Stale Data
+CVE-2022-21125|SBDS|mmio|Shared Buffers Data Sampling (SBDS), MMIO Stale Data
+CVE-2022-21166|DRPW|mmio|Device Register Partial Write (DRPW), MMIO Stale Data
+CVE-2023-20588|DIV0|div0|Division by Zero, AMD Zen1 speculative data leak
 CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
 CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
 CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)
@@ -217,7 +244,10 @@ CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
 CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
 CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)
 CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
+CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
 CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
+CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
+CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
 '
 
 # Derive the supported CVE list from the registry
@@ -364,6 +394,136 @@ fi
     readonly INTEL_FAM15_P4_PRESCOTT=$((0x03))
     readonly INTEL_FAM15_P4_PRESCOTT_2M=$((0x04))
     readonly INTEL_FAM15_P4_CEDARMILL=$((0x06)) # /* Also Xeon Dempsey */
+}
+
+# >>>>>> libs/004_intel_codenames.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+# Human-friendly codename lookup for Intel CPUs.
+# Depends on constants from 003_intel_models.sh being set.
+
+# Print the human-friendly codename for the current Intel CPU, or nothing if unknown.
+# Reads: cpu_family, cpu_model (set by parse_cpu_details)
+get_intel_codename() {
+    case "$cpu_family" in
+        5)
+            case "$cpu_model" in
+                "$INTEL_FAM5_PENTIUM_75") echo "Pentium 75 (P54C)" ;;
+                "$INTEL_FAM5_PENTIUM_MMX") echo "Pentium MMX (P55C)" ;;
+                "$INTEL_FAM5_QUARK_X1000") echo "Quark X1000" ;;
+            esac
+            ;;
+        6)
+            case "$cpu_model" in
+                "$INTEL_FAM6_PENTIUM_PRO") echo "Pentium Pro" ;;
+                "$INTEL_FAM6_PENTIUM_II_KLAMATH") echo "Pentium II (Klamath)" ;;
+                "$INTEL_FAM6_PENTIUM_III_DESCHUTES") echo "Pentium III (Deschutes)" ;;
+                "$INTEL_FAM6_PENTIUM_III_TUALATIN") echo "Pentium III (Tualatin)" ;;
+                "$INTEL_FAM6_PENTIUM_M_DOTHAN") echo "Pentium M (Dothan)" ;;
+                "$INTEL_FAM6_CORE_YONAH") echo "Core (Yonah)" ;;
+                "$INTEL_FAM6_CORE2_MEROM") echo "Core 2 (Merom)" ;;
+                "$INTEL_FAM6_CORE2_MEROM_L") echo "Core 2 (Merom-L)" ;;
+                "$INTEL_FAM6_CORE2_PENRYN") echo "Core 2 (Penryn)" ;;
+                "$INTEL_FAM6_CORE2_DUNNINGTON") echo "Core 2 (Dunnington)" ;;
+                "$INTEL_FAM6_NEHALEM") echo "Nehalem" ;;
+                "$INTEL_FAM6_NEHALEM_G") echo "Nehalem (Auburndale / Havendale)" ;;
+                "$INTEL_FAM6_NEHALEM_EP") echo "Nehalem EP" ;;
+                "$INTEL_FAM6_NEHALEM_EX") echo "Nehalem EX" ;;
+                "$INTEL_FAM6_WESTMERE") echo "Westmere" ;;
+                "$INTEL_FAM6_WESTMERE_EP") echo "Westmere EP" ;;
+                "$INTEL_FAM6_WESTMERE_EX") echo "Westmere EX" ;;
+                "$INTEL_FAM6_SANDYBRIDGE") echo "Sandy Bridge" ;;
+                "$INTEL_FAM6_SANDYBRIDGE_X") echo "Sandy Bridge-E" ;;
+                "$INTEL_FAM6_IVYBRIDGE") echo "Ivy Bridge" ;;
+                "$INTEL_FAM6_IVYBRIDGE_X") echo "Ivy Bridge-E" ;;
+                "$INTEL_FAM6_HASWELL") echo "Haswell" ;;
+                "$INTEL_FAM6_HASWELL_X") echo "Haswell-E" ;;
+                "$INTEL_FAM6_HASWELL_L") echo "Haswell (low power)" ;;
+                "$INTEL_FAM6_HASWELL_G") echo "Haswell (GT3e)" ;;
+                "$INTEL_FAM6_BROADWELL") echo "Broadwell" ;;
+                "$INTEL_FAM6_BROADWELL_G") echo "Broadwell (GT3e)" ;;
+                "$INTEL_FAM6_BROADWELL_X") echo "Broadwell-E" ;;
+                "$INTEL_FAM6_BROADWELL_D") echo "Broadwell-DE" ;;
+                "$INTEL_FAM6_SKYLAKE_L") echo "Skylake (mobile)" ;;
+                "$INTEL_FAM6_SKYLAKE") echo "Skylake (desktop)" ;;
+                "$INTEL_FAM6_SKYLAKE_X") echo "Skylake-X / Cascade Lake / Cooper Lake" ;;
+                "$INTEL_FAM6_KABYLAKE_L") echo "Kaby Lake (mobile) / Sky Lake" ;;
+                "$INTEL_FAM6_KABYLAKE") echo "Kaby Lake / Coffee Lake / Sky Lake" ;;
+                "$INTEL_FAM6_COMETLAKE") echo "Comet Lake / Sky Lake" ;;
+                "$INTEL_FAM6_COMETLAKE_L") echo "Comet Lake (mobile) / Sky Lake" ;;
+                "$INTEL_FAM6_CANNONLAKE_L") echo "Cannon Lake (Palm Cove)" ;;
+                "$INTEL_FAM6_ICELAKE_X") echo "Ice Lake-X (Sunny Cove)" ;;
+                "$INTEL_FAM6_ICELAKE_D") echo "Ice Lake-D (Sunny Cove)" ;;
+                "$INTEL_FAM6_ICELAKE") echo "Ice Lake (Sunny Cove)" ;;
+                "$INTEL_FAM6_ICELAKE_L") echo "Ice Lake-L (Sunny Cove)" ;;
+                "$INTEL_FAM6_ICELAKE_NNPI") echo "Ice Lake NNPI (Sunny Cove)" ;;
+                "$INTEL_FAM6_ROCKETLAKE") echo "Rocket Lake (Cypress Cove)" ;;
+                "$INTEL_FAM6_TIGERLAKE_L") echo "Tiger Lake-L (Willow Cove)" ;;
+                "$INTEL_FAM6_TIGERLAKE") echo "Tiger Lake (Willow Cove)" ;;
+                "$INTEL_FAM6_SAPPHIRERAPIDS_X") echo "Sapphire Rapids-X (Golden Cove)" ;;
+                "$INTEL_FAM6_EMERALDRAPIDS_X") echo "Emerald Rapids-X (Raptor Cove)" ;;
+                "$INTEL_FAM6_GRANITERAPIDS_X") echo "Granite Rapids-X (Redwood Cove)" ;;
+                "$INTEL_FAM6_GRANITERAPIDS_D") echo "Granite Rapids-D (Redwood Cove)" ;;
+                "$INTEL_FAM6_BARTLETTLAKE") echo "Bartlett Lake (Raptor Cove)" ;;
+                "$INTEL_FAM6_LAKEFIELD") echo "Lakefield (Sunny Cove + Tremont)" ;;
+                "$INTEL_FAM6_ALDERLAKE") echo "Alder Lake (Golden Cove + Gracemont)" ;;
+                "$INTEL_FAM6_ALDERLAKE_L") echo "Alder Lake-L (Golden Cove + Gracemont)" ;;
+                "$INTEL_FAM6_RAPTORLAKE") echo "Raptor Lake (Raptor Cove + Enhanced Gracemont)" ;;
+                "$INTEL_FAM6_RAPTORLAKE_P") echo "Raptor Lake-P (Raptor Cove + Enhanced Gracemont)" ;;
+                "$INTEL_FAM6_RAPTORLAKE_S") echo "Raptor Lake-S (Raptor Cove + Enhanced Gracemont)" ;;
+                "$INTEL_FAM6_METEORLAKE") echo "Meteor Lake (Redwood Cove + Crestmont)" ;;
+                "$INTEL_FAM6_METEORLAKE_L") echo "Meteor Lake-L (Redwood Cove + Crestmont)" ;;
+                "$INTEL_FAM6_ARROWLAKE_H") echo "Arrow Lake-H (Lion Cove + Skymont)" ;;
+                "$INTEL_FAM6_ARROWLAKE") echo "Arrow Lake (Lion Cove + Skymont)" ;;
+                "$INTEL_FAM6_ARROWLAKE_U") echo "Arrow Lake-U (Lion Cove + Skymont)" ;;
+                "$INTEL_FAM6_LUNARLAKE_M") echo "Lunar Lake-M (Lion Cove + Skymont)" ;;
+                "$INTEL_FAM6_PANTHERLAKE_L") echo "Panther Lake-L (Cougar Cove + Darkmont)" ;;
+                "$INTEL_FAM6_WILDCATLAKE_L") echo "Wildcat Lake-L" ;;
+                "$INTEL_FAM6_ATOM_BONNELL") echo "Atom Bonnell (Diamondville / Pineview)" ;;
+                "$INTEL_FAM6_ATOM_BONNELL_MID") echo "Atom Bonnell (Silverthorne / Lincroft)" ;;
+                "$INTEL_FAM6_ATOM_SALTWELL") echo "Atom Saltwell (Cedarview)" ;;
+                "$INTEL_FAM6_ATOM_SALTWELL_MID") echo "Atom Saltwell (Penwell)" ;;
+                "$INTEL_FAM6_ATOM_SALTWELL_TABLET") echo "Atom Saltwell (Cloverview)" ;;
+                "$INTEL_FAM6_ATOM_SILVERMONT") echo "Atom Silvermont (Bay Trail)" ;;
+                "$INTEL_FAM6_ATOM_SILVERMONT_D") echo "Atom Silvermont-D (Avaton / Rangely)" ;;
+                "$INTEL_FAM6_ATOM_SILVERMONT_MID") echo "Atom Silvermont (Merriefield)" ;;
+                "$INTEL_FAM6_ATOM_SILVERMONT_MID2") echo "Atom Silvermont (Anniedale)" ;;
+                "$INTEL_FAM6_ATOM_AIRMONT") echo "Atom Airmont (Cherry Trail / Braswell)" ;;
+                "$INTEL_FAM6_ATOM_AIRMONT_NP") echo "Atom Airmont (Lightning Mountain)" ;;
+                "$INTEL_FAM6_ATOM_GOLDMONT") echo "Atom Goldmont (Apollo Lake)" ;;
+                "$INTEL_FAM6_ATOM_GOLDMONT_D") echo "Atom Goldmont-D (Denverton)" ;;
+                "$INTEL_FAM6_ATOM_GOLDMONT_PLUS") echo "Atom Goldmont Plus (Gemini Lake)" ;;
+                "$INTEL_FAM6_ATOM_TREMONT_D") echo "Atom Tremont-D (Jacobsville)" ;;
+                "$INTEL_FAM6_ATOM_TREMONT") echo "Atom Tremont (Elkhart Lake)" ;;
+                "$INTEL_FAM6_ATOM_TREMONT_L") echo "Atom Tremont-L (Jasper Lake)" ;;
+                "$INTEL_FAM6_ATOM_GRACEMONT") echo "Atom Gracemont (Alder Lake-N)" ;;
+                "$INTEL_FAM6_ATOM_CRESTMONT_X") echo "Atom Crestmont-X (Sierra Forest)" ;;
+                "$INTEL_FAM6_ATOM_CRESTMONT") echo "Atom Crestmont (Grand Ridge)" ;;
+                "$INTEL_FAM6_ATOM_DARKMONT_X") echo "Atom Darkmont-X (Clearwater Forest)" ;;
+                "$INTEL_FAM6_XEON_PHI_KNL") echo "Xeon Phi (Knights Landing)" ;;
+                "$INTEL_FAM6_XEON_PHI_KNM") echo "Xeon Phi (Knights Mill)" ;;
+            esac
+            ;;
+        15)
+            case "$cpu_model" in
+                "$INTEL_FAM15_P4_WILLAMETTE") echo "Pentium 4 (Willamette)" ;;
+                "$INTEL_FAM15_P4_PRESCOTT") echo "Pentium 4 (Prescott)" ;;
+                "$INTEL_FAM15_P4_PRESCOTT_2M") echo "Pentium 4 (Prescott 2M)" ;;
+                "$INTEL_FAM15_P4_CEDARMILL") echo "Pentium 4 (Cedarmill)" ;;
+            esac
+            ;;
+        18)
+            case "$cpu_model" in
+                "$INTEL_FAM18_NOVALAKE") echo "Nova Lake (Coyote Cove)" ;;
+                "$INTEL_FAM18_NOVALAKE_L") echo "Nova Lake-L (Coyote Cove)" ;;
+            esac
+            ;;
+        19)
+            case "$cpu_model" in
+                "$INTEL_FAM19_DIAMONDRAPIDS_X") echo "Diamond Rapids-X (Panther Cove)" ;;
+            esac
+            ;;
+    esac
 }
 
 # >>>>>> libs/100_output_print.sh <<<<<<
@@ -529,7 +689,12 @@ is_cpu_affected() {
         if [ "${g_intel_line:-}" = "no" ]; then
             pr_debug "is_cpu_affected: $cpuid_hex not in Intel database (cached)"
         elif [ -z "$g_intel_line" ]; then
-            g_intel_line=$(read_inteldb | grep -F "$cpuid_hex," | head -n1)
+            # Try hybrid-specific entry first (H=0 or H=1), fall back to unqualified entry
+            g_intel_line=$(read_inteldb | grep -F "$cpuid_hex,H=$cpu_hybrid," | head -n1)
+            if [ -z "$g_intel_line" ]; then
+                # No hybrid-specific entry, try unqualified (no H= field)
+                g_intel_line=$(read_inteldb | grep -F "$cpuid_hex," | grep -v ',H=' | head -n1)
+            fi
             if [ -z "$g_intel_line" ]; then
                 g_intel_line=no
                 pr_debug "is_cpu_affected: $cpuid_hex not in Intel database"
@@ -578,16 +743,21 @@ is_cpu_affected() {
     affected_taa=''
     affected_itlbmh=''
     affected_srbds=''
-    # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
+    affected_mmio=''
+    affected_sls=''
+    # DIV0, FPDSS, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
+    _set_immune div0
+    _set_immune fpdss
     _set_immune zenbleed
     _set_immune inception
     # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
     _set_immune tsa
     # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
     _set_immune retbleed
-    # Downfall, Reptar, ITS & BPI are Intel specific, look for "is_intel" below:
+    # Downfall, Reptar, RFDS, ITS & BPI are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
+    _set_immune rfds
     _set_immune its
     _set_immune bpi
     # VMScape affects Intel, AMD and Hygon — set immune, overridden below:
@@ -599,6 +769,11 @@ is_cpu_affected() {
         _infer_immune mlpds
         _infer_immune mdsum
         pr_debug "is_cpu_affected: cpu not affected by Microarchitectural Data Sampling"
+    elif is_cpu_msbds_only; then
+        _infer_immune mfbds
+        _infer_immune mlpds
+        _infer_immune mdsum
+        pr_debug "is_cpu_affected: cpu only affected by MSBDS, not MFBDS/MLPDS/MDSUM"
     fi
 
     if is_cpu_taa_free; then
@@ -609,6 +784,11 @@ is_cpu_affected() {
     if is_cpu_srbds_free; then
         _infer_immune srbds
         pr_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
+    fi
+
+    if is_cpu_mmio_free; then
+        _infer_immune mmio
+        pr_debug "is_cpu_affected: cpu not affected by MMIO Stale Data"
     fi
 
     # NO_SPECTRE_V2: Centaur family 7 and Zhaoxin family 7 are immune to Spectre V2
@@ -632,6 +812,7 @@ is_cpu_affected() {
         _set_immune mdsum
         _set_immune taa
         _set_immune srbds
+        _set_immune mmio
     elif is_intel; then
         # Intel
         # https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
@@ -741,6 +922,32 @@ is_cpu_affected() {
                 # and GDS_NO not set: assume affected (whitelist principle)
                 pr_debug "is_cpu_affected: downfall: unknown AVX-capable CPU, defaulting to affected"
                 _infer_vuln downfall
+            fi
+            set +u
+        fi
+        # RFDS (Register File Data Sampling, CVE-2023-28746)
+        # kernel cpu_vuln_blacklist (8076fcde016c, initial model list)
+        # immunity: ARCH_CAP_RFDS_NO (bit 27 of IA32_ARCH_CAPABILITIES)
+        # vendor scope: Intel only (family 6), Atom/hybrid cores
+        if [ "$cap_rfds_no" = 1 ]; then
+            pr_debug "is_cpu_affected: rfds: not affected (RFDS_NO)"
+            _set_immune rfds
+        elif [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ]; then
+                pr_debug "is_cpu_affected: rfds: affected"
+                _set_vuln rfds
             fi
             set +u
         fi
@@ -1038,6 +1245,23 @@ is_cpu_affected() {
         fi
         _set_immune variantl1tf
 
+        # DIV0 (Zen1/Zen+)
+        # 77245f1c3c64 (v6.5, initial model list): family 0x17 models 0x00-0x2f, 0x50-0x5f
+        # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all ZEN1-flagged CPUs
+        # The kernel's X86_FEATURE_ZEN1 covers family 0x17 models 0x00-0x2f and 0x50-0x5f,
+        # which spans both Zen1 (Summit Ridge, Naples, Raven Ridge, Snowy Owl) and Zen+
+        # (Pinnacle Ridge, Picasso, Dali, Colfax) products -- all using the same divider silicon.
+        amd_legacy_erratum "$(amd_model_range 0x17 0x00 0x0 0x2f 0xf)" && _set_vuln div0
+        amd_legacy_erratum "$(amd_model_range 0x17 0x50 0x0 0x5f 0xf)" && _set_vuln div0
+
+        # FPDSS: same Zen1/Zen+ cohort as DIV0 (both applied unconditionally in init_amd_zen1()).
+        # e55d98e77561 (v7.1): unconditional in init_amd_zen1(); CVE-2025-54505 / AMD-SB-7053.
+        # AMD-SB-7053 only enumerates a subset (EPYC 7001, EPYC Embedded 3000, Athlon/Ryzen 3000
+        # with Radeon, Ryzen PRO 3000 with Radeon Vega), but the kernel mitigates the full
+        # ZEN1 cohort, so we flag all of it to match the kernel's behavior.
+        # shellcheck disable=SC2154
+        [ "$affected_div0" = 0 ] && _set_vuln fpdss
+
         # Zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && _set_vuln zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && _set_vuln zenbleed
@@ -1220,13 +1444,35 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its/vmscape/bpi set via eval (_set_immune)
+    # SLS (Straight-Line Speculation):
+    # - x86_64: all CPUs are affected (compile-time mitigation CONFIG_MITIGATION_SLS)
+    # - arm64 (CVE-2020-13844): Cortex-A32/A34/A35/A53/A57/A72/A73 confirmed affected,
+    #   and broadly all speculative Armv8-A cores. No kernel mitigation merged.
+    #   Part numbers: A32=0xd01 A34=0xd02 A53=0xd03 A35=0xd04 A57=0xd07 A72=0xd08 A73=0xd09
+    #   Plus later speculative cores: A75=0xd0a A76=0xd0b A77=0xd0d N1=0xd0c V1=0xd40 N2=0xd49 V2=0xd4f
+    if is_intel || is_amd; then
+        _infer_vuln sls
+    elif [ "$cpu_vendor" = ARM ]; then
+        for cpupart in $cpu_part_list; do
+            if echo "$cpupart" | grep -q -w -e 0xd01 -e 0xd02 -e 0xd03 -e 0xd04 \
+                -e 0xd07 -e 0xd08 -e 0xd09 -e 0xd0a -e 0xd0b -e 0xd0c -e 0xd0d \
+                -e 0xd40 -e 0xd49 -e 0xd4f; then
+                _set_vuln sls
+            fi
+        done
+        # non-speculative ARM cores (arch <= 7, or early v8 models) are not affected
+        _infer_immune sls
+    else
+        _infer_immune sls
+    fi
+
+    # shellcheck disable=SC2154
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
-        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi"
+        pr_debug "is_cpu_affected: final results: div0=$affected_div0 fpdss=$affected_fpdss zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
+        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls mmio=$affected_mmio"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
@@ -1326,6 +1572,37 @@ is_cpu_mds_free() {
     return 1
 }
 
+# Check whether the CPU is known to be affected by MSBDS only (not MFBDS/MLPDS/MDSUM)
+# These CPUs have a different microarchitecture that is only susceptible to
+# Microarchitectural Store Buffer Data Sampling, not the other MDS variants.
+# Returns: 0 if MSBDS-only, 1 otherwise
+is_cpu_msbds_only() {
+    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+    #VULNWL_INTEL(ATOM_SILVERMONT,       MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_D,     MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID,   MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID2,  MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_AIRMONT,          MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNL,         MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNM,         MSBDS_ONLY),
+    parse_cpu_details
+    if is_intel; then
+        if [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID2" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
 # Check whether the CPU is known to be unaffected by TSX Asynchronous Abort (TAA)
 # Returns: 0 if TAA-free, 1 if affected or unknown
 is_cpu_taa_free() {
@@ -1384,7 +1661,7 @@ is_cpu_srbds_free() {
                 return 1
             elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -le 12 ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -le 13 ]; then
-                if [ "$cap_mds_no" -eq 1 ] && { [ "$cap_rtm" -eq 0 ] || [ "$cap_tsx_ctrl_rtm_disable" -eq 1 ]; }; then
+                if [ "$cap_mds_no" -eq 1 ] && { [ "$cap_rtm" -eq 0 ] || [ "$cap_tsx_ctrl_rtm_disable" -eq 1 ] || [ "$cap_tsx_force_abort_rtm_disable" -eq 1 ]; }; then
                     return 0
                 else
                     return 1
@@ -1395,6 +1672,61 @@ is_cpu_srbds_free() {
 
     return 0
 
+}
+
+# Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
+# Returns: 0 if MMIO-free, 1 if affected or unknown
+is_cpu_mmio_free() {
+    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+    #
+    # CPU affection logic from kernel (51802186158c, v5.19):
+    #   Bug is set when: cpu_matches(blacklist, MMIO) AND NOT arch_cap_mmio_immune()
+    #   arch_cap_mmio_immune() requires ALL THREE bits set:
+    #     ARCH_CAP_FBSDP_NO (bit 14) AND ARCH_CAP_PSDP_NO (bit 15) AND ARCH_CAP_SBDR_SSDP_NO (bit 13)
+    #
+    # Intel Family 6 model blacklist (unchanged since v5.19):
+    #   HASWELL_X (0x3F)
+    #   BROADWELL_D (0x56), BROADWELL_X (0x4F)
+    #   SKYLAKE_X (0x55), SKYLAKE_L (0x4E), SKYLAKE (0x5E)
+    #   KABYLAKE_L (0x8E), KABYLAKE (0x9E)
+    #   ICELAKE_L (0x7E), ICELAKE_D (0x6C), ICELAKE_X (0x6A)
+    #   COMETLAKE (0xA5), COMETLAKE_L (0xA6)
+    #   LAKEFIELD (0x8A)
+    #   ROCKETLAKE (0xA7)
+    #   ATOM_TREMONT (0x96), ATOM_TREMONT_D (0x86), ATOM_TREMONT_L (0x9C)
+    #
+    # Vendor scope: Intel only. Non-Intel CPUs are not affected.
+    parse_cpu_details
+    # ARCH_CAP immunity: all three bits must be set
+    if [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+        return 0
+    fi
+    if is_intel; then
+        if [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_HASWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LAKEFIELD" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ]; then
+                return 1
+            fi
+        fi
+    fi
+
+    return 0
 }
 
 # Check whether the CPU is known to be unaffected by Speculative Store Bypass (SSB)
@@ -1712,7 +2044,7 @@ while [ -n "${1:-}" ]; do
         opt_arch_prefix="$2"
         shift 2
     elif [ "$1" = "--live" ]; then
-        opt_live=1
+        # deprecated, kept for backward compatibility (live is now the default)
         shift
     elif [ "$1" = "--no-color" ]; then
         opt_no_color=1
@@ -1733,17 +2065,21 @@ while [ -n "${1:-}" ]; do
     elif [ "$1" = "--paranoid" ]; then
         opt_paranoid=1
         shift
+    elif [ "$1" = "--extra" ]; then
+        opt_extra=1
+        shift
     elif [ "$1" = "--hw-only" ]; then
         opt_hw_only=1
         shift
+    elif [ "$1" = "--no-runtime" ]; then
+        opt_runtime=0
+        shift
     elif [ "$1" = "--no-hw" ]; then
         opt_no_hw=1
+        opt_runtime=0
         shift
     elif [ "$1" = "--allow-msr-write" ]; then
         opt_allow_msr_write=1
-        shift
-    elif [ "$1" = "--no-intel-db" ]; then
-        opt_intel_db=0
         shift
     elif [ "$1" = "--cpu" ]; then
         opt_cpu=$2
@@ -1778,7 +2114,7 @@ while [ -n "${1:-}" ]; do
         opt_no_color=1
         shift
         case "$1" in
-            text | short | nrpe | json | prometheus)
+            text | short | nrpe | json | json-terse | prometheus)
                 opt_batch_format="$1"
                 shift
                 ;;
@@ -1786,7 +2122,7 @@ while [ -n "${1:-}" ]; do
             '') ;;  # allow nothing at all
             *)
                 echo "$0: error: unknown batch format '$1'" >&2
-                echo "$0: error: --batch expects a format from: text, nrpe, json" >&2
+                echo "$0: error: --batch expects a format from: text, short, nrpe, json, json-terse, prometheus" >&2
                 exit 255
                 ;;
         esac
@@ -1831,7 +2167,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, fpdss, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
                 exit 0
                 ;;
             1)
@@ -1886,6 +2222,30 @@ while [ -n "${1:-}" ]; do
                 opt_cve_list="$opt_cve_list CVE-2020-0543"
                 opt_cve_all=0
                 ;;
+            mmio)
+                opt_cve_list="$opt_cve_list CVE-2022-21123 CVE-2022-21125 CVE-2022-21166"
+                opt_cve_all=0
+                ;;
+            sbdr)
+                opt_cve_list="$opt_cve_list CVE-2022-21123"
+                opt_cve_all=0
+                ;;
+            sbds)
+                opt_cve_list="$opt_cve_list CVE-2022-21125"
+                opt_cve_all=0
+                ;;
+            drpw)
+                opt_cve_list="$opt_cve_list CVE-2022-21166"
+                opt_cve_all=0
+                ;;
+            div0)
+                opt_cve_list="$opt_cve_list CVE-2023-20588"
+                opt_cve_all=0
+                ;;
+            fpdss)
+                opt_cve_list="$opt_cve_list CVE-2025-54505"
+                opt_cve_all=0
+                ;;
             zenbleed)
                 opt_cve_list="$opt_cve_list CVE-2023-20593"
                 opt_cve_all=0
@@ -1904,6 +2264,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             reptar)
                 opt_cve_list="$opt_cve_list CVE-2023-23583"
+                opt_cve_all=0
+                ;;
+            rfds)
+                opt_cve_list="$opt_cve_list CVE-2023-28746"
                 opt_cve_all=0
                 ;;
             tsa)
@@ -1928,6 +2292,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             bpi)
                 opt_cve_list="$opt_cve_list CVE-2024-45332"
+                opt_cve_all=0
+                ;;
+            sls)
+                opt_cve_list="$opt_cve_list CVE-0000-0001"
                 opt_cve_all=0
                 ;;
             *)
@@ -1968,13 +2336,27 @@ if [ "$opt_no_hw" = 1 ] && [ "$opt_hw_only" = 1 ]; then
     exit 255
 fi
 
-if [ "$opt_live" = -1 ]; then
-    if [ -n "$opt_kernel" ] || [ -n "$opt_config" ] || [ -n "$opt_map" ]; then
-        # no --live specified and we have a least one of the kernel/config/map files on the cmdline: offline mode
-        opt_live=0
-    else
-        opt_live=1
-    fi
+if [ "$opt_runtime" = 0 ] && [ "$opt_sysfs_only" = 1 ]; then
+    pr_warn "Incompatible options specified (--no-runtime and --sysfs-only), aborting"
+    exit 255
+fi
+
+if [ "$opt_runtime" = 0 ] && [ -z "$opt_kernel" ] && [ -z "$opt_config" ] && [ -z "$opt_map" ]; then
+    pr_warn "Option --no-runtime requires at least one of --kernel, --config, or --map"
+    exit 255
+fi
+
+# Derive the canonical run mode from the option flags.
+# Modes: live (default), no-runtime (--no-runtime), no-hw (--no-hw), hw-only (--hw-only)
+# shellcheck disable=SC2034
+if [ "$opt_hw_only" = 1 ]; then
+    g_mode='hw-only'
+elif [ "$opt_no_hw" = 1 ]; then
+    g_mode='no-hw'
+elif [ "$opt_runtime" = 0 ]; then
+    g_mode='no-runtime'
+else
+    g_mode='live'
 fi
 
 # >>>>>> libs/240_output_status.sh <<<<<<
@@ -2004,6 +2386,279 @@ pstatus() {
 # >>>>>> libs/250_output_emitters.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
+# --- JSON helper functions ---
+
+# Escape a string for use in a JSON value (handles backslashes, double quotes, newlines, tabs)
+# Args: $1=string
+# Prints: escaped string (without surrounding quotes)
+_json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | tr '\n' ' '
+}
+
+# Escape a string for use as a Prometheus label value (handles backslashes, double quotes, newlines)
+# Args: $1=string
+# Prints: escaped string (without surrounding quotes)
+_prom_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '
+}
+
+# Convert a shell capability value to a JSON boolean token
+# Args: $1=value (1=true, 0=false, -1/empty=null, any other non-empty string=true)
+# Prints: JSON token (true/false/null)
+# Note: capability variables can be set to arbitrary strings internally to carry
+# detection-path context (e.g. cap_ssbd='Intel SSBD'); for the JSON output those
+# are normalized to true so consumers see a clean boolean | null type.
+_json_cap() {
+    case "${1:-}" in
+        0) printf 'false' ;;
+        -1 | '') printf 'null' ;;
+        *) printf 'true' ;;
+    esac
+}
+
+# Emit a JSON string value or null
+# Args: $1=string (empty=null)
+# Prints: JSON token ("escaped string" or null)
+_json_str() {
+    if [ -n "${1:-}" ]; then
+        printf '"%s"' "$(_json_escape "$1")"
+    else
+        printf 'null'
+    fi
+}
+
+# Emit a JSON number value or null
+# Args: $1=number (empty=null)
+# Prints: JSON token
+_json_num() {
+    if [ -n "${1:-}" ]; then
+        printf '%s' "$1"
+    else
+        printf 'null'
+    fi
+}
+
+# Emit a JSON boolean value or null
+# Args: $1=value (1/0/empty)
+# Prints: JSON token
+_json_bool() {
+    case "${1:-}" in
+        1) printf 'true' ;;
+        0) printf 'false' ;;
+        *) printf 'null' ;;
+    esac
+}
+
+# --- JSON section builders (comprehensive format) ---
+
+# Build the "meta" section of the comprehensive JSON output
+# Sets: g_json_meta
+# shellcheck disable=SC2034
+_build_json_meta() {
+    local timestamp
+    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "unknown")
+    local run_as_root
+    if [ "$(id -u)" -eq 0 ]; then
+        run_as_root='true'
+    else
+        run_as_root='false'
+    fi
+    g_json_meta=$(printf '{"script_version":%s,"format_version":1,"timestamp":%s,"os":%s,"mode":"%s","run_as_root":%s,"reduced_accuracy":%s,"paranoid":%s,"sysfs_only":%s,"extra":%s}' \
+        "$(_json_str "$VERSION")" \
+        "$(_json_str "$timestamp")" \
+        "$(_json_str "$g_os")" \
+        "$g_mode" \
+        "$run_as_root" \
+        "$(_json_bool "${g_bad_accuracy:-0}")" \
+        "$(_json_bool "$opt_paranoid")" \
+        "$(_json_bool "$opt_sysfs_only")" \
+        "$(_json_bool "$opt_extra")")
+}
+
+# Build the "system" section of the comprehensive JSON output
+# Sets: g_json_system
+# shellcheck disable=SC2034
+_build_json_system() {
+    local kernel_release kernel_version kernel_arch smt_val
+    if [ "$g_mode" = live ]; then
+        kernel_release=$(uname -r)
+        kernel_version=$(uname -v)
+        kernel_arch=$(uname -m)
+    else
+        kernel_release=''
+        kernel_version=''
+        kernel_arch=''
+    fi
+    # SMT detection
+    is_cpu_smt_enabled
+    smt_val=$?
+    case $smt_val in
+        0) smt_val='true' ;;
+        1) smt_val='false' ;;
+        *) smt_val='null' ;;
+    esac
+    g_json_system=$(printf '{"kernel_release":%s,"kernel_version":%s,"kernel_arch":%s,"kernel_image":%s,"kernel_config":%s,"kernel_version_string":%s,"kernel_cmdline":%s,"cpu_count":%s,"smt_enabled":%s,"hypervisor_host":%s,"hypervisor_host_reason":%s}' \
+        "$(_json_str "$kernel_release")" \
+        "$(_json_str "$kernel_version")" \
+        "$(_json_str "$kernel_arch")" \
+        "$(_json_str "${opt_kernel:-}")" \
+        "$(_json_str "${opt_config:-}")" \
+        "$(_json_str "${g_kernel_version:-}")" \
+        "$(_json_str "${g_kernel_cmdline:-}")" \
+        "$(_json_num "${g_max_core_id:+$((g_max_core_id + 1))}")" \
+        "$smt_val" \
+        "$(_json_bool "${g_has_vmm:-}")" \
+        "$(_json_str "${g_has_vmm_reason:-}")")
+}
+
+# Build the "cpu" section of the comprehensive JSON output
+# Sets: g_json_cpu
+# shellcheck disable=SC2034
+_build_json_cpu() {
+    local cpuid_hex codename caps arch_sub arch_type sbpb_norm
+    if [ -n "${cpu_cpuid:-}" ]; then
+        cpuid_hex=$(printf '0x%08x' "$cpu_cpuid")
+    else
+        cpuid_hex=''
+    fi
+    codename=''
+    if is_intel; then
+        codename=$(get_intel_codename 2>/dev/null || true)
+    fi
+
+    # cap_sbpb uses non-standard encoding (1=YES, 2=NO, 3=UNKNOWN) because the
+    # CVE-2023-20569 check distinguishes the unknown case. Normalize for JSON.
+    case "${cap_sbpb:-}" in
+        1) sbpb_norm=1 ;;
+        2) sbpb_norm=0 ;;
+        3) sbpb_norm=-1 ;;
+        *) sbpb_norm='' ;;
+    esac
+
+    # Determine architecture type and build the arch-specific sub-object
+    case "${cpu_vendor:-}" in
+        GenuineIntel | AuthenticAMD | HygonGenuine)
+            arch_type='x86'
+            # Build x86 capabilities sub-object
+            caps=$(printf '{"spec_ctrl":%s,"ibrs":%s,"ibpb":%s,"ibpb_ret":%s,"stibp":%s,"ssbd":%s,"l1d_flush":%s,"md_clear":%s,"arch_capabilities":%s,"rdcl_no":%s,"ibrs_all":%s,"rsba":%s,"l1dflush_no":%s,"ssb_no":%s,"mds_no":%s,"taa_no":%s,"pschange_msc_no":%s,"tsx_ctrl_msr":%s,"tsx_ctrl_rtm_disable":%s,"tsx_ctrl_cpuid_clear":%s,"gds_ctrl":%s,"gds_no":%s,"gds_mitg_dis":%s,"gds_mitg_lock":%s,"rfds_no":%s,"rfds_clear":%s,"its_no":%s,"sbdr_ssdp_no":%s,"fbsdp_no":%s,"psdp_no":%s,"fb_clear":%s,"rtm":%s,"tsx_force_abort":%s,"tsx_force_abort_rtm_disable":%s,"tsx_force_abort_cpuid_clear":%s,"sgx":%s,"srbds":%s,"srbds_on":%s,"amd_ssb_no":%s,"hygon_ssb_no":%s,"ipred":%s,"rrsba":%s,"bhi":%s,"tsa_sq_no":%s,"tsa_l1_no":%s,"verw_clear":%s,"autoibrs":%s,"sbpb":%s,"avx2":%s,"avx512":%s}' \
+                "$(_json_cap "${cap_spec_ctrl:-}")" \
+                "$(_json_cap "${cap_ibrs:-}")" \
+                "$(_json_cap "${cap_ibpb:-}")" \
+                "$(_json_cap "${cap_ibpb_ret:-}")" \
+                "$(_json_cap "${cap_stibp:-}")" \
+                "$(_json_cap "${cap_ssbd:-}")" \
+                "$(_json_cap "${cap_l1df:-}")" \
+                "$(_json_cap "${cap_md_clear:-}")" \
+                "$(_json_cap "${cap_arch_capabilities:-}")" \
+                "$(_json_cap "${cap_rdcl_no:-}")" \
+                "$(_json_cap "${cap_ibrs_all:-}")" \
+                "$(_json_cap "${cap_rsba:-}")" \
+                "$(_json_cap "${cap_l1dflush_no:-}")" \
+                "$(_json_cap "${cap_ssb_no:-}")" \
+                "$(_json_cap "${cap_mds_no:-}")" \
+                "$(_json_cap "${cap_taa_no:-}")" \
+                "$(_json_cap "${cap_pschange_msc_no:-}")" \
+                "$(_json_cap "${cap_tsx_ctrl_msr:-}")" \
+                "$(_json_cap "${cap_tsx_ctrl_rtm_disable:-}")" \
+                "$(_json_cap "${cap_tsx_ctrl_cpuid_clear:-}")" \
+                "$(_json_cap "${cap_gds_ctrl:-}")" \
+                "$(_json_cap "${cap_gds_no:-}")" \
+                "$(_json_cap "${cap_gds_mitg_dis:-}")" \
+                "$(_json_cap "${cap_gds_mitg_lock:-}")" \
+                "$(_json_cap "${cap_rfds_no:-}")" \
+                "$(_json_cap "${cap_rfds_clear:-}")" \
+                "$(_json_cap "${cap_its_no:-}")" \
+                "$(_json_cap "${cap_sbdr_ssdp_no:-}")" \
+                "$(_json_cap "${cap_fbsdp_no:-}")" \
+                "$(_json_cap "${cap_psdp_no:-}")" \
+                "$(_json_cap "${cap_fb_clear:-}")" \
+                "$(_json_cap "${cap_rtm:-}")" \
+                "$(_json_cap "${cap_tsx_force_abort:-}")" \
+                "$(_json_cap "${cap_tsx_force_abort_rtm_disable:-}")" \
+                "$(_json_cap "${cap_tsx_force_abort_cpuid_clear:-}")" \
+                "$(_json_cap "${cap_sgx:-}")" \
+                "$(_json_cap "${cap_srbds:-}")" \
+                "$(_json_cap "${cap_srbds_on:-}")" \
+                "$(_json_cap "${cap_amd_ssb_no:-}")" \
+                "$(_json_cap "${cap_hygon_ssb_no:-}")" \
+                "$(_json_cap "${cap_ipred:-}")" \
+                "$(_json_cap "${cap_rrsba:-}")" \
+                "$(_json_cap "${cap_bhi:-}")" \
+                "$(_json_cap "${cap_tsa_sq_no:-}")" \
+                "$(_json_cap "${cap_tsa_l1_no:-}")" \
+                "$(_json_cap "${cap_verw_clear:-}")" \
+                "$(_json_cap "${cap_autoibrs:-}")" \
+                "$(_json_cap "$sbpb_norm")" \
+                "$(_json_cap "${cap_avx2:-}")" \
+                "$(_json_cap "${cap_avx512:-}")")
+            arch_sub=$(printf '{"family":%s,"model":%s,"stepping":%s,"cpuid":%s,"platform_id":%s,"hybrid":%s,"codename":%s,"capabilities":%s}' \
+                "$(_json_num "${cpu_family:-}")" \
+                "$(_json_num "${cpu_model:-}")" \
+                "$(_json_num "${cpu_stepping:-}")" \
+                "$(_json_str "$cpuid_hex")" \
+                "$(_json_num "${cpu_platformid:-}")" \
+                "$(_json_bool "${cpu_hybrid:-}")" \
+                "$(_json_str "$codename")" \
+                "$caps")
+            ;;
+        ARM | CAVIUM | PHYTIUM)
+            arch_type='arm'
+            arch_sub=$(printf '{"part_list":%s,"arch_list":%s,"capabilities":{}}' \
+                "$(_json_str "${cpu_part_list:-}")" \
+                "$(_json_str "${cpu_arch_list:-}")")
+            ;;
+        *)
+            arch_type=''
+            arch_sub=''
+            ;;
+    esac
+
+    if [ -n "$arch_type" ]; then
+        g_json_cpu=$(printf '{"arch":"%s","vendor":%s,"friendly_name":%s,"%s":%s}' \
+            "$arch_type" \
+            "$(_json_str "${cpu_vendor:-}")" \
+            "$(_json_str "${cpu_friendly_name:-}")" \
+            "$arch_type" \
+            "$arch_sub")
+    else
+        g_json_cpu=$(printf '{"arch":null,"vendor":%s,"friendly_name":%s}' \
+            "$(_json_str "${cpu_vendor:-}")" \
+            "$(_json_str "${cpu_friendly_name:-}")")
+    fi
+}
+
+# Build the "cpu_microcode" section of the comprehensive JSON output
+# Sets: g_json_cpu_microcode
+# shellcheck disable=SC2034
+_build_json_cpu_microcode() {
+    local ucode_uptodate ucode_hex latest_hex blacklisted
+    if [ -n "${cpu_ucode:-}" ]; then
+        ucode_hex=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_hex=''
+    fi
+    is_latest_known_ucode
+    case $? in
+        0) ucode_uptodate='true' ;;
+        1) ucode_uptodate='false' ;;
+        *) ucode_uptodate='null' ;;
+    esac
+    if is_ucode_blacklisted; then
+        blacklisted='true'
+    else
+        blacklisted='false'
+    fi
+    latest_hex="${ret_is_latest_known_ucode_version:-}"
+    g_json_cpu_microcode=$(printf '{"installed_version":%s,"latest_version":%s,"microcode_up_to_date":%s,"is_blacklisted":%s,"message":%s,"db_source":%s,"db_info":%s}' \
+        "$(_json_str "$ucode_hex")" \
+        "$(_json_str "$latest_hex")" \
+        "$ucode_uptodate" \
+        "$blacklisted" \
+        "$(_json_str "${ret_is_latest_known_ucode_latest:-}")" \
+        "$(_json_str "${g_mcedb_source:-}")" \
+        "$(_json_str "${g_mcedb_info:-}")")
+}
+
 # --- Format-specific batch emitters ---
 
 # Emit a single CVE result as plain text
@@ -2021,45 +2676,206 @@ _emit_short() {
     g_short_output="${g_short_output}$1 "
 }
 
-# Append a CVE result as a JSON object to the batch output buffer
+# Append a CVE result as a terse JSON object to the batch output buffer
 # Args: $1=cve $2=aka $3=status(UNK|VULN|OK) $4=description
 # Sets: g_json_output
 # Callers: pvulnstatus
-_emit_json() {
+_emit_json_terse() {
     local is_vuln esc_name esc_infos
     case "$3" in
         UNK) is_vuln="null" ;;
         VULN) is_vuln="true" ;;
         OK) is_vuln="false" ;;
         *)
-            echo "$0: error: unknown status '$3' passed to _emit_json()" >&2
+            echo "$0: error: unknown status '$3' passed to _emit_json_terse()" >&2
             exit 255
             ;;
     esac
-    # escape backslashes and double quotes for valid JSON strings
-    esc_name=$(printf '%s' "$2" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-    esc_infos=$(printf '%s' "$4" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+    esc_name=$(_json_escape "$2")
+    esc_infos=$(_json_escape "$4")
     [ -z "$g_json_output" ] && g_json_output='['
     g_json_output="${g_json_output}{\"NAME\":\"$esc_name\",\"CVE\":\"$1\",\"VULNERABLE\":$is_vuln,\"INFOS\":\"$esc_infos\"},"
 }
 
-# Append vulnerable CVE IDs to the NRPE output buffer
-# Args: $1=cve $2=aka $3=status $4=description
-# Sets: g_nrpe_vuln
+# Append a CVE result as a comprehensive JSON object to the batch output buffer
+# Args: $1=cve $2=aka $3=status(UNK|VULN|OK) $4=description
+# Sets: g_json_vulns
 # Callers: pvulnstatus
-_emit_nrpe() {
-    [ "$3" = VULN ] && g_nrpe_vuln="$g_nrpe_vuln $1"
+_emit_json_full() {
+    local is_vuln esc_name esc_infos aliases cpu_affected sysfs_status sysfs_msg
+    case "$3" in
+        UNK) is_vuln="null" ;;
+        VULN) is_vuln="true" ;;
+        OK) is_vuln="false" ;;
+        *)
+            echo "$0: error: unknown status '$3' passed to _emit_json_full()" >&2
+            exit 255
+            ;;
+    esac
+    esc_name=$(_json_escape "$2")
+    esc_infos=$(_json_escape "$4")
+    aliases=$(_cve_registry_field "$1" 4)
+
+    # CPU affection status (cached, cheap)
+    if is_cpu_affected "$1" 2>/dev/null; then
+        cpu_affected='true'
+    else
+        cpu_affected='false'
+    fi
+
+    # sysfs status: use the value captured by this CVE's check function, then clear it
+    # so it doesn't leak into the next CVE that might not call sys_interface_check
+    sysfs_status="${g_json_cve_sysfs_status:-}"
+    sysfs_msg="${g_json_cve_sysfs_msg:-}"
+
+    : "${g_json_vulns:=}"
+    g_json_vulns="${g_json_vulns}{\"cve\":\"$1\",\"name\":\"$esc_name\",\"aliases\":$(_json_str "$aliases"),\"cpu_affected\":$cpu_affected,\"status\":\"$3\",\"vulnerable\":$is_vuln,\"info\":\"$esc_infos\",\"sysfs_status\":$(_json_str "$sysfs_status"),\"sysfs_message\":$(_json_str "$sysfs_msg")},"
 }
 
-# Append a CVE result as a Prometheus metric to the batch output buffer
+# Accumulate a CVE result into the NRPE output buffers
 # Args: $1=cve $2=aka $3=status $4=description
-# Sets: g_prometheus_output
+# Sets: g_nrpe_total, g_nrpe_vuln_count, g_nrpe_unk_count, g_nrpe_vuln_ids, g_nrpe_vuln_details, g_nrpe_unk_details
+# Callers: pvulnstatus
+_emit_nrpe() {
+    g_nrpe_total=$((g_nrpe_total + 1))
+    case "$3" in
+        VULN)
+            g_nrpe_vuln_count=$((g_nrpe_vuln_count + 1))
+            g_nrpe_vuln_ids="${g_nrpe_vuln_ids:+$g_nrpe_vuln_ids }$1"
+            g_nrpe_vuln_details="${g_nrpe_vuln_details:+$g_nrpe_vuln_details\n}[CRITICAL] $1 ($2): $4"
+            ;;
+        UNK)
+            g_nrpe_unk_count=$((g_nrpe_unk_count + 1))
+            g_nrpe_unk_details="${g_nrpe_unk_details:+$g_nrpe_unk_details\n}[UNKNOWN]  $1 ($2): $4"
+            ;;
+    esac
+}
+
+# Append a CVE result as a Prometheus gauge to the batch output buffer
+# Status is encoded numerically: 0=not_vulnerable, 1=vulnerable, 2=unknown
+# Args: $1=cve $2=aka $3=status(UNK|VULN|OK) $4=description
+# Sets: g_smc_vuln_output, g_smc_ok_count, g_smc_vuln_count, g_smc_unk_count
 # Callers: pvulnstatus
 _emit_prometheus() {
-    local esc_info
-    # escape backslashes and double quotes for Prometheus label values
-    esc_info=$(printf '%s' "$4" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-    g_prometheus_output="${g_prometheus_output:+$g_prometheus_output\n}specex_vuln_status{name=\"$2\",cve=\"$1\",status=\"$3\",info=\"$esc_info\"} 1"
+    local numeric_status cpu_affected full_name esc_name
+    case "$3" in
+        OK)
+            numeric_status=0
+            g_smc_ok_count=$((g_smc_ok_count + 1))
+            ;;
+        VULN)
+            numeric_status=1
+            g_smc_vuln_count=$((g_smc_vuln_count + 1))
+            ;;
+        UNK)
+            numeric_status=2
+            g_smc_unk_count=$((g_smc_unk_count + 1))
+            ;;
+        *)
+            echo "$0: error: unknown status '$3' passed to _emit_prometheus()" >&2
+            exit 255
+            ;;
+    esac
+    if is_cpu_affected "$1" 2>/dev/null; then
+        cpu_affected='true'
+    else
+        cpu_affected='false'
+    fi
+    # use the complete CVE name (field 4) rather than the short aka key (field 2)
+    full_name=$(_cve_registry_field "$1" 4)
+    esc_name=$(_prom_escape "$full_name")
+    g_smc_vuln_output="${g_smc_vuln_output:+$g_smc_vuln_output\n}smc_vulnerability_status{cve=\"$1\",name=\"$esc_name\",cpu_affected=\"$cpu_affected\"} $numeric_status"
+}
+
+# Build the smc_system_info Prometheus metric line
+# Sets: g_smc_system_info_line
+# Callers: src/main.sh (after check_cpu / check_cpu_vulnerabilities)
+# shellcheck disable=SC2034
+_build_prometheus_system_info() {
+    local kernel_release kernel_arch hypervisor_host sys_labels
+    if [ "$g_mode" = live ]; then
+        kernel_release=$(uname -r 2>/dev/null || true)
+        kernel_arch=$(uname -m 2>/dev/null || true)
+    else
+        kernel_release=''
+        kernel_arch=''
+    fi
+    case "${g_has_vmm:-}" in
+        1) hypervisor_host='true' ;;
+        0) hypervisor_host='false' ;;
+        *) hypervisor_host='' ;;
+    esac
+    sys_labels=''
+    [ -n "$kernel_release" ] && sys_labels="${sys_labels:+$sys_labels,}kernel_release=\"$(_prom_escape "$kernel_release")\""
+    [ -n "$kernel_arch" ] && sys_labels="${sys_labels:+$sys_labels,}kernel_arch=\"$(_prom_escape "$kernel_arch")\""
+    [ -n "$hypervisor_host" ] && sys_labels="${sys_labels:+$sys_labels,}hypervisor_host=\"$hypervisor_host\""
+    [ -n "$sys_labels" ] && g_smc_system_info_line="smc_system_info{$sys_labels} 1"
+}
+
+# Build the smc_cpu_info Prometheus metric line
+# Sets: g_smc_cpu_info_line
+# Callers: src/main.sh (after check_cpu / check_cpu_vulnerabilities)
+# shellcheck disable=SC2034
+_build_prometheus_cpu_info() {
+    local cpuid_hex ucode_hex ucode_latest_hex ucode_uptodate ucode_blacklisted codename smt_val cpu_labels
+    if [ -n "${cpu_cpuid:-}" ]; then
+        cpuid_hex=$(printf '0x%08x' "$cpu_cpuid")
+    else
+        cpuid_hex=''
+    fi
+    if [ -n "${cpu_ucode:-}" ]; then
+        ucode_hex=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_hex=''
+    fi
+    is_latest_known_ucode
+    case $? in
+        0) ucode_uptodate='true' ;;
+        1) ucode_uptodate='false' ;;
+        *) ucode_uptodate='' ;;
+    esac
+    ucode_latest_hex="${ret_is_latest_known_ucode_version:-}"
+    if is_ucode_blacklisted; then
+        ucode_blacklisted='true'
+    else
+        ucode_blacklisted='false'
+    fi
+    codename=''
+    if is_intel; then
+        codename=$(get_intel_codename 2>/dev/null || true)
+    fi
+    is_cpu_smt_enabled
+    case $? in
+        0) smt_val='true' ;;
+        1) smt_val='false' ;;
+        *) smt_val='' ;;
+    esac
+    cpu_labels=''
+    [ -n "${cpu_vendor:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}vendor=\"$(_prom_escape "$cpu_vendor")\""
+    [ -n "${cpu_friendly_name:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model=\"$(_prom_escape "$cpu_friendly_name")\""
+    # arch-specific labels
+    case "${cpu_vendor:-}" in
+        GenuineIntel | AuthenticAMD | HygonGenuine)
+            cpu_labels="${cpu_labels:+$cpu_labels,}arch=\"x86\""
+            [ -n "${cpu_family:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}family=\"$cpu_family\""
+            [ -n "${cpu_model:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}model_id=\"$cpu_model\""
+            [ -n "${cpu_stepping:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}stepping=\"$cpu_stepping\""
+            [ -n "$cpuid_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}cpuid=\"$cpuid_hex\""
+            [ -n "$codename" ] && cpu_labels="${cpu_labels:+$cpu_labels,}codename=\"$(_prom_escape "$codename")\""
+            ;;
+        ARM | CAVIUM | PHYTIUM)
+            cpu_labels="${cpu_labels:+$cpu_labels,}arch=\"arm\""
+            [ -n "${cpu_part_list:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}part_list=\"$(_prom_escape "$cpu_part_list")\""
+            [ -n "${cpu_arch_list:-}" ] && cpu_labels="${cpu_labels:+$cpu_labels,}arch_list=\"$(_prom_escape "$cpu_arch_list")\""
+            ;;
+    esac
+    [ -n "$smt_val" ] && cpu_labels="${cpu_labels:+$cpu_labels,}smt=\"$smt_val\""
+    [ -n "$ucode_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode=\"$ucode_hex\""
+    [ -n "$ucode_latest_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_latest=\"$ucode_latest_hex\""
+    [ -n "$ucode_uptodate" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_up_to_date=\"$ucode_uptodate\""
+    # always emit microcode_blacklisted when we have microcode info (it's a boolean, never omit)
+    [ -n "$ucode_hex" ] && cpu_labels="${cpu_labels:+$cpu_labels,}microcode_blacklisted=\"$ucode_blacklisted\""
+    [ -n "$cpu_labels" ] && g_smc_cpu_info_line="smc_cpu_info{$cpu_labels} 1"
 }
 
 # Update global state used to determine the program exit code
@@ -2090,7 +2906,8 @@ pvulnstatus() {
         case "$opt_batch_format" in
             text) _emit_text "$1" "$aka" "$2" "$3" ;;
             short) _emit_short "$1" "$aka" "$2" "$3" ;;
-            json) _emit_json "$1" "$aka" "$2" "$3" ;;
+            json) _emit_json_full "$1" "$aka" "$2" "$3" ;;
+            json-terse) _emit_json_terse "$1" "$aka" "$2" "$3" ;;
             nrpe) _emit_nrpe "$1" "$aka" "$2" "$3" ;;
             prometheus) _emit_prometheus "$1" "$aka" "$2" "$3" ;;
             *)
@@ -2098,6 +2915,9 @@ pvulnstatus() {
                 exit 255
                 ;;
         esac
+        # reset per-CVE sysfs globals so they don't leak into the next CVE
+        g_json_cve_sysfs_status=''
+        g_json_cve_sysfs_msg=''
     fi
 
     _record_result "$1" "$2"
@@ -2229,7 +3049,9 @@ try_decompress() {
         fi
         pos=${pos%%:*}
         # shellcheck disable=SC2086
-        tail -c+$pos "$6" 2>/dev/null | $3 $4 >"$g_kerneltmp" 2>/dev/null
+        # wrap in subshell so that if $3 segfaults (e.g. old BusyBox unlzma on random data),
+        # the "Segmentation fault" message printed by the shell goes to /dev/null
+        (tail -c+$pos "$6" 2>/dev/null | $3 $4 >"$g_kerneltmp" 2>/dev/null) 2>/dev/null
         ret=$?
         if [ ! -s "$g_kerneltmp" ]; then
             # don't rely on $ret, sometimes it's != 0 but worked
@@ -2543,20 +3365,27 @@ readonly WRITE_MSR_RET_ERR=2
 readonly WRITE_MSR_RET_LOCKDOWN=3
 # Write a value to an MSR register across one or all cores
 # Args: $1=msr_address $2=value(optional) $3=cpu_index(optional, default 0)
-# Sets: ret_write_msr_msg
+# Sets: ret_write_msr_msg, ret_write_msr_ADDR_msg (where ADDR is the hex address, e.g. ret_write_msr_0x123_msg)
 # Returns: WRITE_MSR_RET_OK | WRITE_MSR_RET_KO | WRITE_MSR_RET_ERR | WRITE_MSR_RET_LOCKDOWN
 write_msr() {
-    local ret core first_core_ret
+    local ret core first_core_ret msr_dec msr
+    msr_dec=$(($1))
+    msr=$(printf "0x%x" "$msr_dec")
     if [ "$opt_cpu" != all ]; then
         # we only have one core to write to, do it and return the result
         write_msr_one_core "$opt_cpu" "$@"
-        return $?
+        ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
+        return $ret
     fi
 
     # otherwise we must write on all cores
     for core in $(seq 0 "$g_max_core_id"); do
         write_msr_one_core "$core" "$@"
         ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
         if [ "$core" = 0 ]; then
             # save the result of the first core, for comparison with the others
             first_core_ret=$ret
@@ -2564,6 +3393,8 @@ write_msr() {
             # compare first core with the other ones
             if [ "$first_core_ret" != "$ret" ]; then
                 ret_write_msr_msg="result is not homogeneous between all cores, at least core 0 and $core differ!"
+                # shellcheck disable=SC2163
+                eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
                 return $WRITE_MSR_RET_ERR
             fi
         fi
@@ -2581,7 +3412,7 @@ write_msr_one_core() {
     core="$1"
     msr_dec=$(($2))
     msr=$(printf "0x%x" "$msr_dec")
-    value_dec=$(($3))
+    value_dec=$((${3:-0}))
     value=$(printf "0x%x" "$value_dec")
 
     ret_write_msr_msg='unknown error'
@@ -2590,10 +3421,30 @@ write_msr_one_core() {
     mockvarname="SMC_MOCK_WRMSR_${msr}_RET"
     # shellcheck disable=SC2086,SC1083
     if [ -n "$(eval echo \${$mockvarname:-})" ]; then
-        pr_debug "write_msr: MOCKING enabled for msr $msr func returns $(eval echo \$$mockvarname)"
+        local mockret
+        mockret="$(eval echo \$$mockvarname)"
+        pr_debug "write_msr: MOCKING enabled for msr $msr func returns $mockret"
         g_mocked=1
-        [ "$(eval echo \$$mockvarname)" = $WRITE_MSR_RET_LOCKDOWN ] && g_msr_locked_down=1
-        return "$(eval echo \$$mockvarname)"
+        if [ "$mockret" = "$WRITE_MSR_RET_LOCKDOWN" ]; then
+            g_msr_locked_down=1
+            ret_write_msr_msg="kernel lockdown is enabled, MSR writes are restricted"
+        elif [ "$mockret" = "$WRITE_MSR_RET_ERR" ]; then
+            ret_write_msr_msg="could not write MSR"
+        fi
+        return "$mockret"
+    fi
+
+    # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
+    # if the kernel lockdown is set to integrity or confidentiality, MSR writes will be denied,
+    # so we can skip the write attempt entirely and avoid relying on dmesg parsing
+    if [ -e "$SYSKERNEL_BASE/security/lockdown" ]; then
+        if grep -qE '\[integrity\]|\[confidentiality\]' "$SYSKERNEL_BASE/security/lockdown" 2>/dev/null; then
+            pr_debug "write_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
+            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_WRMSR_${msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+            g_msr_locked_down=1
+            ret_write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
+            return $WRITE_MSR_RET_LOCKDOWN
+        fi
     fi
 
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
@@ -2601,7 +3452,7 @@ write_msr_one_core() {
         load_msr
     fi
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-        ret_read_msr_msg="is msr kernel module available?"
+        ret_write_msr_msg="msr kernel module is not available"
         return $WRITE_MSR_RET_ERR
     fi
 
@@ -2611,14 +3462,13 @@ write_msr_one_core() {
         ret=$?
     else
         # for Linux
-        # convert to decimal
         if [ ! -w $CPU_DEV_BASE/"$core"/msr ]; then
             ret_write_msr_msg="No write permission on $CPU_DEV_BASE/$core/msr"
             return $WRITE_MSR_RET_ERR
         # if wrmsr is available, use it
         elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
             pr_debug "write_msr: using wrmsr"
-            wrmsr $msr_dec $value_dec 2>/dev/null
+            wrmsr -p "$core" $msr_dec $value_dec 2>/dev/null
             ret=$?
             # ret=4: msr doesn't exist, ret=127: msr.allow_writes=off
             [ "$ret" = 127 ] && write_denied=1
@@ -2691,27 +3541,37 @@ write_msr_one_core() {
 readonly MSR_IA32_PLATFORM_ID=0x17
 readonly MSR_IA32_SPEC_CTRL=0x48
 readonly MSR_IA32_ARCH_CAPABILITIES=0x10a
+readonly MSR_IA32_TSX_FORCE_ABORT=0x10f
 readonly MSR_IA32_TSX_CTRL=0x122
 readonly MSR_IA32_MCU_OPT_CTRL=0x123
 readonly READ_MSR_RET_OK=0
 readonly READ_MSR_RET_KO=1
 readonly READ_MSR_RET_ERR=2
+readonly READ_MSR_RET_LOCKDOWN=3
 # Read an MSR register value across one or all cores
 # Args: $1=msr_address $2=cpu_index(optional, default 0)
-# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
-# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
+# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg,
+#       ret_read_msr_ADDR_msg (where ADDR is the hex address, e.g. ret_read_msr_0x10a_msg)
+# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR | READ_MSR_RET_LOCKDOWN
 read_msr() {
-    local ret core first_core_ret first_core_value
+    local ret core first_core_ret first_core_value msr_dec msr
+    msr_dec=$(($1))
+    msr=$(printf "0x%x" "$msr_dec")
     if [ "$opt_cpu" != all ]; then
         # we only have one core to read, do it and return the result
         read_msr_one_core "$opt_cpu" "$@"
-        return $?
+        ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
+        return $ret
     fi
 
     # otherwise we must read all cores
     for core in $(seq 0 "$g_max_core_id"); do
         read_msr_one_core "$core" "$@"
         ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
         if [ "$core" = 0 ]; then
             # save the result of the first core, for comparison with the others
             first_core_ret=$ret
@@ -2720,6 +3580,8 @@ read_msr() {
             # compare first core with the other ones
             if [ "$first_core_ret" != "$ret" ] || [ "$first_core_value" != "$ret_read_msr_value" ]; then
                 ret_read_msr_msg="result is not homogeneous between all cores, at least core 0 and $core differ!"
+                # shellcheck disable=SC2163
+                eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
                 return $READ_MSR_RET_ERR
             fi
         fi
@@ -2731,7 +3593,7 @@ read_msr() {
 # Read an MSR register value from a single CPU core
 # Args: $1=core $2=msr_address
 # Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
-# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
+# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR | READ_MSR_RET_LOCKDOWN
 read_msr_one_core() {
     local ret core msr msr_dec mockvarname msr_h msr_l mockval
     core="$1"
@@ -2763,9 +3625,29 @@ read_msr_one_core() {
     mockvarname="SMC_MOCK_RDMSR_${msr}_RET"
     # shellcheck disable=SC2086,SC1083
     if [ -n "$(eval echo \${$mockvarname:-})" ] && [ "$(eval echo \$$mockvarname)" -ne 0 ]; then
-        pr_debug "read_msr: MOCKING enabled for msr $msr func returns $(eval echo \$$mockvarname)"
+        local mockret
+        mockret="$(eval echo \$$mockvarname)"
+        pr_debug "read_msr: MOCKING enabled for msr $msr func returns $mockret"
         g_mocked=1
-        return "$(eval echo \$$mockvarname)"
+        if [ "$mockret" = "$READ_MSR_RET_LOCKDOWN" ]; then
+            ret_read_msr_msg="kernel lockdown is enabled, MSR reads are restricted"
+        elif [ "$mockret" = "$READ_MSR_RET_ERR" ]; then
+            ret_read_msr_msg="could not read MSR"
+        fi
+        return "$mockret"
+    fi
+
+    # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
+    # if the kernel lockdown is set to integrity or confidentiality, MSR reads will be denied,
+    # so we can skip the read attempt entirely and avoid relying on dmesg parsing
+    if [ -e "$SYSKERNEL_BASE/security/lockdown" ]; then
+        if grep -qE '\[integrity\]|\[confidentiality\]' "$SYSKERNEL_BASE/security/lockdown" 2>/dev/null; then
+            pr_debug "read_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
+            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}_RET=$READ_MSR_RET_LOCKDOWN")
+            g_msr_locked_down=1
+            ret_read_msr_msg="kernel lockdown is enabled, MSR reads are restricted"
+            return $READ_MSR_RET_LOCKDOWN
+        fi
     fi
 
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
@@ -2773,7 +3655,7 @@ read_msr_one_core() {
         load_msr
     fi
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-        ret_read_msr_msg="is msr kernel module available?"
+        ret_read_msr_msg="msr kernel module is not available"
         return $READ_MSR_RET_ERR
     fi
 
@@ -2897,6 +3779,7 @@ parse_cpu_details() {
     # see https://elixir.bootlin.com/linux/v6.0/source/arch/x86/kernel/cpu/microcode/intel.c#L694
     # Set it to 8 (impossible value as it is 3 bit long) by default
     cpu_platformid=8
+    # use direct cpu_vendor comparison: is_intel() calls parse_cpu_details() which would recurse
     if [ "$cpu_vendor" = GenuineIntel ] && [ "$cpu_model" -ge 5 ]; then
         read_msr $MSR_IA32_PLATFORM_ID
         ret=$?
@@ -2949,6 +3832,23 @@ parse_cpu_details() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_PLATFORMID='$cpu_platformid'")
     fi
 
+    # Detect hybrid CPU: CPUID.(EAX=7,ECX=0):EDX[15] = 1 means hybrid
+    cpu_hybrid=0
+    # use direct cpu_vendor comparison: is_intel() calls parse_cpu_details() which would recurse
+    if [ "$cpu_vendor" = GenuineIntel ]; then
+        read_cpuid 0x7 0x0 $EDX 15 1 1
+        if [ $? = $READ_CPUID_RET_OK ]; then
+            cpu_hybrid=1
+        fi
+    fi
+    if [ -n "${SMC_MOCK_CPU_HYBRID:-}" ]; then
+        cpu_hybrid="$SMC_MOCK_CPU_HYBRID"
+        pr_debug "parse_cpu_details: MOCKING cpu hybrid to $cpu_hybrid"
+        g_mocked=1
+    else
+        g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_HYBRID='$cpu_hybrid'")
+    fi
+
     # get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
     if [ "$g_mocked" != 1 ] && read_cpuid 0x1 0x0 $EAX 0 0xFFFFFFFF; then
         cpu_cpuid="$ret_read_cpuid_value"
@@ -2962,21 +3862,26 @@ parse_cpu_details() {
     if [ -z "$cpu_ucode" ] && [ "$g_os" != Linux ]; then
         load_cpuid
         if [ -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-            # init MSR with NULLs
-            cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0
-            # call CPUID
-            cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null
-            # read MSR
-            cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 | awk '{print $3}')
-            # convert to decimal
-            cpu_ucode=$((cpu_ucode))
-            # convert back to hex
-            cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            # use direct cpu_vendor comparison: is_amd/is_hygon/is_intel() call parse_cpu_details() which would recurse
+            if [ "$cpu_vendor" = AuthenticAMD ] || [ "$cpu_vendor" = HygonGenuine ]; then
+                # AMD: read MSR_PATCHLEVEL (0xC0010058) directly
+                cpu_ucode=$(cpucontrol -m 0xC0010058 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            elif [ "$cpu_vendor" = GenuineIntel ]; then
+                # Intel: write 0 to IA32_BIOS_SIGN_ID, execute CPUID, then read back
+                cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null
+                cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null 2>&1
+                cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            fi
+            if [ -n "$cpu_ucode" ]; then
+                # convert to decimal then back to hex
+                cpu_ucode=$((cpu_ucode))
+                cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            fi
         fi
     fi
 
-    # if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
-    : "${cpu_ucode:=0x0}"
+    # if we got no cpu_ucode (e.g. we're in a vm), leave it empty
+    # so that we can detect this case and avoid false positives
 
     # on non-x86 systems (e.g. ARM), these fields may not exist in cpuinfo, fall back to 0
     : "${cpu_family:=0}"
@@ -2991,9 +3896,15 @@ parse_cpu_details() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_UCODE='$cpu_ucode'")
     fi
 
-    echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
-    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x pfid 0x%x" \
-        "$cpu_family" "$cpu_model" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid" "$cpu_platformid")
+    local ucode_str
+    if [ -n "$cpu_ucode" ]; then
+        echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
+        ucode_str=$(printf "0x%x" "$cpu_ucode")
+    else
+        ucode_str="unknown"
+    fi
+    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode %s cpuid 0x%x pfid 0x%x" \
+        "$cpu_family" "$cpu_model" "$cpu_stepping" "$ucode_str" "$cpu_cpuid" "$cpu_platformid")
 
     g_parse_cpu_details_done=1
 }
@@ -3022,6 +3933,28 @@ is_amd() {
 is_intel() {
     parse_cpu_details
     [ "$cpu_vendor" = GenuineIntel ] && return 0
+    return 1
+}
+
+# Check whether the host CPU is x86/x86_64.
+# Use this to gate CPUID, MSR, and microcode operations.
+# Returns: 0 if x86, 1 otherwise
+is_x86_cpu() {
+    parse_cpu_details
+    case "$cpu_vendor" in
+        GenuineIntel | AuthenticAMD | HygonGenuine | CentaurHauls | Shanghai) return 0 ;;
+    esac
+    return 1
+}
+
+# Check whether the host CPU is ARM/ARM64.
+# Use this to gate ARM-specific hardware checks.
+# Returns: 0 if ARM, 1 otherwise
+is_arm_cpu() {
+    parse_cpu_details
+    case "$cpu_vendor" in
+        ARM | CAVIUM | PHYTIUM) return 0 ;;
+    esac
     return 1
 }
 
@@ -3214,7 +4147,7 @@ has_zenbleed_fixed_firmware() {
         model_high=$(echo "$tuple" | cut -d, -f2)
         fwver=$(echo "$tuple" | cut -d, -f3)
         if [ $((cpu_model)) -ge $((model_low)) ] && [ $((cpu_model)) -le $((model_high)) ]; then
-            if [ $((cpu_ucode)) -ge $((fwver)) ]; then
+            if [ -n "$cpu_ucode" ] && [ $((cpu_ucode)) -ge $((fwver)) ]; then
                 g_zenbleed_fw=0 # true
                 break
             else
@@ -3225,6 +4158,129 @@ has_zenbleed_fixed_firmware() {
     done
     unset tuples
     return $g_zenbleed_fw
+}
+
+# >>>>>> libs/365_kernel_arch.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# Kernel architecture detection helpers.
+# Detects the target kernel's architecture regardless of the host system,
+# enabling correct behavior in offline cross-inspection (e.g. x86 host
+# analyzing an ARM kernel image or System.map).
+
+# Global cache; populated by _detect_kernel_arch on first call.
+# Values: 'arm', 'x86', 'unknown'
+g_kernel_arch=''
+
+# Internal: populate g_kernel_arch using all available information sources,
+# in order from most to least reliable.
+_detect_kernel_arch() {
+    # Return immediately if already detected
+    [ -n "$g_kernel_arch" ] && return 0
+
+    # arm64_sys_ is the ARM64 syscall table symbol prefix; present in any
+    # ARM64 System.map (or /proc/kallsyms) and in the kernel image itself.
+    # sys_call_table + vector_swi is the ARM (32-bit) equivalent.
+    if [ -n "$opt_map" ]; then
+        if grep -q 'arm64_sys_' "$opt_map" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+        if grep -q ' vector_swi$' "$opt_map" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+    fi
+    if [ -n "$g_kernel" ]; then
+        if grep -q 'arm64_sys_' "$g_kernel" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+    fi
+
+    # Kconfig is definitive when available
+    if [ -n "$opt_config" ]; then
+        if grep -qE '^CONFIG_(ARM64|ARM)=y' "$opt_config" 2>/dev/null; then
+            g_kernel_arch='arm'
+            return 0
+        fi
+        if grep -qE '^CONFIG_X86(_64)?=y' "$opt_config" 2>/dev/null; then
+            g_kernel_arch='x86'
+            return 0
+        fi
+    fi
+
+    # Cross-compilation prefix as a last resort (e.g. --arch-prefix aarch64-linux-gnu-)
+    case "${opt_arch_prefix:-}" in
+        aarch64-* | arm64-* | arm-* | armv*-)
+            g_kernel_arch='arm'
+            return 0
+            ;;
+        x86_64-* | i686-* | i?86-*)
+            g_kernel_arch='x86'
+            return 0
+            ;;
+    esac
+
+    # Last resort: if no artifacts identified the arch, assume the target
+    # kernel matches the host CPU. This covers live mode when no kernel
+    # image, config, or System.map is available.
+    if is_x86_cpu; then
+        g_kernel_arch='x86'
+        return 0
+    fi
+    if is_arm_cpu; then
+        g_kernel_arch='arm'
+        return 0
+    fi
+
+    g_kernel_arch='unknown'
+    return 0
+}
+
+# Return 0 (true) if the target kernel is ARM (32 or 64-bit), 1 otherwise.
+is_arm_kernel() {
+    _detect_kernel_arch
+    [ "$g_kernel_arch" = 'arm' ]
+}
+
+# Return 0 (true) if the target kernel is x86/x86_64, 1 otherwise.
+is_x86_kernel() {
+    _detect_kernel_arch
+    [ "$g_kernel_arch" = 'x86' ]
+}
+
+# Compare the target kernel's architecture against the host CPU.
+# If they differ, hardware reads (CPUID, MSR, sysfs) would reflect the host,
+# not the target kernel — force no-hw mode to avoid misleading results.
+# Sets: g_mode (when mismatch detected)
+# Callers: src/main.sh (after check_kernel_info, before check_cpu)
+check_kernel_cpu_arch_mismatch() {
+    local host_arch
+    _detect_kernel_arch
+
+    host_arch='unknown'
+    if is_x86_cpu; then
+        host_arch='x86'
+    elif is_arm_cpu; then
+        host_arch='arm'
+    fi
+
+    # Unsupported CPU architecture (MIPS, RISC-V, PowerPC, ...): force no-hw
+    # since we have no hardware-level checks for these platforms
+    if [ "$host_arch" = 'unknown' ]; then
+        pr_warn "Unsupported CPU architecture (vendor: $cpu_vendor), forcing no-hw mode"
+        g_mode='no-hw'
+        return 0
+    fi
+
+    # If kernel arch is unknown, we can't tell if there's a mismatch
+    [ "$g_kernel_arch" = 'unknown' ] && return 0
+    [ "$host_arch" = "$g_kernel_arch" ] && return 0
+
+    pr_warn "Target kernel architecture ($g_kernel_arch) differs from host CPU ($host_arch), forcing no-hw mode"
+    g_mode='no-hw'
 }
 
 # >>>>>> libs/370_hw_vmm.sh <<<<<<
@@ -3317,20 +4373,22 @@ read_mcedb() {
 
 # Read the Intel official affected CPUs database (builtin) to stdout
 read_inteldb() {
-    if [ "$opt_intel_db" = 1 ]; then
-        awk '/^# %%% ENDOFINTELDB/ { exit } { if (DELIM==1) { print $2 } } /^# %%% INTELDB/ { DELIM=1 }' "$0"
-    fi
-    # otherwise don't output nothing, it'll be as if the database is empty
+    awk '/^# %%% ENDOFINTELDB/ { exit } { if (DELIM==1) { print $2 } } /^# %%% INTELDB/ { DELIM=1 }' "$0"
 }
 
 # Check whether the CPU is running the latest known microcode version
-# Sets: ret_is_latest_known_ucode_latest
+# Sets: ret_is_latest_known_ucode_latest, ret_is_latest_known_ucode_version
 # Returns: 0=latest, 1=outdated, 2=unknown
 is_latest_known_ucode() {
     local brand_prefix tuple pfmask ucode ucode_date
     parse_cpu_details
+    ret_is_latest_known_ucode_version=''
     if [ "$cpu_cpuid" = 0 ]; then
         ret_is_latest_known_ucode_latest="couldn't get your cpuid"
+        return 2
+    fi
+    if [ -z "$cpu_ucode" ]; then
+        ret_is_latest_known_ucode_latest="couldn't get your microcode version"
         return 2
     fi
     ret_is_latest_known_ucode_latest="latest microcode version for your CPU model is unknown"
@@ -3351,6 +4409,8 @@ is_latest_known_ucode() {
         ucode_date=$(echo "$tuple" | cut -d, -f5 | sed -E 's=(....)(..)(..)=\1/\2/\3=')
         pr_debug "is_latest_known_ucode: with cpuid $cpu_cpuid has ucode $cpu_ucode, last known is $ucode from $ucode_date"
         ret_is_latest_known_ucode_latest=$(printf "latest version is 0x%x dated $ucode_date according to $g_mcedb_info" "$ucode")
+        # shellcheck disable=SC2034
+        ret_is_latest_known_ucode_version=$(printf "0x%x" "$ucode")
         if [ "$cpu_ucode" -ge "$ucode" ]; then
             return 0
         else
@@ -3405,7 +4465,7 @@ if [ "$g_os" = Darwin ] || [ "$g_os" = VMkernel ]; then
 fi
 
 # check for mode selection inconsistency
-if [ "$opt_hw_only" = 1 ]; then
+if [ "$g_mode" = hw-only ]; then
     if [ "$opt_cve_all" = 0 ]; then
         show_usage
         echo "$0: error: incompatible modes specified, --hw-only vs --variant" >&2
@@ -3476,10 +4536,8 @@ if [ "$opt_cpu" != all ] && [ "$opt_cpu" -gt "$g_max_core_id" ]; then
     exit 255
 fi
 
-if [ "$opt_live" = 1 ]; then
+if has_runtime; then
     pr_info "Checking for vulnerabilities on current system"
-    pr_info "Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
-    pr_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
     # try to find the image of the current running kernel
     if [ -n "$opt_kernel" ]; then
@@ -3576,7 +4634,6 @@ if [ "$opt_live" = 1 ]; then
     fi
 else
     pr_info "Checking for vulnerabilities against specified kernel"
-    pr_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 fi
 
 if [ -n "$opt_kernel" ]; then
@@ -3609,16 +4666,14 @@ if [ "$g_os" = Linux ]; then
         g_bad_accuracy=1
     fi
 
-    if [ "${g_bad_accuracy:=0}" = 1 ]; then
-        pr_warn "We're missing some kernel info (see -v), accuracy might be reduced"
-    fi
+    : "${g_bad_accuracy:=0}"
 fi
 
 if [ -e "$opt_kernel" ]; then
     if ! command -v "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
         pr_debug "readelf not found"
         g_kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
-    elif [ "$opt_sysfs_only" = 1 ] || [ "$opt_hw_only" = 1 ]; then
+    elif [ "$opt_sysfs_only" = 1 ] || [ "$g_mode" = hw-only ]; then
         g_kernel_err='kernel image decompression skipped'
     else
         extract_kernel "$opt_kernel"
@@ -3643,13 +4698,13 @@ else
     fi
     if [ -n "$g_kernel_version" ]; then
         # in live mode, check if the img we found is the correct one
-        if [ "$opt_live" = 1 ]; then
+        if has_runtime; then
             pr_verbose "Kernel image is \033[35m$g_kernel_version"
             if ! echo "$g_kernel_version" | grep -qF "$(uname -r)"; then
                 pr_warn "Possible discrepancy between your running kernel '$(uname -r)' and the image '$g_kernel_version' we found ($opt_kernel), results might be incorrect"
             fi
         else
-            pr_info "Kernel image is \033[35m$g_kernel_version"
+            pr_verbose "Kernel image is \033[35m$g_kernel_version"
         fi
     else
         pr_verbose "Kernel image version is unknown"
@@ -3675,7 +4730,7 @@ sys_interface_check() {
     msg=''
     ret_sys_interface_check_fullmsg=''
 
-    if [ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
+    if has_runtime && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
         :
     else
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_SYSFS_$(basename "$file")_RET=1")
@@ -3704,9 +4759,14 @@ sys_interface_check() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_SYSFS_$(basename "$file")='$ret_sys_interface_check_fullmsg'")
     fi
     if [ "$mode" = silent ]; then
+        # capture sysfs message for JSON even in silent mode
+        # shellcheck disable=SC2034
+        g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
         return 0
     elif [ "$mode" = quiet ]; then
         pr_info "* Information from the /sys interface: $ret_sys_interface_check_fullmsg"
+        # shellcheck disable=SC2034
+        g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
         return 0
     fi
     pr_info_nol "* Mitigated according to the /sys interface: "
@@ -3726,17 +4786,81 @@ sys_interface_check() {
         ret_sys_interface_check_status=UNK
         pstatus yellow UNKNOWN "$ret_sys_interface_check_fullmsg"
     fi
+    # capture for JSON full output (read by _emit_json_full via pvulnstatus)
+    # shellcheck disable=SC2034
+    g_json_cve_sysfs_status="$ret_sys_interface_check_status"
+    # shellcheck disable=SC2034
+    g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
     pr_debug "sys_interface_check: $file=$msg (re=$regex)"
     return 0
 }
 
+# Display kernel image, config, and System.map availability
+check_kernel_info() {
+    local config_display
+    pr_info "\033[1;34mKernel information\033[0m"
+    if has_runtime; then
+        pr_info "* Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
+    elif [ -n "$g_kernel_version" ]; then
+        pr_info "* Kernel is \033[35m$g_kernel_version\033[0m"
+    else
+        pr_info "* Kernel is \033[35munknown\033[0m"
+    fi
+    if [ -n "$opt_kernel" ] && [ -e "$opt_kernel" ]; then
+        pr_info "* Kernel image found at \033[35m$opt_kernel\033[0m"
+    else
+        pr_info "* Kernel image NOT found"
+    fi
+    if [ -n "$opt_config" ]; then
+        if [ -n "${g_dumped_config:-}" ]; then
+            config_display="$g_procfs/config.gz"
+        else
+            config_display="$opt_config"
+        fi
+        pr_info "* Kernel config found at \033[35m$config_display\033[0m"
+    else
+        pr_info "* Kernel config NOT found"
+    fi
+    if [ -n "$opt_map" ]; then
+        pr_info "* Kernel System.map found at \033[35m$opt_map\033[0m"
+    else
+        pr_info "* Kernel System.map NOT found"
+    fi
+    if [ "${g_bad_accuracy:-0}" = 1 ]; then
+        pr_warn "We're missing some kernel info, accuracy might be reduced"
+    fi
+}
+
 # Display hardware-level CPU mitigation support (microcode features, ARCH_CAPABILITIES, etc.)
 check_cpu() {
-    local capabilities ret spec_ctrl_msr
-    pr_info "\033[1;34mHardware check\033[0m"
+    local capabilities ret spec_ctrl_msr codename ucode_str
 
     if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
         return
+    fi
+
+    pr_info "* CPU details"
+    pr_info "  * Vendor: $cpu_vendor"
+    pr_info "  * Model name: $cpu_friendly_name"
+    pr_info "  * Family: $(printf '0x%02x' "$cpu_family")  Model: $(printf '0x%02x' "$cpu_model")  Stepping: $(printf '0x%02x' "$cpu_stepping")"
+    if [ -n "$cpu_ucode" ]; then
+        ucode_str=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_str="N/A"
+    fi
+    pr_info "  * Microcode: $ucode_str"
+    pr_info "  * CPUID: $(printf '0x%08x' "$cpu_cpuid")"
+    if is_intel; then
+        pr_info "  * Platform ID: $(printf '0x%02x' "$cpu_platformid")"
+        if [ "$cpu_hybrid" = 1 ]; then
+            pr_info "  * Hybrid CPU: YES"
+        else
+            pr_info "  * Hybrid CPU: NO"
+        fi
+        codename=$(get_intel_codename)
+        if [ -n "$codename" ]; then
+            pr_info "  * Codename: $codename"
+        fi
     fi
 
     pr_info "* Hardware support (CPU microcode) for mitigation techniques"
@@ -3778,6 +4902,15 @@ check_cpu() {
     else
         ret=invalid
         pstatus yellow NO "unknown CPU"
+    fi
+    if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
+            cap_ibrs='IBRS (cpuinfo)'
+            cap_spec_ctrl=1
+            pstatus green YES "ibrs flag in $g_procfs/cpuinfo"
+            ret=$READ_CPUID_RET_OK
+        fi
     fi
     if [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
@@ -3847,9 +4980,33 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            cap_ibpb='IBPB (cpuinfo)'
+            pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
         else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+    fi
+
+    # IBPB_RET: CPUID EAX=0x80000008, ECX=0x00 return EBX[30] indicates IBPB also flushes
+    # return predictions (Zen4+). Without this bit, IBPB alone does not clear the return
+    # predictor, requiring an additional RSB fill (kernel X86_BUG_IBPB_NO_RET fix).
+    cap_ibpb_ret=''
+    if is_amd || is_hygon; then
+        pr_info_nol "    * CPU indicates IBPB flushes return predictions: "
+        read_cpuid 0x80000008 0x0 $EBX 30 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            cap_ibpb_ret=1
+            pstatus green YES "IBPB_RET feature bit"
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            cap_ibpb_ret=0
+            pstatus yellow NO
+        else
+            cap_ibpb_ret=-1
             pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         fi
     fi
@@ -3862,7 +5019,7 @@ check_cpu() {
     elif [ "$spec_ctrl_msr" = 0 ]; then
         pstatus yellow NO
     else
-        pstatus yellow UNKNOWN "is msr kernel module available?"
+        pstatus yellow UNKNOWN "$ret_read_msr_msg"
     fi
 
     pr_info_nol "    * CPU indicates STIBP capability: "
@@ -3893,6 +5050,14 @@ check_cpu() {
     else
         ret=invalid
         pstatus yellow UNKNOWN "unknown CPU"
+    fi
+    if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
+            cap_stibp='STIBP (cpuinfo)'
+            pstatus green YES "stibp flag in $g_procfs/cpuinfo"
+            ret=$READ_CPUID_RET_OK
+        fi
     fi
     if [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
@@ -3958,6 +5123,15 @@ check_cpu() {
         fi
     fi
 
+    if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+            cap_ssbd='SSBD (cpuinfo)'
+        elif grep ^flags "$g_procfs/cpuinfo" | grep -qw virt_ssbd; then
+            cap_ssbd='SSBD in VIRT_SPEC_CTRL (cpuinfo)'
+        fi
+    fi
+
     if [ -n "${cap_ssbd:=}" ]; then
         pstatus green YES "$cap_ssbd"
     elif [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ]; then
@@ -3993,17 +5167,16 @@ check_cpu() {
     if [ "$opt_allow_msr_write" = 1 ]; then
         pr_info_nol "    * FLUSH_CMD MSR is available: "
         # the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+        # this is probed for informational purposes only, the CPUID L1D flush bit
+        # (cap_l1df) is the authoritative indicator per Intel guidance
         write_msr 0x10b
         ret=$?
         if [ $ret = $WRITE_MSR_RET_OK ]; then
             pstatus green YES
-            cap_flush_cmd=1
         elif [ $ret = $WRITE_MSR_RET_KO ]; then
             pstatus yellow NO
-            cap_flush_cmd=0
         else
             pstatus yellow UNKNOWN "$ret_write_msr_msg"
-            cap_flush_cmd=-1
         fi
     fi
 
@@ -4014,18 +5187,16 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
+        cap_l1df=1
     elif [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
         cap_l1df=0
     else
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         cap_l1df=-1
-    fi
-
-    # if we weren't allowed to probe the write-only MSR but the CPUID
-    # bit says that it shoul be there, make the assumption that it is
-    if [ "$opt_allow_msr_write" != 1 ]; then
-        cap_flush_cmd=$cap_l1df
     fi
 
     if is_intel; then
@@ -4036,6 +5207,10 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            cap_md_clear=1
+            pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             cap_md_clear=0
             pstatus yellow NO
@@ -4102,6 +5277,10 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
+            cap_arch_capabilities=1
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
             cap_arch_capabilities=0
@@ -4121,7 +5300,13 @@ check_cpu() {
         cap_tsx_ctrl_msr=-1
         cap_gds_ctrl=-1
         cap_gds_no=-1
+        cap_rfds_no=-1
+        cap_rfds_clear=-1
         cap_its_no=-1
+        cap_sbdr_ssdp_no=-1
+        cap_fbsdp_no=-1
+        cap_psdp_no=-1
+        cap_fb_clear=-1
         if [ "$cap_arch_capabilities" = -1 ]; then
             pstatus yellow UNKNOWN
         elif [ "$cap_arch_capabilities" != 1 ]; then
@@ -4136,7 +5321,13 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
+            cap_sbdr_ssdp_no=0
+            cap_fbsdp_no=0
+            cap_psdp_no=0
+            cap_fb_clear=0
             pstatus yellow NO
         else
             read_msr $MSR_IA32_ARCH_CAPABILITIES
@@ -4152,7 +5343,13 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
+            cap_sbdr_ssdp_no=0
+            cap_fbsdp_no=0
+            cap_psdp_no=0
+            cap_fb_clear=0
             if [ $ret = $READ_MSR_RET_OK ]; then
                 capabilities=$ret_read_msr_value
                 # https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/msr-index.h#n82
@@ -4166,10 +5363,16 @@ check_cpu() {
                 [ $((ret_read_msr_value_lo >> 6 & 1)) -eq 1 ] && cap_pschange_msc_no=1
                 [ $((ret_read_msr_value_lo >> 7 & 1)) -eq 1 ] && cap_tsx_ctrl_msr=1
                 [ $((ret_read_msr_value_lo >> 8 & 1)) -eq 1 ] && cap_taa_no=1
+                [ $((ret_read_msr_value_lo >> 13 & 1)) -eq 1 ] && cap_sbdr_ssdp_no=1
+                [ $((ret_read_msr_value_lo >> 14 & 1)) -eq 1 ] && cap_fbsdp_no=1
+                [ $((ret_read_msr_value_lo >> 15 & 1)) -eq 1 ] && cap_psdp_no=1
+                [ $((ret_read_msr_value_lo >> 17 & 1)) -eq 1 ] && cap_fb_clear=1
                 [ $((ret_read_msr_value_lo >> 25 & 1)) -eq 1 ] && cap_gds_ctrl=1
                 [ $((ret_read_msr_value_lo >> 26 & 1)) -eq 1 ] && cap_gds_no=1
+                [ $((ret_read_msr_value_lo >> 27 & 1)) -eq 1 ] && cap_rfds_no=1
+                [ $((ret_read_msr_value_lo >> 28 & 1)) -eq 1 ] && cap_rfds_clear=1
                 [ $((ret_read_msr_value_hi >> 30 & 1)) -eq 1 ] && cap_its_no=1
-                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no its_no=$cap_its_no"
+                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no rfds_no=$cap_rfds_no rfds_clear=$cap_rfds_clear its_no=$cap_its_no sbdr_ssdp_no=$cap_sbdr_ssdp_no fbsdp_no=$cap_fbsdp_no psdp_no=$cap_psdp_no fb_clear=$cap_fb_clear"
                 if [ "$cap_ibrs_all" = 1 ]; then
                     pstatus green YES
                 else
@@ -4254,6 +5457,8 @@ check_cpu() {
             pstatus yellow NO
         fi
 
+        # IA32_TSX_CTRL (MSR 0x122): architectural way to disable TSX, available on
+        # Cascade Lake and newer, and some Coffee Lake steppings via microcode update
         if [ "$cap_tsx_ctrl_msr" = 1 ]; then
             read_msr $MSR_IA32_TSX_CTRL
             ret=$?
@@ -4268,7 +5473,8 @@ check_cpu() {
             elif [ "$cap_tsx_ctrl_rtm_disable" = 0 ]; then
                 pstatus blue NO
             else
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x122_msg"
             fi
 
             pr_info_nol "    * TSX_CTRL MSR indicates TSX CPUID bit is cleared: "
@@ -4277,7 +5483,8 @@ check_cpu() {
             elif [ "$cap_tsx_ctrl_cpuid_clear" = 0 ]; then
                 pstatus blue NO
             else
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x122_msg"
             fi
         fi
 
@@ -4302,7 +5509,8 @@ check_cpu() {
 
             pr_info_nol "    * GDS microcode mitigation is disabled (GDS_MITG_DIS): "
             if [ "$cap_gds_mitg_dis" = -1 ]; then
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x123_msg"
             elif [ "$cap_gds_mitg_dis" = 1 ]; then
                 pstatus yellow YES
             else
@@ -4311,7 +5519,8 @@ check_cpu() {
 
             pr_info_nol "    * GDS microcode mitigation is locked in enabled state (GDS_MITG_LOCK): "
             if [ "$cap_gds_mitg_lock" = -1 ]; then
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x123_msg"
             elif [ "$cap_gds_mitg_lock" = 1 ]; then
                 pstatus blue YES
             else
@@ -4323,6 +5532,42 @@ check_cpu() {
         if [ "$cap_gds_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
         elif [ "$cap_gds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU explicitly indicates not being affected by MMIO Stale Data (FBSDP_NO & PSDP_NO & SBDR_SSDP_NO): "
+        if [ "$cap_sbdr_ssdp_no" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU microcode supports Fill Buffer clearing (FB_CLEAR): "
+        if [ "$cap_fb_clear" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_fb_clear" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU explicitly indicates not being affected by RFDS (RFDS_NO): "
+        if [ "$cap_rfds_no" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU microcode supports clearing register files (RFDS_CLEAR): "
+        if [ "$cap_rfds_clear" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_clear" = 1 ]; then
             pstatus green YES
         else
             pstatus yellow NO
@@ -4430,6 +5675,54 @@ check_cpu() {
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
     fi
 
+    pr_info_nol "  * CPU supports TSX Force Abort (TSX_FORCE_ABORT): "
+    ret=$READ_CPUID_RET_KO
+    cap_tsx_force_abort=0
+    if is_intel; then
+        read_cpuid 0x7 0x0 $EDX 13 1 1
+        ret=$?
+    fi
+    if [ $ret = $READ_CPUID_RET_OK ]; then
+        cap_tsx_force_abort=1
+        pstatus blue YES
+    elif [ $ret = $READ_CPUID_RET_KO ]; then
+        pstatus yellow NO
+    else
+        cap_tsx_force_abort=-1
+        pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+    fi
+
+    # IA32_TSX_FORCE_ABORT (MSR 0x10F): stopgap for older Skylake/Kaby Lake CPUs that
+    # don't support IA32_TSX_CTRL, forces all RTM transactions to abort via microcode update
+    if [ "$cap_tsx_force_abort" = 1 ]; then
+        read_msr $MSR_IA32_TSX_FORCE_ABORT
+        ret=$?
+        if [ "$ret" = $READ_MSR_RET_OK ]; then
+            cap_tsx_force_abort_rtm_disable=$((ret_read_msr_value_lo >> 0 & 1))
+            cap_tsx_force_abort_cpuid_clear=$((ret_read_msr_value_lo >> 1 & 1))
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates all TSX transactions are aborted: "
+        if [ "$cap_tsx_force_abort_rtm_disable" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_rtm_disable" = 0 ]; then
+            pstatus blue NO
+        else
+            # shellcheck disable=SC2154
+            pstatus yellow UNKNOWN "$ret_read_msr_0x10f_msg"
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates TSX CPUID bit is cleared: "
+        if [ "$cap_tsx_force_abort_cpuid_clear" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_cpuid_clear" = 0 ]; then
+            pstatus blue NO
+        else
+            # shellcheck disable=SC2154
+            pstatus yellow UNKNOWN "$ret_read_msr_0x10f_msg"
+        fi
+    fi
+
     pr_info_nol "  * CPU supports Software Guard Extensions (SGX): "
     ret=$READ_CPUID_RET_KO
     cap_sgx=0
@@ -4463,11 +5756,11 @@ check_cpu() {
         read_msr $MSR_IA32_MCU_OPT_CTRL
         ret=$?
         if [ $ret = $READ_MSR_RET_OK ]; then
-            if [ "$ret_read_msr_value" = "0000000000000000" ]; then
-                #SRBDS mitigation control exists and is enabled via microcode
+            if [ "$((ret_read_msr_value_lo >> 0 & 1))" = 0 ]; then
+                #SRBDS mitigation control exists and is enabled via microcode (RNGDS_MITG_DIS bit is 0)
                 cap_srbds_on=1
             else
-                #SRBDS mitigation control exists but is disabled via microcode
+                #SRBDS mitigation control exists but is disabled via microcode (RNGDS_MITG_DIS bit is 1)
                 cap_srbds_on=0
             fi
         else
@@ -4688,7 +5981,7 @@ check_cve() {
 check_mds_bsd() {
     local kernel_md_clear kernel_smt_allowed kernel_mds_enabled kernel_mds_state
     pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
-    if [ "$opt_live" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         if sysctl hw.mds_disable >/dev/null 2>&1; then
             pstatus green YES
             kernel_md_clear=1
@@ -4738,7 +6031,17 @@ check_mds_bsd() {
     else
         kernel_mds_state=inactive
     fi
-    # https://github.com/freebsd/freebsd/blob/master/sys/x86/x86/cpu_machdep.c#L953
+    # possible values for hw.mds_disable_state (FreeBSD cpu_machdep.c):
+    # - inactive: no mitigation (non-Intel, disabled, or not needed)
+    # - VERW: microcode-based VERW instruction
+    # - software IvyBridge: SW sequence for Ivy Bridge
+    # - software Broadwell: SW sequence for Broadwell
+    # - software Skylake SSE: SW sequence for Skylake (SSE)
+    # - software Skylake AVX: SW sequence for Skylake (AVX)
+    # - software Skylake AVX512: SW sequence for Skylake (AVX-512)
+    # - software Silvermont: SW sequence for Silvermont
+    # - unknown: fallback if handler doesn't match any known
+    # ref: https://github.com/freebsd/freebsd-src/blob/main/sys/x86/x86/cpu_machdep.c
     case "$kernel_mds_state" in
         inactive) pstatus yellow NO ;;
         VERW) pstatus green YES "with microcode support" ;;
@@ -4751,7 +6054,7 @@ check_mds_bsd() {
     else
         if [ "$cap_md_clear" = 1 ]; then
             if [ "$kernel_md_clear" = 1 ]; then
-                if [ "$opt_live" = 1 ]; then
+                if [ "$g_mode" = live ]; then
                     # mitigation must also be enabled
                     if [ "$kernel_mds_enabled" -ge 1 ]; then
                         if [ "$opt_paranoid" != 1 ] || [ "$kernel_smt_allowed" = 0 ]; then
@@ -4770,7 +6073,23 @@ check_mds_bsd() {
                 pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
             fi
         else
-            if [ "$kernel_md_clear" = 1 ]; then
+            if [ "$kernel_md_clear" = 1 ] && [ "$g_mode" = live ]; then
+                # no MD_CLEAR in microcode, but FreeBSD may still have software-only mitigation active
+                case "$kernel_mds_state" in
+                    software*)
+                        if [ "$opt_paranoid" = 1 ]; then
+                            pvulnstatus "$cve" VULN "Software-only mitigation is active, but in paranoid mode a microcode-based mitigation is required"
+                        elif [ "$kernel_smt_allowed" = 1 ]; then
+                            pvulnstatus "$cve" OK "Software-only mitigation is active, but SMT is enabled so cross-thread attacks are still possible"
+                        else
+                            pvulnstatus "$cve" OK "Software-only mitigation is active (no microcode update required for this CPU)"
+                        fi
+                        ;;
+                    *)
+                        pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+                        ;;
+                esac
+            elif [ "$kernel_md_clear" = 1 ]; then
                 pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
             else
                 pvulnstatus "$cve" VULN "Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
@@ -4791,50 +6110,54 @@ check_mds_linux() {
     fi
 
     if [ "$opt_sysfs_only" != 1 ]; then
-        pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
+        # MDS is Intel-only; skip x86-specific kernel/cpuinfo checks on non-x86 kernels
         kernel_md_clear=''
-        kernel_md_clear_can_tell=1
-        if [ "$opt_live" = 1 ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
-            kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
-            pstatus green YES "$kernel_md_clear"
-        fi
-        if [ -z "$kernel_md_clear" ]; then
-            if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
-                kernel_md_clear_can_tell=0
-            elif [ -n "$g_kernel_err" ]; then
-                kernel_md_clear_can_tell=0
-            elif "${opt_arch_prefix}strings" "$g_kernel" | grep -q 'Clear CPU buffers'; then
-                pr_debug "md_clear: found 'Clear CPU buffers' string in kernel image"
-                kernel_md_clear='found md_clear implementation evidence in kernel image'
+        kernel_md_clear_can_tell=0
+        if is_x86_kernel; then
+            pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
+            kernel_md_clear_can_tell=1
+            if [ "$g_mode" = live ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+                kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
                 pstatus green YES "$kernel_md_clear"
             fi
-        fi
-        if [ -z "$kernel_md_clear" ]; then
-            if [ "$kernel_md_clear_can_tell" = 1 ]; then
-                pstatus yellow NO
-            else
-                pstatus yellow UNKNOWN
+            if [ -z "$kernel_md_clear" ]; then
+                if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+                    kernel_md_clear_can_tell=0
+                elif [ -n "$g_kernel_err" ]; then
+                    kernel_md_clear_can_tell=0
+                elif "${opt_arch_prefix}strings" "$g_kernel" | grep -q 'Clear CPU buffers'; then
+                    pr_debug "md_clear: found 'Clear CPU buffers' string in kernel image"
+                    kernel_md_clear='found md_clear implementation evidence in kernel image'
+                    pstatus green YES "$kernel_md_clear"
+                fi
             fi
-        fi
+            if [ -z "$kernel_md_clear" ]; then
+                if [ "$kernel_md_clear_can_tell" = 1 ]; then
+                    pstatus yellow NO
+                else
+                    pstatus yellow UNKNOWN
+                fi
+            fi
 
-        if [ "$opt_live" = 1 ] && [ "$sys_interface_available" = 1 ]; then
-            pr_info_nol "* Kernel mitigation is enabled and active: "
-            if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
-                mds_mitigated=1
-                pstatus green YES
-            else
-                mds_mitigated=0
-                pstatus yellow NO
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
+                pr_info_nol "* Kernel mitigation is enabled and active: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
+                    mds_mitigated=1
+                    pstatus green YES
+                else
+                    mds_mitigated=0
+                    pstatus yellow NO
+                fi
+                pr_info_nol "* SMT is either mitigated or disabled: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
+                    mds_smt_mitigated=1
+                    pstatus green YES
+                else
+                    mds_smt_mitigated=0
+                    pstatus yellow NO
+                fi
             fi
-            pr_info_nol "* SMT is either mitigated or disabled: "
-            if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
-                mds_smt_mitigated=1
-                pstatus green YES
-            else
-                mds_smt_mitigated=0
-                pstatus yellow NO
-            fi
-        fi
+        fi # is_x86_kernel
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
         msg="/sys vulnerability interface use forced, but it's not available!"
@@ -4849,7 +6172,7 @@ check_mds_linux() {
             # compute mystatus and mymsg from our own logic
             if [ "$cap_md_clear" = 1 ]; then
                 if [ -n "$kernel_md_clear" ]; then
-                    if [ "$opt_live" = 1 ]; then
+                    if [ "$g_mode" = live ]; then
                         # mitigation must also be enabled
                         if [ "$mds_mitigated" = 1 ]; then
                             if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
@@ -4900,6 +6223,572 @@ check_mds_linux() {
             pvulnstatus "$cve" "$status" "$msg"
         fi
     fi
+}
+
+# >>>>>> vulns-helpers/check_mmio.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+# MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - BSD mitigation check
+check_mmio_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - Linux mitigation check
+check_mmio_linux() {
+    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg
+    status=UNK
+    sys_interface_available=0
+    msg=''
+    if sys_interface_check "$VULN_SYSFS_BASE/mmio_stale_data" '^[^;]+'; then
+        # Kernel source inventory for MMIO Stale Data, traced via git blame walkback
+        # across /shared/linux, /shared/linux-stable, and /shared/linux-centos-redhat:
+        #
+        # --- sysfs messages ---
+        # all versions:
+        #   "Not affected"                                                      (cpu_show_common, generic)
+        #
+        # 8cb861e9e3c9 (v5.19, initial MMIO mitigation, Pawan Gupta 2022-05-19):
+        #   enum mmio_mitigations: MMIO_MITIGATION_OFF, MMIO_MITIGATION_UCODE_NEEDED, MMIO_MITIGATION_VERW
+        #   mmio_strings[]:
+        #     "Vulnerable"                                                      (MMIO_MITIGATION_OFF)
+        #     "Vulnerable: Clear CPU buffers attempted, no microcode"           (MMIO_MITIGATION_UCODE_NEEDED)
+        #     "Mitigation: Clear CPU buffers"                                   (MMIO_MITIGATION_VERW)
+        #
+        # 8d50cdf8b834 (v5.19, sysfs reporting, Pawan Gupta 2022-05-19):
+        #   mmio_stale_data_show_state() added with SMT suffix:
+        #     "{mmio_strings[state]}; SMT vulnerable"                           (sched_smt_active() true)
+        #     "{mmio_strings[state]}; SMT disabled"                             (sched_smt_active() false)
+        #     "{mmio_strings[state]}; SMT Host state unknown"                   (boot_cpu_has(HYPERVISOR))
+        #   No SMT suffix when MMIO_MITIGATION_OFF.
+        #   Uses sysfs_emit() in mainline. CentOS 7 backport uses sprintf().
+        #
+        # 7df548840c49 (v6.0, "unknown" reporting, Pawan Gupta 2022-08-03):
+        #   Added X86_BUG_MMIO_UNKNOWN handling:
+        #     "Unknown: No mitigations"                                         (X86_BUG_MMIO_UNKNOWN set)
+        #   Present in: v6.0 through v6.15, stable 5.10.y/5.15.y/6.1.y/6.6.y, rocky8, rocky9
+        #
+        # dd86a1d013e0 (v6.16, removed MMIO_UNKNOWN, Borislav Petkov 2025-04-14):
+        #   Removed X86_BUG_MMIO_UNKNOWN -- "Unknown" message no longer produced.
+        #   Replaced by general X86_BUG_OLD_MICROCODE mechanism.
+        #
+        # 4a5a04e61d7f (v6.16, restructured, David Kaplan 2025-04-18):
+        #   Split into select/update/apply pattern. Same strings, same output.
+        #
+        # all messages start with "Not affected", "Vulnerable", "Mitigation", or "Unknown"
+        #
+        # --- stable backports ---
+        # Stable branches 5.4.y through 6.15.y: identical mmio_strings[] array.
+        # 5.4.y uses sprintf(); 5.10.y+ uses sysfs_emit().
+        # v6.0.y through v6.15.y include "Unknown: No mitigations" branch.
+        # v6.16.y+: restructured, no "Unknown" message.
+        #
+        # --- RHEL/CentOS ---
+        # centos7: sprintf() instead of sysfs_emit(), otherwise identical strings.
+        # rocky8: sysfs_emit(), includes X86_BUG_MMIO_UNKNOWN.
+        # rocky9: sysfs_emit(), includes X86_BUG_MMIO_UNKNOWN.
+        # rocky10: restructured, matches mainline v6.16+.
+        # All RHEL branches use identical mmio_strings[] array.
+        #
+        # --- Kconfig symbols ---
+        # No Kconfig symbol: v5.19 through v6.11 (mitigation always compiled in when CPU_SUP_INTEL)
+        # 163f9fe6b625 (v6.12, Breno Leitao 2024-07-29): CONFIG_MITIGATION_MMIO_STALE_DATA (bool, default y, depends CPU_SUP_INTEL)
+        # No other name variants exist (no renames). Single symbol throughout history.
+        #
+        # --- stable ---
+        # Only linux-rolling-lts and linux-rolling-stable have the Kconfig symbol.
+        # Stable branches 5.x through 6.11.y: no Kconfig (always compiled in).
+        #
+        # --- RHEL ---
+        # rocky9, rocky10: CONFIG_MITIGATION_MMIO_STALE_DATA present.
+        # rocky8, centos7: no Kconfig symbol.
+        #
+        # --- kernel functions (for $opt_map / System.map) ---
+        # 8cb861e9e3c9 (v5.19): mmio_select_mitigation() [static __init]
+        # 8cb861e9e3c9 (v5.19): mmio_stale_data_parse_cmdline() [static __init]
+        # 8d50cdf8b834 (v5.19): mmio_stale_data_show_state() [static]
+        # 8d50cdf8b834 (v5.19): cpu_show_mmio_stale_data() [global, non-static -- visible in System.map]
+        # 4a5a04e61d7f (v6.16): + mmio_update_mitigation() [static __init]
+        # 4a5a04e61d7f (v6.16): + mmio_apply_mitigation() [static __init]
+        #
+        # Best grep targets for $opt_map: mmio_select_mitigation, cpu_show_mmio_stale_data
+        # Best grep targets for $g_kernel: mmio_stale_data (appears in sysfs strings and parameter name)
+        #
+        # --- stable ---
+        # 5.4.y-6.15.y: mmio_select_mitigation, mmio_stale_data_parse_cmdline, mmio_stale_data_show_state
+        # 6.16.y+: + mmio_update_mitigation, mmio_apply_mitigation
+        #
+        # --- RHEL ---
+        # rocky8/rocky9: mmio_select_mitigation, mmio_stale_data_parse_cmdline, mmio_stale_data_show_state
+        # rocky10: + mmio_update_mitigation, mmio_apply_mitigation
+        #
+        # --- CPU affection logic (for is_cpu_affected) ---
+        # 51802186158c (v5.19, initial model list, Pawan Gupta 2022-05-19):
+        #   Intel Family 6:
+        #     HASWELL_X (0x3F)
+        #     BROADWELL_D (0x56), BROADWELL_X (0x4F)
+        #     SKYLAKE_X (0x55), SKYLAKE_L (0x4E), SKYLAKE (0x5E)
+        #     KABYLAKE_L (0x8E), KABYLAKE (0x9E)
+        #     ICELAKE_L (0x7E), ICELAKE_D (0x6C), ICELAKE_X (0x6A)
+        #     COMETLAKE (0xA5), COMETLAKE_L (0xA6)
+        #     LAKEFIELD (0x8A)
+        #     ROCKETLAKE (0xA7)
+        #     ATOM_TREMONT (0x96), ATOM_TREMONT_D (0x86), ATOM_TREMONT_L (0x9C)
+        #   All steppings. No stepping restrictions for MMIO flag itself.
+        #
+        # No models have been added to or removed from the MMIO blacklist since v5.19.
+        #
+        # immunity: ARCH_CAP_SBDR_SSDP_NO (bit 13) AND ARCH_CAP_FBSDP_NO (bit 14) AND ARCH_CAP_PSDP_NO (bit 15)
+        #   All three must be set. Checked via arch_cap_mmio_immune() in common.c.
+        #   Bug is set only when: cpu_matches(blacklist, MMIO) AND NOT arch_cap_mmio_immune().
+        #
+        # microcode mitigation: ARCH_CAP_FB_CLEAR (bit 17) -- VERW clears fill buffers.
+        #   Alternative: MD_CLEAR CPUID + FLUSH_L1D CPUID when MDS_NO is not set (legacy path).
+        #
+        # vendor scope: Intel only. Non-Intel CPUs never set X86_BUG_MMIO_STALE_DATA.
+        sys_interface_available=1
+        status=$ret_sys_interface_check_status
+    fi
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        # MMIO Stale Data is Intel-only; skip x86-specific kernel/MSR checks on non-x86 kernels
+        kernel_mmio=''
+        kernel_mmio_can_tell=0
+        if is_x86_kernel; then
+            pr_info_nol "* Kernel supports MMIO Stale Data mitigation: "
+            kernel_mmio_can_tell=1
+            if [ -n "$g_kernel_err" ]; then
+                kernel_mmio_can_tell=0
+            elif grep -q 'mmio_stale_data' "$g_kernel" 2>/dev/null; then
+                pr_debug "mmio: found 'mmio_stale_data' string in kernel image"
+                kernel_mmio='found MMIO Stale Data mitigation evidence in kernel image'
+                pstatus green YES "$kernel_mmio"
+            fi
+            if [ -z "$kernel_mmio" ] && [ -n "$opt_config" ] && grep -q '^CONFIG_MITIGATION_MMIO_STALE_DATA=y' "$opt_config"; then
+                kernel_mmio='found MMIO Stale Data mitigation config option enabled'
+                pstatus green YES "$kernel_mmio"
+            fi
+            if [ -z "$kernel_mmio" ] && [ -n "$opt_map" ]; then
+                if grep -qE 'mmio_select_mitigation|cpu_show_mmio_stale_data' "$opt_map"; then
+                    kernel_mmio='found MMIO Stale Data mitigation function in System.map'
+                    pstatus green YES "$kernel_mmio"
+                fi
+            fi
+            if [ -z "$kernel_mmio" ]; then
+                if [ "$kernel_mmio_can_tell" = 1 ]; then
+                    pstatus yellow NO
+                else
+                    pstatus yellow UNKNOWN
+                fi
+            fi
+
+            pr_info_nol "* CPU microcode supports Fill Buffer clearing: "
+            if [ "$cap_fb_clear" = -1 ]; then
+                pstatus yellow UNKNOWN
+            elif [ "$cap_fb_clear" = 1 ]; then
+                pstatus green YES
+            else
+                pstatus yellow NO
+            fi
+
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
+                pr_info_nol "* Kernel mitigation is enabled and active: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -qi ^mitigation; then
+                    mmio_mitigated=1
+                    pstatus green YES
+                else
+                    mmio_mitigated=0
+                    pstatus yellow NO
+                fi
+                pr_info_nol "* SMT is either mitigated or disabled: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
+                    mmio_smt_mitigated=1
+                    pstatus green YES
+                else
+                    mmio_smt_mitigated=0
+                    pstatus yellow NO
+                fi
+            fi
+        fi # is_x86_kernel
+    elif [ "$sys_interface_available" = 0 ]; then
+        # we have no sysfs but were asked to use it only!
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        # override status & msg in case CPU is not vulnerable after all
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        if [ "$opt_sysfs_only" != 1 ]; then
+            # compute mystatus and mymsg from our own logic
+            if [ "$cap_fb_clear" = 1 ]; then
+                if [ -n "$kernel_mmio" ]; then
+                    if [ "$g_mode" = live ]; then
+                        # mitigation must also be enabled
+                        if [ "$mmio_mitigated" = 1 ]; then
+                            if [ "$opt_paranoid" != 1 ] || [ "$mmio_smt_mitigated" = 1 ]; then
+                                mystatus=OK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            else
+                                mystatus=VULN
+                                mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
+                            fi
+                        else
+                            mystatus=VULN
+                            mymsg="Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
+                        fi
+                    else
+                        mystatus=OK
+                        mymsg="Your microcode and kernel are both up to date for this mitigation"
+                    fi
+                else
+                    mystatus=VULN
+                    mymsg="Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
+                fi
+            else
+                if [ -n "$kernel_mmio" ]; then
+                    mystatus=VULN
+                    mymsg="Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+                else
+                    mystatus=VULN
+                    mymsg="Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
+                fi
+            fi
+        else
+            # sysfs only: return the status/msg we got
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
+            return
+        fi
+
+        # if we didn't get a msg+status from sysfs, use ours
+        if [ -z "$msg" ]; then
+            pvulnstatus "$cve" "$mystatus" "$mymsg"
+        elif [ "$opt_paranoid" = 1 ]; then
+            # if paranoid mode is enabled, we know that we won't agree on status, so take ours
+            pvulnstatus "$cve" "$mystatus" "$mymsg"
+        elif [ "$status" = "$mystatus" ]; then
+            # if we agree on status, we'll print the common status and our message (more detailed than the sysfs one)
+            pvulnstatus "$cve" "$status" "$mymsg"
+        else
+            # if we don't agree on status, maybe our logic is flawed due to a new kernel/mitigation? use the one from sysfs
+            pvulnstatus "$cve" "$status" "$msg"
+        fi
+
+        if [ "$mystatus" = VULN ]; then
+            explain "Update your kernel to a version that includes MMIO Stale Data mitigation (Linux 5.19+), and update your CPU microcode. If you are using a distribution kernel, make sure you are up to date. To enforce full mitigation including SMT, boot with 'mmio_stale_data=full,nosmt'."
+        fi
+    fi
+}
+
+# >>>>>> vulns-helpers/check_sls.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# Straight-Line Speculation (SLS) supplementary check (--extra only)
+#
+# SLS: x86 CPUs may speculatively execute instructions past unconditional
+# control flow changes (RET, indirect JMP/CALL). Mitigated at compile time
+# by CONFIG_MITIGATION_SLS (formerly CONFIG_SLS before kernel 6.8), which
+# enables -mharden-sls=all to insert INT3 after these instructions.
+# No sysfs interface, no MSR, no CPU feature flag.
+# Related: CVE-2021-26341 (AMD Zen1/Zen2 direct-branch SLS subset).
+
+# Heuristic: scan the kernel .text section for indirect call/jmp thunks
+# (retpoline-style stubs), then check whether tail-call JMPs to those thunks
+# are followed by INT3 (0xcc). With SLS enabled: >80%. Without: <20%.
+#
+# Thunk signature: e8 01 00 00 00 cc 48 89 XX 24
+#   call +1; int3; mov <reg>,(%rsp); ...
+# Tail-call pattern: e9 XX XX XX XX [cc?]
+#   jmp <thunk>; [int3 if SLS]
+
+# Perl implementation of the SLS heuristic byte scanner.
+# Args: $1 = path to raw .text binary (from objcopy -O binary -j .text)
+# Output: thunks=N jmps=N sls=N
+#
+# The heuristic looks for two types of thunks and counts how many jmp rel32
+# instructions targeting them are followed by INT3 (the SLS mitigation):
+#
+# 1. Indirect call/jmp thunks (retpoline stubs used for indirect tail calls):
+#    e8 01 00 00 00 cc 48 89 XX 24  (call +1; int3; mov <reg>,(%rsp))
+#
+# 2. Return thunk (used for all function returns via jmp __x86_return_thunk):
+#    c3 90 90 90 90 cc cc cc cc cc  (ret; nop*4; int3*5+)
+#    This is the most common jmp target in retpoline-enabled kernels.
+#
+# Some kernels only use indirect thunks, some only the return thunk, and some
+# use both. We check both and combine the results.
+_sls_heuristic_perl() {
+    perl -e '
+        use strict;
+        use warnings;
+        local $/;
+        open my $fh, "<:raw", $ARGV[0] or die "open: $!";
+        my $text = <$fh>;
+        close $fh;
+        my $len = length($text);
+
+        # Collect two types of thunks separately, as different kernels
+        # apply SLS to different thunk types.
+
+        my (%indirect_thunks, %return_thunks);
+
+        # Pattern 1: indirect call/jmp thunks (retpoline stubs)
+        while ($text =~ /\xe8\x01\x00\x00\x00\xcc\x48\x89.\x24/gs) {
+            $indirect_thunks{ pos($text) - length($&) } = 1;
+        }
+
+        # Pattern 2: return thunk (ret; nop*4; int3*5)
+        while ($text =~ /\xc3\x90\x90\x90\x90\xcc\xcc\xcc\xcc\xcc/gs) {
+            $return_thunks{ pos($text) - length($&) } = 1;
+        }
+
+        my $n_indirect = scalar keys %indirect_thunks;
+        my $n_return = scalar keys %return_thunks;
+
+        if ($n_indirect + $n_return == 0) {
+            print "thunks=0 jmps=0 sls=0\n";
+            exit 0;
+        }
+
+        # Count jmps to each thunk type separately
+        my ($ind_total, $ind_sls) = (0, 0);
+        my ($ret_total, $ret_sls) = (0, 0);
+
+        for (my $i = 0; $i + 5 < $len; $i++) {
+            next unless substr($text, $i, 1) eq "\xe9";
+            my $rel = unpack("V", substr($text, $i + 1, 4));
+            $rel -= 4294967296 if $rel >= 2147483648;
+            my $target = $i + 5 + $rel;
+            my $has_int3 = ($i + 5 < $len && substr($text, $i + 5, 1) eq "\xcc") ? 1 : 0;
+            if (exists $indirect_thunks{$target}) {
+                $ind_total++;
+                $ind_sls += $has_int3;
+            }
+            if (exists $return_thunks{$target}) {
+                $ret_total++;
+                $ret_sls += $has_int3;
+            }
+        }
+
+        # Use whichever thunk type has jmps; prefer indirect thunks if both have data
+        my ($total, $sls, $n_thunks);
+        if ($ind_total > 0) {
+            ($total, $sls, $n_thunks) = ($ind_total, $ind_sls, $n_indirect);
+        } elsif ($ret_total > 0) {
+            ($total, $sls, $n_thunks) = ($ret_total, $ret_sls, $n_return);
+        } else {
+            ($total, $sls, $n_thunks) = (0, 0, $n_indirect + $n_return);
+        }
+
+        printf "thunks=%d jmps=%d sls=%d\n", $n_thunks, $total, $sls;
+    ' "$1" 2>/dev/null
+}
+
+# Awk fallback implementation of the SLS heuristic byte scanner.
+# Slower than perl but uses only POSIX tools (od + awk).
+# Args: $1 = path to raw .text binary (from objcopy -O binary -j .text)
+# Output: thunks=N jmps=N sls=N
+_sls_heuristic_awk() {
+    od -An -tu1 -v "$1" | awk '
+    {
+        for (i = 1; i <= NF; i++) b[n++] = $i + 0
+    }
+    END {
+        # Pattern 1: indirect call/jmp thunks
+        # 232 1 0 0 0 204 72 137 XX 36  (e8 01 00 00 00 cc 48 89 XX 24)
+        for (i = 0; i + 9 < n; i++) {
+            if (b[i]==232 && b[i+1]==1 && b[i+2]==0 && b[i+3]==0 && \
+                b[i+4]==0 && b[i+5]==204 && b[i+6]==72 && b[i+7]==137 && \
+                b[i+9]==36) {
+                ind[i] = 1
+                n_ind++
+            }
+        }
+        # Pattern 2: return thunk (ret; nop*4; int3*5)
+        # 195 144 144 144 144 204 204 204 204 204  (c3 90 90 90 90 cc cc cc cc cc)
+        for (i = 0; i + 9 < n; i++) {
+            if (b[i]==195 && b[i+1]==144 && b[i+2]==144 && b[i+3]==144 && \
+                b[i+4]==144 && b[i+5]==204 && b[i+6]==204 && b[i+7]==204 && \
+                b[i+8]==204 && b[i+9]==204) {
+                ret[i] = 1
+                n_ret++
+            }
+        }
+        if (n_ind + n_ret == 0) { print "thunks=0 jmps=0 sls=0"; exit }
+
+        # Count jmps to each thunk type separately
+        ind_total = 0; ind_sls = 0
+        ret_total = 0; ret_sls = 0
+        for (i = 0; i + 5 < n; i++) {
+            if (b[i] != 233) continue
+            rel = b[i+1] + b[i+2]*256 + b[i+3]*65536 + b[i+4]*16777216
+            if (rel >= 2147483648) rel -= 4294967296
+            target = i + 5 + rel
+            has_int3 = (b[i+5] == 204) ? 1 : 0
+            if (target in ind) { ind_total++; ind_sls += has_int3 }
+            if (target in ret) { ret_total++; ret_sls += has_int3 }
+        }
+
+        # Prefer indirect thunks if they have data, else fall back to return thunk
+        if (ind_total > 0)
+            printf "thunks=%d jmps=%d sls=%d\n", n_ind, ind_total, ind_sls
+        else if (ret_total > 0)
+            printf "thunks=%d jmps=%d sls=%d\n", n_ret, ret_total, ret_sls
+        else
+            printf "thunks=%d jmps=0 sls=0\n", n_ind + n_ret
+    }' 2>/dev/null
+}
+
+check_CVE_0000_0001_linux() {
+    local status sys_interface_available msg
+    status=UNK
+    sys_interface_available=0
+    msg=''
+
+    # No sysfs interface for SLS
+    # sys_interface_available stays 0
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+
+        # --- CPU affection check ---
+        if ! is_cpu_affected "$cve"; then
+            pvulnstatus "$cve" OK "your CPU is not affected"
+            return
+        fi
+
+        # --- ARM: no kernel mitigation available ---
+        if is_arm_kernel; then
+            pvulnstatus "$cve" VULN "no kernel mitigation available for arm64 SLS (CVE-2020-13844)"
+            explain "Your ARM processor is affected by Straight-Line Speculation (CVE-2020-13844).\n" \
+                "GCC and Clang support -mharden-sls=all for aarch64, which inserts SB (Speculation Barrier)\n" \
+                "or DSB+ISB after RET and BR instructions. However, the Linux kernel does not enable this flag:\n" \
+                "patches to add CONFIG_HARDEN_SLS_ALL were submitted in 2021 but were rejected upstream.\n" \
+                "There is currently no kernel-level mitigation for SLS on arm64."
+            return
+        fi
+
+        # --- x86: config check and binary heuristic ---
+        if ! is_x86_kernel; then
+            pvulnstatus "$cve" UNK "SLS mitigation detection not supported for this kernel architecture"
+            return
+        fi
+
+        local _sls_config=''
+        if [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
+            pr_info_nol "  * Kernel compiled with SLS mitigation: "
+            if grep -qE '^CONFIG_(MITIGATION_)?SLS=y' "$opt_config"; then
+                _sls_config=1
+                pstatus green YES
+            else
+                _sls_config=0
+                pstatus yellow NO
+            fi
+        fi
+
+        # --- method 2: kernel image heuristic (fallback when no config) ---
+        local _sls_heuristic=''
+        if [ -z "$_sls_config" ]; then
+            pr_info_nol "  * Kernel compiled with SLS mitigation: "
+            if [ -n "$g_kernel_err" ]; then
+                pstatus yellow UNKNOWN "$g_kernel_err"
+            elif [ -z "$g_kernel" ]; then
+                pstatus yellow UNKNOWN "no kernel image available"
+            elif ! command -v "${opt_arch_prefix}objcopy" >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objcopy' tool, usually in the binutils package"
+            else
+                local _sls_result
+                g_sls_text_tmp=$(mktemp -t smc-sls-text-XXXXXX)
+
+                if ! "${opt_arch_prefix}objcopy" -O binary -j .text "$g_kernel" "$g_sls_text_tmp" 2>/dev/null || [ ! -s "$g_sls_text_tmp" ]; then
+                    pstatus yellow UNKNOWN "failed to extract .text section from kernel image"
+                    rm -f "$g_sls_text_tmp"
+                    g_sls_text_tmp=''
+                else
+                    _sls_result=''
+                    if command -v perl >/dev/null 2>&1; then
+                        _sls_result=$(_sls_heuristic_perl "$g_sls_text_tmp")
+                    elif command -v awk >/dev/null 2>&1; then
+                        _sls_result=$(_sls_heuristic_awk "$g_sls_text_tmp")
+                    fi
+                    rm -f "$g_sls_text_tmp"
+                    g_sls_text_tmp=''
+
+                    if [ -z "$_sls_result" ]; then
+                        pstatus yellow UNKNOWN "missing 'perl' or 'awk' tool for heuristic scan"
+                    else
+                        local _sls_thunks _sls_jmps _sls_int3
+                        _sls_thunks=$(echo "$_sls_result" | sed -n 's/.*thunks=\([0-9]*\).*/\1/p')
+                        _sls_jmps=$(echo "$_sls_result" | sed -n 's/.*jmps=\([0-9]*\).*/\1/p')
+                        _sls_int3=$(echo "$_sls_result" | sed -n 's/.*sls=\([0-9]*\).*/\1/p')
+                        pr_debug "sls heuristic: thunks=$_sls_thunks jmps=$_sls_jmps int3=$_sls_int3"
+
+                        if [ "${_sls_thunks:-0}" = 0 ] || [ "${_sls_jmps:-0}" = 0 ]; then
+                            pstatus yellow UNKNOWN "no retpoline indirect thunks found in kernel image"
+                        else
+                            local _sls_pct=$((_sls_int3 * 100 / _sls_jmps))
+                            if [ "$_sls_pct" -ge 80 ]; then
+                                _sls_heuristic=1
+                                pstatus green YES "$_sls_int3/$_sls_jmps indirect tail-call JMPs hardened (${_sls_pct}%%)"
+                            elif [ "$_sls_pct" -le 20 ]; then
+                                _sls_heuristic=0
+                                pstatus yellow NO "$_sls_int3/$_sls_jmps indirect tail-call JMPs hardened (${_sls_pct}%%)"
+                            else
+                                pstatus yellow UNKNOWN "$_sls_int3/$_sls_jmps indirect tail-call JMPs hardened (${_sls_pct}%%, inconclusive)"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
+
+        # --- verdict (x86_64) ---
+        if [ "$_sls_config" = 1 ] || [ "$_sls_heuristic" = 1 ]; then
+            pvulnstatus "$cve" OK "kernel compiled with SLS mitigation"
+        elif [ "$_sls_config" = 0 ] || [ "$_sls_heuristic" = 0 ]; then
+            pvulnstatus "$cve" VULN "kernel not compiled with SLS mitigation"
+            explain "Recompile your kernel with CONFIG_MITIGATION_SLS=y (or CONFIG_SLS=y on kernels before 6.8).\n" \
+                "This enables the GCC flag -mharden-sls=all, which inserts INT3 after unconditional control flow\n" \
+                "instructions to block straight-line speculation. Note: this option defaults to off in most kernels\n" \
+                "and incurs ~2.4%% text size overhead."
+        else
+            pvulnstatus "$cve" UNK "couldn't determine SLS mitigation status"
+        fi
+    elif [ "$sys_interface_available" = 0 ]; then
+        msg="/sys vulnerability interface use forced, but there is no sysfs entry for SLS"
+        status=UNK
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_0000_0001_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-0000-0001.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-0000-0001, SLS, Straight-Line Speculation
+# Supplementary check, only runs under --extra
+
+# shellcheck disable=SC2034
+check_CVE_0000_0001() {
+    # SLS is a supplementary check: skip it in the default "all CVEs" run
+    # unless --extra is passed, but always run when explicitly selected
+    # via --variant sls or --cve CVE-0000-0001
+    if [ "$opt_cve_all" = 1 ] && [ "$opt_extra" != 1 ]; then
+        return 0
+    fi
+    check_cve 'CVE-0000-0001'
 }
 
 # >>>>>> vulns/CVE-2017-5715.sh <<<<<<
@@ -5162,623 +7051,643 @@ check_CVE_2017_5715_linux() {
         v2_vuln_module=''
         v2_is_autoibrs=0
 
-        pr_info "* Mitigation 1"
+        # Mitigation 1 (IBRS/IBPB) and Mitigation 3 (sub-mitigations) are x86-only.
+        # On ARM64, only Mitigation 2 (branch predictor hardening) is relevant.
+        if is_x86_kernel; then
 
-        g_ibrs_can_tell=0
-        g_ibrs_supported=''
-        g_ibrs_enabled=''
-        g_ibpb_can_tell=0
-        g_ibpb_supported=''
-        g_ibpb_enabled=''
+            pr_info "* Mitigation 1"
 
-        if [ "$opt_live" = 1 ]; then
-            # in live mode, we can check for the ibrs_enabled file in debugfs
-            # all versions of the patches have it (NOT the case of IBPB or KPTI)
-            g_ibrs_can_tell=1
-            mount_debugfs
-            for dir in \
-                $DEBUGFS_BASE \
-                $DEBUGFS_BASE/x86 \
-                "$g_procfs/sys/kernel"; do
-                if [ -e "$dir/ibrs_enabled" ]; then
-                    # if the file is there, we have IBRS compiled-in
-                    # $DEBUGFS_BASE/ibrs_enabled: vanilla
-                    # $DEBUGFS_BASE/x86/ibrs_enabled: Red Hat (see https://access.redhat.com/articles/3311301)
-                    # /proc/sys/kernel/ibrs_enabled: OpenSUSE tumbleweed
-                    g_specex_knob_dir=$dir
-                    g_ibrs_supported="$dir/ibrs_enabled exists"
-                    g_ibrs_enabled=$(cat "$dir/ibrs_enabled" 2>/dev/null)
-                    pr_debug "ibrs: found $dir/ibrs_enabled=$g_ibrs_enabled"
-                    # if ibrs_enabled is there, ibpb_enabled will be in the same dir
-                    if [ -e "$dir/ibpb_enabled" ]; then
-                        # if the file is there, we have IBPB compiled-in (see note above for IBRS)
-                        g_ibpb_supported="$dir/ibpb_enabled exists"
-                        g_ibpb_enabled=$(cat "$dir/ibpb_enabled" 2>/dev/null)
-                        pr_debug "ibpb: found $dir/ibpb_enabled=$g_ibpb_enabled"
-                    else
-                        pr_debug "ibpb: $dir/ibpb_enabled file doesn't exist"
-                    fi
-                    break
-                else
-                    pr_debug "ibrs: $dir/ibrs_enabled file doesn't exist"
-                fi
-            done
-            # on some newer kernels, the spec_ctrl_ibrs flag in "$g_procfs/cpuinfo"
-            # is set when ibrs has been administratively enabled (usually from cmdline)
-            # which in that case means ibrs is supported *and* enabled for kernel & user
-            # as per the ibrs patch series v3
-            if [ -z "$g_ibrs_supported" ]; then
-                if grep ^flags "$g_procfs/cpuinfo" | grep -qw spec_ctrl_ibrs; then
-                    pr_debug "ibrs: found spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
-                    g_ibrs_supported="spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
-                    # enabled=2 -> kernel & user
-                    g_ibrs_enabled=2
-                    # XXX and what about ibpb ?
-                fi
-            fi
-            if [ -n "$ret_sys_interface_check_fullmsg" ]; then
-                # when IBPB is enabled on 4.15+, we can see it in sysfs
-                if echo "$ret_sys_interface_check_fullmsg" | grep -q 'IBPB'; then
-                    pr_debug "ibpb: found enabled in sysfs"
-                    [ -z "$g_ibpb_supported" ] && g_ibpb_supported='IBPB found enabled in sysfs'
-                    [ -z "$g_ibpb_enabled" ] && g_ibpb_enabled=1
-                fi
-                # when IBRS_FW is enabled on 4.15+, we can see it in sysfs
-                if echo "$ret_sys_interface_check_fullmsg" | grep -q '[,;] IBRS_FW'; then
-                    pr_debug "ibrs: found IBRS_FW in sysfs"
-                    [ -z "$g_ibrs_supported" ] && g_ibrs_supported='found IBRS_FW in sysfs'
-                    g_ibrs_fw_enabled=1
-                fi
-                # when IBRS is enabled on 4.15+, we can see it in sysfs
-                # on a more recent kernel, classic "IBRS" is not even longer an option, because of the performance impact.
-                # only "Enhanced IBRS" is available (on CPUs with the IBRS_ALL flag)
-                if echo "$ret_sys_interface_check_fullmsg" | grep -q -e '\<IBRS\>' -e 'Indirect Branch Restricted Speculation'; then
-                    pr_debug "ibrs: found IBRS in sysfs"
-                    [ -z "$g_ibrs_supported" ] && g_ibrs_supported='found IBRS in sysfs'
-                    [ -z "$g_ibrs_enabled" ] && g_ibrs_enabled=3
-                fi
-                # checking for 'Enhanced IBRS' in sysfs, enabled on CPUs with IBRS_ALL
-                if echo "$ret_sys_interface_check_fullmsg" | grep -q -e 'Enhanced IBRS'; then
-                    [ -z "$g_ibrs_supported" ] && g_ibrs_supported='found Enhanced IBRS in sysfs'
-                    # 4 isn't actually a valid value of the now extinct "g_ibrs_enabled" flag file,
-                    # that only went from 0 to 3, so we use 4 as "enhanced ibrs is enabled"
-                    g_ibrs_enabled=4
-                fi
-            fi
-            # in live mode, if ibrs or ibpb is supported and we didn't find these are enabled, then they are not
-            [ -n "$g_ibrs_supported" ] && [ -z "$g_ibrs_enabled" ] && g_ibrs_enabled=0
-            [ -n "$g_ibpb_supported" ] && [ -z "$g_ibpb_enabled" ] && g_ibpb_enabled=0
-        fi
-        if [ -z "$g_ibrs_supported" ]; then
-            check_redhat_canonical_spectre
-            if [ "$g_redhat_canonical_spectre" = 1 ]; then
-                g_ibrs_supported="Red Hat/Ubuntu variant"
-                g_ibpb_supported="Red Hat/Ubuntu variant"
-            fi
-        fi
-        if [ -z "$g_ibrs_supported" ] && [ -n "$g_kernel" ]; then
-            if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
-                :
-            else
+            g_ibrs_can_tell=0
+            g_ibrs_supported=''
+            g_ibrs_enabled=''
+            g_ibpb_can_tell=0
+            g_ibpb_supported=''
+            g_ibpb_enabled=''
+
+            if [ "$g_mode" = live ]; then
+                # in live mode, we can check for the ibrs_enabled file in debugfs
+                # all versions of the patches have it (NOT the case of IBPB or KPTI)
                 g_ibrs_can_tell=1
-                g_ibrs_supported=$("${opt_arch_prefix}strings" "$g_kernel" | grep -Fw -e '[,;] IBRS_FW' | head -n1)
-                if [ -n "$g_ibrs_supported" ]; then
-                    pr_debug "ibrs: found ibrs evidence in kernel image ($g_ibrs_supported)"
-                    g_ibrs_supported="found '$g_ibrs_supported' in kernel image"
+                mount_debugfs
+                for dir in \
+                    $DEBUGFS_BASE \
+                    $DEBUGFS_BASE/x86 \
+                    "$g_procfs/sys/kernel"; do
+                    if [ -e "$dir/ibrs_enabled" ]; then
+                        # if the file is there, we have IBRS compiled-in
+                        # $DEBUGFS_BASE/ibrs_enabled: vanilla
+                        # $DEBUGFS_BASE/x86/ibrs_enabled: Red Hat (see https://access.redhat.com/articles/3311301)
+                        # /proc/sys/kernel/ibrs_enabled: OpenSUSE tumbleweed
+                        g_specex_knob_dir=$dir
+                        g_ibrs_supported="$dir/ibrs_enabled exists"
+                        g_ibrs_enabled=$(cat "$dir/ibrs_enabled" 2>/dev/null)
+                        pr_debug "ibrs: found $dir/ibrs_enabled=$g_ibrs_enabled"
+                        # if ibrs_enabled is there, ibpb_enabled will be in the same dir
+                        if [ -e "$dir/ibpb_enabled" ]; then
+                            # if the file is there, we have IBPB compiled-in (see note above for IBRS)
+                            g_ibpb_supported="$dir/ibpb_enabled exists"
+                            g_ibpb_enabled=$(cat "$dir/ibpb_enabled" 2>/dev/null)
+                            pr_debug "ibpb: found $dir/ibpb_enabled=$g_ibpb_enabled"
+                        else
+                            pr_debug "ibpb: $dir/ibpb_enabled file doesn't exist"
+                        fi
+                        break
+                    else
+                        pr_debug "ibrs: $dir/ibrs_enabled file doesn't exist"
+                    fi
+                done
+                # on some newer kernels, the spec_ctrl_ibrs flag in "$g_procfs/cpuinfo"
+                # is set when ibrs has been administratively enabled (usually from cmdline)
+                # which in that case means ibrs is supported *and* enabled for kernel & user
+                # as per the ibrs patch series v3
+                if [ -z "$g_ibrs_supported" ]; then
+                    if grep ^flags "$g_procfs/cpuinfo" | grep -qw spec_ctrl_ibrs; then
+                        pr_debug "ibrs: found spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
+                        g_ibrs_supported="spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
+                        # enabled=2 -> kernel & user
+                        g_ibrs_enabled=2
+                        # XXX and what about ibpb ?
+                    fi
+                fi
+                if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                    # when IBPB is enabled on 4.15+, we can see it in sysfs
+                    if echo "$ret_sys_interface_check_fullmsg" | grep -q 'IBPB'; then
+                        pr_debug "ibpb: found enabled in sysfs"
+                        [ -z "$g_ibpb_supported" ] && g_ibpb_supported='IBPB found enabled in sysfs'
+                        [ -z "$g_ibpb_enabled" ] && g_ibpb_enabled=1
+                    fi
+                    # when IBRS_FW is enabled on 4.15+, we can see it in sysfs
+                    if echo "$ret_sys_interface_check_fullmsg" | grep -q '[,;] IBRS_FW'; then
+                        pr_debug "ibrs: found IBRS_FW in sysfs"
+                        [ -z "$g_ibrs_supported" ] && g_ibrs_supported='found IBRS_FW in sysfs'
+                        g_ibrs_fw_enabled=1
+                    fi
+                    # when IBRS is enabled on 4.15+, we can see it in sysfs
+                    # on a more recent kernel, classic "IBRS" is not even longer an option, because of the performance impact.
+                    # only "Enhanced IBRS" is available (on CPUs with the IBRS_ALL flag)
+                    if echo "$ret_sys_interface_check_fullmsg" | grep -q -e '\<IBRS\>' -e 'Indirect Branch Restricted Speculation'; then
+                        pr_debug "ibrs: found IBRS in sysfs"
+                        [ -z "$g_ibrs_supported" ] && g_ibrs_supported='found IBRS in sysfs'
+                        [ -z "$g_ibrs_enabled" ] && g_ibrs_enabled=3
+                    fi
+                    # checking for 'Enhanced IBRS' in sysfs, enabled on CPUs with IBRS_ALL
+                    if echo "$ret_sys_interface_check_fullmsg" | grep -q -e 'Enhanced IBRS'; then
+                        [ -z "$g_ibrs_supported" ] && g_ibrs_supported='found Enhanced IBRS in sysfs'
+                        # 4 isn't actually a valid value of the now extinct "g_ibrs_enabled" flag file,
+                        # that only went from 0 to 3, so we use 4 as "enhanced ibrs is enabled"
+                        g_ibrs_enabled=4
+                    fi
+                fi
+                # in live mode, if ibrs or ibpb is supported and we didn't find these are enabled, then they are not
+                [ -n "$g_ibrs_supported" ] && [ -z "$g_ibrs_enabled" ] && g_ibrs_enabled=0
+                [ -n "$g_ibpb_supported" ] && [ -z "$g_ibpb_enabled" ] && g_ibpb_enabled=0
+            fi
+            if [ -z "$g_ibrs_supported" ]; then
+                check_redhat_canonical_spectre
+                if [ "$g_redhat_canonical_spectre" = 1 ]; then
+                    g_ibrs_supported="Red Hat/Ubuntu variant"
+                    g_ibpb_supported="Red Hat/Ubuntu variant"
                 fi
             fi
-        fi
-        if [ -z "$g_ibrs_supported" ] && [ -n "$opt_map" ]; then
-            g_ibrs_can_tell=1
-            if grep -q spec_ctrl "$opt_map"; then
-                g_ibrs_supported="found spec_ctrl in symbols file"
-                pr_debug "ibrs: found '*spec_ctrl*' symbol in $opt_map"
-            elif grep -q -e spectre_v2_select_mitigation -e spectre_v2_apply_mitigation "$opt_map"; then
-                # spectre_v2_select_mitigation exists since v4.15; split into
-                # spectre_v2_select_mitigation + spectre_v2_apply_mitigation in v6.16
-                g_ibrs_supported="found spectre_v2 mitigation function in symbols file"
-                pr_debug "ibrs: found spectre_v2_*_mitigation symbol in $opt_map"
-            fi
-        fi
-        # CONFIG_CPU_IBRS_ENTRY (v5.19) / CONFIG_MITIGATION_IBRS_ENTRY (v6.9): kernel IBRS on entry
-        if [ -z "$g_ibrs_supported" ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
-            g_ibrs_can_tell=1
-            if grep -q '^CONFIG_\(CPU_\|MITIGATION_\)IBRS_ENTRY=y' "$opt_config"; then
-                g_ibrs_supported="CONFIG_CPU_IBRS_ENTRY/CONFIG_MITIGATION_IBRS_ENTRY found in kernel config"
-                pr_debug "ibrs: found IBRS entry config option in $opt_config"
-            fi
-        fi
-        # recent (4.15) vanilla kernels have IBPB but not IBRS, and without the debugfs tunables of Red Hat
-        # we can detect it directly in the image
-        if [ -z "$g_ibpb_supported" ] && [ -n "$g_kernel" ]; then
-            if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
-                :
-            else
-                g_ibpb_can_tell=1
-                g_ibpb_supported=$("${opt_arch_prefix}strings" "$g_kernel" | grep -Fw -e 'ibpb' -e ', IBPB' | head -n1)
-                if [ -n "$g_ibpb_supported" ]; then
-                    pr_debug "ibpb: found ibpb evidence in kernel image ($g_ibpb_supported)"
-                    g_ibpb_supported="found '$g_ibpb_supported' in kernel image"
+            if [ -z "$g_ibrs_supported" ] && [ -n "$g_kernel" ]; then
+                if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+                    :
+                else
+                    g_ibrs_can_tell=1
+                    g_ibrs_supported=$("${opt_arch_prefix}strings" "$g_kernel" | grep -Fw -e '[,;] IBRS_FW' | head -n1)
+                    if [ -n "$g_ibrs_supported" ]; then
+                        pr_debug "ibrs: found ibrs evidence in kernel image ($g_ibrs_supported)"
+                        g_ibrs_supported="found '$g_ibrs_supported' in kernel image"
+                    fi
                 fi
             fi
-        fi
-
-        pr_info_nol "  * Kernel is compiled with IBRS support: "
-        if [ -z "$g_ibrs_supported" ]; then
-            if [ "$g_ibrs_can_tell" = 1 ]; then
-                pstatus yellow NO
-            else
-                # problem obtaining/inspecting kernel or strings not installed, but if the later is true,
-                # then readelf is not installed either (both in binutils) which makes the former true, so
-                # either way g_kernel_err should be set
-                pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+            if [ -z "$g_ibrs_supported" ] && [ -n "$opt_map" ]; then
+                g_ibrs_can_tell=1
+                if grep -q spec_ctrl "$opt_map"; then
+                    g_ibrs_supported="found spec_ctrl in symbols file"
+                    pr_debug "ibrs: found '*spec_ctrl*' symbol in $opt_map"
+                elif grep -q -e spectre_v2_select_mitigation -e spectre_v2_apply_mitigation "$opt_map"; then
+                    # spectre_v2_select_mitigation exists since v4.15; split into
+                    # spectre_v2_select_mitigation + spectre_v2_apply_mitigation in v6.16
+                    g_ibrs_supported="found spectre_v2 mitigation function in symbols file"
+                    pr_debug "ibrs: found spectre_v2_*_mitigation symbol in $opt_map"
+                fi
             fi
-        else
-            if [ "$opt_verbose" -ge 2 ]; then
-                pstatus green YES "$g_ibrs_supported"
-            else
-                pstatus green YES
+            # CONFIG_CPU_IBRS_ENTRY (v5.19) / CONFIG_MITIGATION_IBRS_ENTRY (v6.9): kernel IBRS on entry
+            if [ -z "$g_ibrs_supported" ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
+                g_ibrs_can_tell=1
+                if grep -q '^CONFIG_\(CPU_\|MITIGATION_\)IBRS_ENTRY=y' "$opt_config"; then
+                    g_ibrs_supported="CONFIG_CPU_IBRS_ENTRY/CONFIG_MITIGATION_IBRS_ENTRY found in kernel config"
+                    pr_debug "ibrs: found IBRS entry config option in $opt_config"
+                fi
             fi
-        fi
+            # recent (4.15) vanilla kernels have IBPB but not IBRS, and without the debugfs tunables of Red Hat
+            # we can detect it directly in the image
+            if [ -z "$g_ibpb_supported" ] && [ -n "$g_kernel" ]; then
+                if ! command -v "${opt_arch_prefix}strings" >/dev/null 2>&1; then
+                    :
+                else
+                    g_ibpb_can_tell=1
+                    g_ibpb_supported=$("${opt_arch_prefix}strings" "$g_kernel" | grep -Fw -e 'ibpb' -e ', IBPB' | head -n1)
+                    if [ -n "$g_ibpb_supported" ]; then
+                        pr_debug "ibpb: found ibpb evidence in kernel image ($g_ibpb_supported)"
+                        g_ibpb_supported="found '$g_ibpb_supported' in kernel image"
+                    fi
+                fi
+            fi
 
-        pr_info_nol "    * IBRS enabled and active: "
-        if [ "$opt_live" = 1 ]; then
-            if [ "$g_ibpb_enabled" = 2 ]; then
-                # if ibpb=2, ibrs is forcefully=0
-                pstatus blue NO "IBPB used instead of IBRS in all kernel entrypoints"
+            pr_info_nol "  * Kernel is compiled with IBRS support: "
+            if [ -z "$g_ibrs_supported" ]; then
+                if [ "$g_ibrs_can_tell" = 1 ]; then
+                    pstatus yellow NO
+                else
+                    # problem obtaining/inspecting kernel or strings not installed, but if the later is true,
+                    # then readelf is not installed either (both in binutils) which makes the former true, so
+                    # either way g_kernel_err should be set
+                    pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+                fi
             else
-                # 0 means disabled
-                # 1 is enabled only for kernel space
-                # 2 is enabled for kernel and user space
-                # 3 is enabled
-                # 4 is enhanced ibrs enabled
-                case "$g_ibrs_enabled" in
-                    0)
-                        if [ "$g_ibrs_fw_enabled" = 1 ]; then
-                            pstatus blue YES "for firmware code only"
+                if [ "$opt_verbose" -ge 2 ]; then
+                    pstatus green YES "$g_ibrs_supported"
+                else
+                    pstatus green YES
+                fi
+            fi
+
+            pr_info_nol "    * IBRS enabled and active: "
+            if [ "$g_mode" = live ]; then
+                if [ "$g_ibpb_enabled" = 2 ]; then
+                    # if ibpb=2, ibrs is forcefully=0
+                    pstatus blue NO "IBPB used instead of IBRS in all kernel entrypoints"
+                else
+                    # 0 means disabled
+                    # 1 is enabled only for kernel space
+                    # 2 is enabled for kernel and user space
+                    # 3 is enabled
+                    # 4 is enhanced ibrs enabled
+                    case "$g_ibrs_enabled" in
+                        0)
+                            if [ "$g_ibrs_fw_enabled" = 1 ]; then
+                                pstatus blue YES "for firmware code only"
+                            else
+                                pstatus yellow NO
+                            fi
+                            ;;
+                        1) if [ "$g_ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel space and firmware code"; else pstatus green YES "for kernel space"; fi ;;
+                        2) if [ "$g_ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel, user space, and firmware code"; else pstatus green YES "for both kernel and user space"; fi ;;
+                        3) if [ "$g_ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel and firmware code"; else pstatus green YES; fi ;;
+                        4) pstatus green YES "Enhanced flavor, performance impact will be greatly reduced" ;;
+                        *) if [ "$cap_ibrs" != 'SPEC_CTRL' ] && [ "$cap_ibrs" != 'IBRS_SUPPORT' ] && [ "$cap_spec_ctrl" != -1 ]; then
+                            pstatus yellow NO
+                            pr_debug "ibrs: known cpu not supporting SPEC-CTRL or IBRS"
+                        else
+                            pstatus yellow UNKNOWN
+                        fi ;;
+                    esac
+                fi
+            else
+                pstatus blue N/A "not testable in no-runtime mode"
+            fi
+
+            pr_info_nol "  * Kernel is compiled with IBPB support: "
+            if [ -z "$g_ibpb_supported" ]; then
+                if [ "$g_ibpb_can_tell" = 1 ]; then
+                    pstatus yellow NO
+                else
+                    # if we're in no-runtime mode without System.map, we can't really know
+                    pstatus yellow UNKNOWN "in no-runtime mode, we need the kernel image to be able to tell"
+                fi
+            else
+                if [ "$opt_verbose" -ge 2 ]; then
+                    pstatus green YES "$g_ibpb_supported"
+                else
+                    pstatus green YES
+                fi
+            fi
+
+            pr_info_nol "    * IBPB enabled and active: "
+            if [ "$g_mode" = live ]; then
+                case "$g_ibpb_enabled" in
+                    "")
+                        if [ "$g_ibrs_supported" = 1 ]; then
+                            pstatus yellow UNKNOWN
                         else
                             pstatus yellow NO
                         fi
                         ;;
-                    1) if [ "$g_ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel space and firmware code"; else pstatus green YES "for kernel space"; fi ;;
-                    2) if [ "$g_ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel, user space, and firmware code"; else pstatus green YES "for both kernel and user space"; fi ;;
-                    3) if [ "$g_ibrs_fw_enabled" = 1 ]; then pstatus green YES "for kernel and firmware code"; else pstatus green YES; fi ;;
-                    4) pstatus green YES "Enhanced flavor, performance impact will be greatly reduced" ;;
-                    *) if [ "$cap_ibrs" != 'SPEC_CTRL' ] && [ "$cap_ibrs" != 'IBRS_SUPPORT' ] && [ "$cap_spec_ctrl" != -1 ]; then
+                    0)
                         pstatus yellow NO
-                        pr_debug "ibrs: known cpu not supporting SPEC-CTRL or IBRS"
-                    else
-                        pstatus yellow UNKNOWN
-                    fi ;;
+                        ;;
+                    1) pstatus green YES ;;
+                    2) pstatus green YES "IBPB used instead of IBRS in all kernel entrypoints" ;;
+                    *) pstatus yellow UNKNOWN ;;
                 esac
-            fi
-        else
-            pstatus blue N/A "not testable in offline mode"
-        fi
-
-        pr_info_nol "  * Kernel is compiled with IBPB support: "
-        if [ -z "$g_ibpb_supported" ]; then
-            if [ "$g_ibpb_can_tell" = 1 ]; then
-                pstatus yellow NO
             else
-                # if we're in offline mode without System.map, we can't really know
-                pstatus yellow UNKNOWN "in offline mode, we need the kernel image to be able to tell"
+                pstatus blue N/A "not testable in no-runtime mode"
             fi
-        else
-            if [ "$opt_verbose" -ge 2 ]; then
-                pstatus green YES "$g_ibpb_supported"
-            else
-                pstatus green YES
-            fi
-        fi
 
-        pr_info_nol "    * IBPB enabled and active: "
-        if [ "$opt_live" = 1 ]; then
-            case "$g_ibpb_enabled" in
-                "")
-                    if [ "$g_ibrs_supported" = 1 ]; then
-                        pstatus yellow UNKNOWN
-                    else
-                        pstatus yellow NO
-                    fi
-                    ;;
-                0)
-                    pstatus yellow NO
-                    ;;
-                1) pstatus green YES ;;
-                2) pstatus green YES "IBPB used instead of IBRS in all kernel entrypoints" ;;
-                *) pstatus yellow UNKNOWN ;;
-            esac
-        else
-            pstatus blue N/A "not testable in offline mode"
-        fi
+        fi # is_x86_kernel (Mitigation 1)
 
-        pr_info "* Mitigation 2"
-        pr_info_nol "  * Kernel has branch predictor hardening (arm): "
         bp_harden_can_tell=0
         bp_harden=''
-        if [ -r "$opt_config" ]; then
-            bp_harden_can_tell=1
-            bp_harden=$(grep -w 'CONFIG_HARDEN_BRANCH_PREDICTOR=y' "$opt_config")
-            if [ -n "$bp_harden" ]; then
-                pstatus green YES
-                pr_debug "bp_harden: found '$bp_harden' in $opt_config"
-            fi
-        fi
-        if [ -z "$bp_harden" ] && [ -n "$opt_map" ]; then
-            bp_harden_can_tell=1
-            bp_harden=$(grep -w bp_hardening_data "$opt_map")
-            if [ -n "$bp_harden" ]; then
-                pstatus green YES
-                pr_debug "bp_harden: found '$bp_harden' in $opt_map"
-            fi
-        fi
-        if [ -z "$bp_harden" ]; then
-            if [ "$bp_harden_can_tell" = 1 ]; then
-                pstatus yellow NO
-            else
-                pstatus yellow UNKNOWN
-            fi
-        fi
-
-        pr_info_nol "  * Kernel compiled with retpoline option: "
-        # We check the RETPOLINE kernel options
-        retpoline=0
-        if [ -r "$opt_config" ]; then
-            if grep -q '^CONFIG_\(MITIGATION_\)\?RETPOLINE=y' "$opt_config"; then
-                pstatus green YES
-                retpoline=1
-                # shellcheck disable=SC2046
-                pr_debug 'retpoline: found '$(grep '^CONFIG_\(MITIGATION_\)\?RETPOLINE' "$opt_config")" in $opt_config"
-            else
-                pstatus yellow NO
-            fi
-        else
-            pstatus yellow UNKNOWN "couldn't read your kernel configuration"
-        fi
-
-        if [ "$retpoline" = 1 ]; then
-            # Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
-            # For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
-            # See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
-            # In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_MITIGATION_RETPOLINE is set
-            # *AND* if the compiler is retpoline-compliant, so look for that symbol. The name of this kernel config
-            # option before version 6.9-rc1 is CONFIG_RETPOLINE.
-            #
-            # if there is "retpoline" in the file and NOT "minimal", then it's full retpoline
-            # (works for vanilla and Red Hat variants)
-            #
-            # since 5.15.28, this is now "Retpolines" as the implementation was switched to a generic one,
-            # so we look for both "retpoline" and "retpolines"
-            if [ "$opt_live" = 1 ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
-                if echo "$ret_sys_interface_check_fullmsg" | grep -qwi -e retpoline -e retpolines; then
-                    if echo "$ret_sys_interface_check_fullmsg" | grep -qwi minimal; then
-                        retpoline_compiler=0
-                        retpoline_compiler_reason="kernel reports minimal retpoline compilation"
-                    else
-                        retpoline_compiler=1
-                        retpoline_compiler_reason="kernel reports full retpoline compilation"
-                    fi
-                fi
-            elif [ -n "$opt_map" ]; then
-                # look for the symbol
-                if grep -qw noretpoline_setup "$opt_map"; then
-                    retpoline_compiler=1
-                    retpoline_compiler_reason="noretpoline_setup symbol found in System.map"
-                fi
-            elif [ -n "$g_kernel" ]; then
-                # look for the symbol
-                if command -v "${opt_arch_prefix}nm" >/dev/null 2>&1; then
-                    # the proper way: use nm and look for the symbol
-                    if "${opt_arch_prefix}nm" "$g_kernel" 2>/dev/null | grep -qw 'noretpoline_setup'; then
-                        retpoline_compiler=1
-                        retpoline_compiler_reason="noretpoline_setup found in kernel symbols"
-                    fi
-                elif grep -q noretpoline_setup "$g_kernel"; then
-                    # if we don't have nm, nevermind, the symbol name is long enough to not have
-                    # any false positive using good old grep directly on the binary
-                    retpoline_compiler=1
-                    retpoline_compiler_reason="noretpoline_setup found in kernel"
-                fi
-            fi
-            if [ -n "$retpoline_compiler" ]; then
-                pr_info_nol "    * Kernel compiled with a retpoline-aware compiler: "
-                if [ "$retpoline_compiler" = 1 ]; then
-                    if [ -n "$retpoline_compiler_reason" ]; then
-                        pstatus green YES "$retpoline_compiler_reason"
-                    else
-                        pstatus green YES
-                    fi
-                else
-                    if [ -n "$retpoline_compiler_reason" ]; then
-                        pstatus red NO "$retpoline_compiler_reason"
-                    else
-                        pstatus red NO
-                    fi
-                fi
-            fi
-        fi
-
-        # only Red Hat has a tunable to disable it on runtime
-        retp_enabled=-1
-        if [ "$opt_live" = 1 ]; then
-            if [ -e "$g_specex_knob_dir/retp_enabled" ]; then
-                retp_enabled=$(cat "$g_specex_knob_dir/retp_enabled" 2>/dev/null)
-                pr_debug "retpoline: found $g_specex_knob_dir/retp_enabled=$retp_enabled"
-                pr_info_nol "    * Retpoline is enabled: "
-                if [ "$retp_enabled" = 1 ]; then
+        if is_arm_kernel; then
+            pr_info "* Mitigation 2"
+            pr_info_nol "  * Kernel has branch predictor hardening (arm): "
+            if [ -r "$opt_config" ]; then
+                bp_harden_can_tell=1
+                bp_harden=$(grep -w 'CONFIG_HARDEN_BRANCH_PREDICTOR=y' "$opt_config")
+                if [ -n "$bp_harden" ]; then
                     pstatus green YES
+                    pr_debug "bp_harden: found '$bp_harden' in $opt_config"
+                fi
+            fi
+            if [ -z "$bp_harden" ] && [ -n "$opt_map" ]; then
+                bp_harden_can_tell=1
+                bp_harden=$(grep -w bp_hardening_data "$opt_map")
+                if [ -n "$bp_harden" ]; then
+                    pstatus green YES
+                    pr_debug "bp_harden: found '$bp_harden' in $opt_map"
+                fi
+            fi
+            if [ -z "$bp_harden" ]; then
+                if [ "$bp_harden_can_tell" = 1 ]; then
+                    pstatus yellow NO
+                else
+                    pstatus yellow UNKNOWN
+                fi
+            fi
+        fi
+
+        if is_x86_kernel; then
+
+            pr_info_nol "  * Kernel compiled with retpoline option: "
+            # We check the RETPOLINE kernel options
+            retpoline=0
+            if [ -r "$opt_config" ]; then
+                if grep -q '^CONFIG_\(MITIGATION_\)\?RETPOLINE=y' "$opt_config"; then
+                    pstatus green YES
+                    retpoline=1
+                    # shellcheck disable=SC2046
+                    pr_debug 'retpoline: found '$(grep '^CONFIG_\(MITIGATION_\)\?RETPOLINE' "$opt_config")" in $opt_config"
                 else
                     pstatus yellow NO
                 fi
-            fi
-        fi
-
-        # only for information, in verbose mode
-        if [ "$opt_verbose" -ge 2 ]; then
-            pr_info_nol "    * Local gcc is retpoline-aware: "
-            if command -v gcc >/dev/null 2>&1; then
-                if [ -n "$(gcc -mindirect-branch=thunk-extern --version 2>&1 >/dev/null)" ]; then
-                    pstatus blue NO
-                else
-                    pstatus green YES
-                fi
             else
-                pstatus blue NO "gcc is not installed"
+                pstatus yellow UNKNOWN "couldn't read your kernel configuration"
             fi
-        fi
 
-        if is_vulnerable_to_empty_rsb || [ "$opt_verbose" -ge 2 ]; then
-            pr_info_nol "  * Kernel supports RSB filling: "
-            rsb_filling=0
-            if [ "$opt_live" = 1 ] && [ "$opt_no_sysfs" != 1 ]; then
-                # if we're live and we aren't denied looking into /sys, let's do it
-                if echo "$ret_sys_interface_check_fullmsg" | grep -qw RSB; then
-                    rsb_filling=1
-                    pstatus green YES
+            if [ "$retpoline" = 1 ]; then
+                # Now check if the compiler used to compile the kernel knows how to insert retpolines in generated asm
+                # For gcc, this is -mindirect-branch=thunk-extern (detected by the kernel makefiles)
+                # See gcc commit https://github.com/hjl-tools/gcc/commit/23b517d4a67c02d3ef80b6109218f2aadad7bd79
+                # In latest retpoline LKML patches, the noretpoline_setup symbol exists only if CONFIG_MITIGATION_RETPOLINE is set
+                # *AND* if the compiler is retpoline-compliant, so look for that symbol. The name of this kernel config
+                # option before version 6.9-rc1 is CONFIG_RETPOLINE.
+                #
+                # if there is "retpoline" in the file and NOT "minimal", then it's full retpoline
+                # (works for vanilla and Red Hat variants)
+                #
+                # since 5.15.28, this is now "Retpolines" as the implementation was switched to a generic one,
+                # so we look for both "retpoline" and "retpolines"
+                if [ "$g_mode" = live ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                    if echo "$ret_sys_interface_check_fullmsg" | grep -qwi -e retpoline -e retpolines; then
+                        if echo "$ret_sys_interface_check_fullmsg" | grep -qwi minimal; then
+                            retpoline_compiler=0
+                            retpoline_compiler_reason="kernel reports minimal retpoline compilation"
+                        else
+                            retpoline_compiler=1
+                            retpoline_compiler_reason="kernel reports full retpoline compilation"
+                        fi
+                    fi
+                elif [ -n "$opt_map" ]; then
+                    # look for the symbol
+                    if grep -qw noretpoline_setup "$opt_map"; then
+                        retpoline_compiler=1
+                        retpoline_compiler_reason="noretpoline_setup symbol found in System.map"
+                    fi
+                elif [ -n "$g_kernel" ]; then
+                    # look for the symbol
+                    if command -v "${opt_arch_prefix}nm" >/dev/null 2>&1; then
+                        # the proper way: use nm and look for the symbol
+                        if "${opt_arch_prefix}nm" "$g_kernel" 2>/dev/null | grep -qw 'noretpoline_setup'; then
+                            retpoline_compiler=1
+                            retpoline_compiler_reason="noretpoline_setup found in kernel symbols"
+                        fi
+                    elif grep -q noretpoline_setup "$g_kernel"; then
+                        # if we don't have nm, nevermind, the symbol name is long enough to not have
+                        # any false positive using good old grep directly on the binary
+                        retpoline_compiler=1
+                        retpoline_compiler_reason="noretpoline_setup found in kernel"
+                    fi
+                fi
+                if [ -n "$retpoline_compiler" ]; then
+                    pr_info_nol "    * Kernel compiled with a retpoline-aware compiler: "
+                    if [ "$retpoline_compiler" = 1 ]; then
+                        if [ -n "$retpoline_compiler_reason" ]; then
+                            pstatus green YES "$retpoline_compiler_reason"
+                        else
+                            pstatus green YES
+                        fi
+                    else
+                        if [ -n "$retpoline_compiler_reason" ]; then
+                            pstatus red NO "$retpoline_compiler_reason"
+                        else
+                            pstatus red NO
+                        fi
+                    fi
                 fi
             fi
-            if [ "$rsb_filling" = 0 ]; then
-                if [ -n "$g_kernel_err" ]; then
-                    pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-                else
-                    if grep -qw -e 'Filling RSB on context switch' "$g_kernel"; then
-                        rsb_filling=1
+
+            # only Red Hat has a tunable to disable it on runtime
+            retp_enabled=-1
+            if [ "$g_mode" = live ]; then
+                if [ -e "$g_specex_knob_dir/retp_enabled" ]; then
+                    retp_enabled=$(cat "$g_specex_knob_dir/retp_enabled" 2>/dev/null)
+                    pr_debug "retpoline: found $g_specex_knob_dir/retp_enabled=$retp_enabled"
+                    pr_info_nol "    * Retpoline is enabled: "
+                    if [ "$retp_enabled" = 1 ]; then
                         pstatus green YES
                     else
-                        rsb_filling=0
                         pstatus yellow NO
                     fi
                 fi
             fi
-        fi
 
-        # Mitigation 3: derive structured mitigation variables for the verdict.
-        # These are set from sysfs fields (when available) with hardware fallbacks.
-        pr_info "* Mitigation 3 (sub-mitigations)"
-
-        # --- v2_base_mode: which base Spectre v2 mitigation is active ---
-        pr_info_nol "  * Base Spectre v2 mitigation mode: "
-        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
-            # Parse from sysfs (handle all mainline, stable, and RHEL variants)
-            case "$ret_sys_interface_check_fullmsg" in
-                *"Enhanced / Automatic IBRS + LFENCE"* | *"Enhanced IBRS + LFENCE"*) v2_base_mode=eibrs_lfence ;;
-                *"Enhanced / Automatic IBRS + Retpolines"* | *"Enhanced IBRS + Retpolines"*) v2_base_mode=eibrs_retpoline ;;
-                *"Enhanced / Automatic IBRS"* | *"Enhanced IBRS"*) v2_base_mode=eibrs ;;
-                *"Mitigation: IBRS (kernel and user space)"*) v2_base_mode=ibrs ;;
-                *"Mitigation: IBRS (kernel)"*) v2_base_mode=ibrs ;;
-                *"Mitigation: IBRS"*) v2_base_mode=ibrs ;;
-                *"Mitigation: Retpolines"* | *"Full generic retpoline"* | *"Full retpoline"* | *"Full AMD retpoline"*) v2_base_mode=retpoline ;;
-                *"Vulnerable: LFENCE"* | *"Mitigation: LFENCE"*) v2_base_mode=lfence ;;
-                *"Vulnerable"*) v2_base_mode=none ;;
-                *) v2_base_mode=unknown ;;
-            esac
-        fi
-        # Fallback to existing variables if sysfs didn't provide a base mode
-        if [ -z "$v2_base_mode" ] || [ "$v2_base_mode" = "unknown" ]; then
-            if [ "$g_ibrs_enabled" = 4 ]; then
-                v2_base_mode=eibrs
-            elif [ -n "$g_ibrs_enabled" ] && [ "$g_ibrs_enabled" -ge 1 ] 2>/dev/null; then
-                v2_base_mode=ibrs
-            elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ]; then
-                v2_base_mode=retpoline
-            elif [ "$retpoline" = 1 ]; then
-                v2_base_mode=retpoline
-            fi
-        fi
-        case "$v2_base_mode" in
-            eibrs) pstatus green "Enhanced / Automatic IBRS" ;;
-            eibrs_lfence) pstatus green "Enhanced / Automatic IBRS + LFENCE" ;;
-            eibrs_retpoline) pstatus green "Enhanced / Automatic IBRS + Retpolines" ;;
-            ibrs) pstatus green "IBRS" ;;
-            retpoline) pstatus green "Retpolines" ;;
-            lfence) pstatus red "LFENCE (insufficient)" ;;
-            none) pstatus yellow "None" ;;
-            *) pstatus yellow UNKNOWN ;;
-        esac
-
-        # --- v2_is_autoibrs: AMD AutoIBRS vs Intel eIBRS ---
-        case "$v2_base_mode" in
-            eibrs | eibrs_lfence | eibrs_retpoline)
-                if [ "$cap_autoibrs" = 1 ] || { (is_amd || is_hygon) && [ "$cap_ibrs_all" != 1 ]; }; then
-                    v2_is_autoibrs=1
+            # only for information, in verbose mode
+            if [ "$opt_verbose" -ge 2 ]; then
+                pr_info_nol "    * Local gcc is retpoline-aware: "
+                if command -v gcc >/dev/null 2>&1; then
+                    if [ -n "$(gcc -mindirect-branch=thunk-extern --version 2>&1 >/dev/null)" ]; then
+                        pstatus blue NO
+                    else
+                        pstatus green YES
+                    fi
+                else
+                    pstatus blue NO "gcc is not installed"
                 fi
-                ;;
-        esac
+            fi
 
-        # --- v2_ibpb_mode ---
-        pr_info_nol "  * IBPB mode: "
-        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
-            case "$ret_sys_interface_check_fullmsg" in
-                *"IBPB: always-on"*) v2_ibpb_mode=always-on ;;
-                *"IBPB: conditional"*) v2_ibpb_mode=conditional ;;
-                *"IBPB: disabled"*) v2_ibpb_mode=disabled ;;
-                *", IBPB"* | *"; IBPB"*) v2_ibpb_mode=conditional ;;
-                *) v2_ibpb_mode=disabled ;;
+            if is_vulnerable_to_empty_rsb || [ "$opt_verbose" -ge 2 ]; then
+                pr_info_nol "  * Kernel supports RSB filling: "
+                rsb_filling=0
+                if [ "$g_mode" = live ] && [ "$opt_no_sysfs" != 1 ]; then
+                    # if we're live and we aren't denied looking into /sys, let's do it
+                    if echo "$ret_sys_interface_check_fullmsg" | grep -qw RSB; then
+                        rsb_filling=1
+                        pstatus green YES
+                    fi
+                fi
+                if [ "$rsb_filling" = 0 ]; then
+                    # Red Hat kernels (RHEL 6/7/8) stuff RSB on context switch as part of
+                    # their retpoline implementation when retp_enabled=1, but don't use the
+                    # upstream X86_FEATURE_RSB_CTXSW flag or "Filling RSB on context switch"
+                    # string. Detect this via the RHEL-specific debugfs knob.
+                    # See https://bugzilla.redhat.com/show_bug.cgi?id=1616245#c8
+                    if [ "$retp_enabled" = 1 ]; then
+                        rsb_filling=1
+                        pstatus green YES "Red Hat kernel with retpoline enabled includes RSB filling"
+                    elif [ -n "$g_kernel_err" ]; then
+                        pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+                    else
+                        if grep -qw -e 'Filling RSB on context switch' "$g_kernel"; then
+                            rsb_filling=1
+                            pstatus green YES
+                        else
+                            rsb_filling=0
+                            pstatus yellow NO
+                        fi
+                    fi
+                fi
+            fi
+
+            # Mitigation 3: derive structured mitigation variables for the verdict.
+            # These are set from sysfs fields (when available) with hardware fallbacks.
+            pr_info "* Mitigation 3 (sub-mitigations)"
+
+            # --- v2_base_mode: which base Spectre v2 mitigation is active ---
+            pr_info_nol "  * Base Spectre v2 mitigation mode: "
+            if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                # Parse from sysfs (handle all mainline, stable, and RHEL variants)
+                case "$ret_sys_interface_check_fullmsg" in
+                    *"Enhanced / Automatic IBRS + LFENCE"* | *"Enhanced IBRS + LFENCE"*) v2_base_mode=eibrs_lfence ;;
+                    *"Enhanced / Automatic IBRS + Retpolines"* | *"Enhanced IBRS + Retpolines"*) v2_base_mode=eibrs_retpoline ;;
+                    *"Enhanced / Automatic IBRS"* | *"Enhanced IBRS"*) v2_base_mode=eibrs ;;
+                    *"Mitigation: IBRS (kernel and user space)"*) v2_base_mode=ibrs ;;
+                    *"Mitigation: IBRS (kernel)"*) v2_base_mode=ibrs ;;
+                    *"Mitigation: IBRS"*) v2_base_mode=ibrs ;;
+                    *"Mitigation: Retpolines"* | *"Full generic retpoline"* | *"Full retpoline"* | *"Full AMD retpoline"*) v2_base_mode=retpoline ;;
+                    *"Vulnerable: LFENCE"* | *"Mitigation: LFENCE"*) v2_base_mode=lfence ;;
+                    *"Vulnerable"*) v2_base_mode=none ;;
+                    *) v2_base_mode=unknown ;;
+                esac
+            fi
+            # Fallback to existing variables if sysfs didn't provide a base mode
+            if [ -z "$v2_base_mode" ] || [ "$v2_base_mode" = "unknown" ]; then
+                if [ "$g_ibrs_enabled" = 4 ]; then
+                    v2_base_mode=eibrs
+                elif [ -n "$g_ibrs_enabled" ] && [ "$g_ibrs_enabled" -ge 1 ] 2>/dev/null; then
+                    v2_base_mode=ibrs
+                elif [ "$retpoline" = 1 ] && [ "$retpoline_compiler" = 1 ]; then
+                    v2_base_mode=retpoline
+                elif [ "$retpoline" = 1 ]; then
+                    v2_base_mode=retpoline
+                fi
+            fi
+            case "$v2_base_mode" in
+                eibrs) pstatus green "Enhanced / Automatic IBRS" ;;
+                eibrs_lfence) pstatus green "Enhanced / Automatic IBRS + LFENCE" ;;
+                eibrs_retpoline) pstatus green "Enhanced / Automatic IBRS + Retpolines" ;;
+                ibrs) pstatus green "IBRS" ;;
+                retpoline) pstatus green "Retpolines" ;;
+                lfence) pstatus red "LFENCE (insufficient)" ;;
+                none) pstatus yellow "None" ;;
+                *) pstatus yellow UNKNOWN ;;
             esac
-        elif [ "$opt_live" = 1 ]; then
-            case "$g_ibpb_enabled" in
-                2) v2_ibpb_mode=always-on ;;
-                1) v2_ibpb_mode=conditional ;;
-                0) v2_ibpb_mode=disabled ;;
-                *) v2_ibpb_mode=unknown ;;
+
+            # --- v2_is_autoibrs: AMD AutoIBRS vs Intel eIBRS ---
+            case "$v2_base_mode" in
+                eibrs | eibrs_lfence | eibrs_retpoline)
+                    if [ "$cap_autoibrs" = 1 ] || { (is_amd || is_hygon) && [ "$cap_ibrs_all" != 1 ]; }; then
+                        v2_is_autoibrs=1
+                    fi
+                    ;;
             esac
-        else
-            v2_ibpb_mode=unknown
-        fi
-        case "$v2_ibpb_mode" in
-            always-on) pstatus green YES "always-on" ;;
-            conditional) pstatus green YES "conditional" ;;
-            disabled) pstatus yellow NO "disabled" ;;
-            *) pstatus yellow UNKNOWN ;;
-        esac
 
-        # --- SMT state (used in STIBP inference and verdict) ---
-        is_cpu_smt_enabled
-        smt_enabled=$?
-        # smt_enabled: 0=enabled, 1=disabled, 2=unknown
+            # --- v2_ibpb_mode ---
+            pr_info_nol "  * IBPB mode: "
+            if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                case "$ret_sys_interface_check_fullmsg" in
+                    *"IBPB: always-on"*) v2_ibpb_mode=always-on ;;
+                    *"IBPB: conditional"*) v2_ibpb_mode=conditional ;;
+                    *"IBPB: disabled"*) v2_ibpb_mode=disabled ;;
+                    *", IBPB"* | *"; IBPB"*) v2_ibpb_mode=conditional ;;
+                    *) v2_ibpb_mode=disabled ;;
+                esac
+            elif [ "$g_mode" = live ]; then
+                case "$g_ibpb_enabled" in
+                    2) v2_ibpb_mode=always-on ;;
+                    1) v2_ibpb_mode=conditional ;;
+                    0) v2_ibpb_mode=disabled ;;
+                    *) v2_ibpb_mode=unknown ;;
+                esac
+            else
+                v2_ibpb_mode=unknown
+            fi
+            case "$v2_ibpb_mode" in
+                always-on) pstatus green YES "always-on" ;;
+                conditional) pstatus green YES "conditional" ;;
+                disabled) pstatus yellow NO "disabled" ;;
+                *) pstatus yellow UNKNOWN ;;
+            esac
 
-        # --- v2_stibp_status ---
-        pr_info_nol "  * STIBP status: "
-        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
-            case "$ret_sys_interface_check_fullmsg" in
-                *"STIBP: always-on"*) v2_stibp_status=always-on ;;
-                *"STIBP: forced"*) v2_stibp_status=forced ;;
-                *"STIBP: conditional"*) v2_stibp_status=conditional ;;
-                *"STIBP: disabled"*) v2_stibp_status=disabled ;;
-                *", STIBP"* | *"; STIBP"*) v2_stibp_status=forced ;;
-                *)
-                    # No STIBP field: Intel eIBRS suppresses it (implicit cross-thread protection)
+            # --- SMT state (used in STIBP inference and verdict) ---
+            is_cpu_smt_enabled
+            smt_enabled=$?
+            # smt_enabled: 0=enabled, 1=disabled, 2=unknown
+
+            # --- v2_stibp_status ---
+            pr_info_nol "  * STIBP status: "
+            if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                case "$ret_sys_interface_check_fullmsg" in
+                    *"STIBP: always-on"*) v2_stibp_status=always-on ;;
+                    *"STIBP: forced"*) v2_stibp_status=forced ;;
+                    *"STIBP: conditional"*) v2_stibp_status=conditional ;;
+                    *"STIBP: disabled"*) v2_stibp_status=disabled ;;
+                    *", STIBP"* | *"; STIBP"*) v2_stibp_status=forced ;;
+                    *)
+                        # No STIBP field: Intel eIBRS suppresses it (implicit cross-thread protection)
+                        case "$v2_base_mode" in
+                            eibrs | eibrs_lfence | eibrs_retpoline)
+                                if [ "$v2_is_autoibrs" != 1 ]; then
+                                    v2_stibp_status=eibrs-implicit
+                                else
+                                    v2_stibp_status=unknown
+                                fi
+                                ;;
+                            *) v2_stibp_status=unknown ;;
+                        esac
+                        ;;
+                esac
+            else
+                # No sysfs: use hardware capability + context to infer STIBP status
+                if [ "$smt_enabled" != 0 ]; then
+                    # SMT disabled or unknown: STIBP is not needed
+                    v2_stibp_status=not-needed
+                else
                     case "$v2_base_mode" in
                         eibrs | eibrs_lfence | eibrs_retpoline)
                             if [ "$v2_is_autoibrs" != 1 ]; then
+                                # Intel eIBRS provides implicit cross-thread protection
                                 v2_stibp_status=eibrs-implicit
-                            else
+                            elif [ -n "$cap_stibp" ]; then
+                                # AMD AutoIBRS: CPU supports STIBP but can't confirm runtime state
                                 v2_stibp_status=unknown
+                            else
+                                # No STIBP support on this CPU
+                                v2_stibp_status=unavailable
                             fi
                             ;;
-                        *) v2_stibp_status=unknown ;;
+                        *)
+                            if [ -n "$cap_stibp" ]; then
+                                # CPU supports STIBP but can't confirm runtime state without sysfs
+                                v2_stibp_status=unknown
+                            else
+                                # CPU does not support STIBP at all
+                                v2_stibp_status=unavailable
+                            fi
+                            ;;
                     esac
-                    ;;
-            esac
-        else
-            # No sysfs: use hardware capability + context to infer STIBP status
-            if [ "$smt_enabled" != 0 ]; then
-                # SMT disabled or unknown: STIBP is not needed
-                v2_stibp_status=not-needed
-            else
-                case "$v2_base_mode" in
-                    eibrs | eibrs_lfence | eibrs_retpoline)
-                        if [ "$v2_is_autoibrs" != 1 ]; then
-                            # Intel eIBRS provides implicit cross-thread protection
-                            v2_stibp_status=eibrs-implicit
-                        elif [ -n "$cap_stibp" ]; then
-                            # AMD AutoIBRS: CPU supports STIBP but can't confirm runtime state
-                            v2_stibp_status=unknown
-                        else
-                            # No STIBP support on this CPU
-                            v2_stibp_status=unavailable
-                        fi
-                        ;;
-                    *)
-                        if [ -n "$cap_stibp" ]; then
-                            # CPU supports STIBP but can't confirm runtime state without sysfs
-                            v2_stibp_status=unknown
-                        else
-                            # CPU does not support STIBP at all
-                            v2_stibp_status=unavailable
-                        fi
-                        ;;
-                esac
+                fi
             fi
-        fi
-        case "$v2_stibp_status" in
-            always-on) pstatus green YES "always-on" ;;
-            forced) pstatus green YES "forced" ;;
-            conditional) pstatus green YES "conditional" ;;
-            eibrs-implicit) pstatus green YES "implicit via eIBRS" ;;
-            not-needed) pstatus green YES "not needed (SMT disabled)" ;;
-            unavailable) pstatus red NO "CPU does not support STIBP" ;;
-            disabled) pstatus yellow NO "disabled" ;;
-            *) pstatus yellow UNKNOWN ;;
-        esac
+            case "$v2_stibp_status" in
+                always-on) pstatus green YES "always-on" ;;
+                forced) pstatus green YES "forced" ;;
+                conditional) pstatus green YES "conditional" ;;
+                eibrs-implicit) pstatus green YES "implicit via eIBRS" ;;
+                not-needed) pstatus green YES "not needed (SMT disabled)" ;;
+                unavailable) pstatus red NO "CPU does not support STIBP" ;;
+                disabled) pstatus yellow NO "disabled" ;;
+                *) pstatus yellow UNKNOWN ;;
+            esac
 
-        # --- v2_pbrsb_status (only relevant for eIBRS) ---
-        case "$v2_base_mode" in
-            eibrs | eibrs_lfence | eibrs_retpoline)
-                pr_info_nol "  * PBRSB-eIBRS mitigation: "
-                if [ -n "$ret_sys_interface_check_fullmsg" ]; then
-                    case "$ret_sys_interface_check_fullmsg" in
-                        *"PBRSB-eIBRS: Not affected"*) v2_pbrsb_status=not-affected ;;
-                        *"PBRSB-eIBRS: SW sequence"*) v2_pbrsb_status=sw-sequence ;;
-                        *"PBRSB-eIBRS: Vulnerable"*) v2_pbrsb_status=vulnerable ;;
-                        *) v2_pbrsb_status=unknown ;;
-                    esac
-                elif [ "$opt_live" != 1 ] && [ -n "$g_kernel" ]; then
-                    if grep -q 'PBRSB-eIBRS' "$g_kernel" 2>/dev/null; then
-                        v2_pbrsb_status=sw-sequence
+            # --- v2_pbrsb_status (only relevant for eIBRS) ---
+            case "$v2_base_mode" in
+                eibrs | eibrs_lfence | eibrs_retpoline)
+                    pr_info_nol "  * PBRSB-eIBRS mitigation: "
+                    if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                        case "$ret_sys_interface_check_fullmsg" in
+                            *"PBRSB-eIBRS: Not affected"*) v2_pbrsb_status=not-affected ;;
+                            *"PBRSB-eIBRS: SW sequence"*) v2_pbrsb_status=sw-sequence ;;
+                            *"PBRSB-eIBRS: Vulnerable"*) v2_pbrsb_status=vulnerable ;;
+                            *) v2_pbrsb_status=unknown ;;
+                        esac
+                    elif [ "$g_mode" != live ] && [ -n "$g_kernel" ]; then
+                        if grep -q 'PBRSB-eIBRS' "$g_kernel" 2>/dev/null; then
+                            v2_pbrsb_status=sw-sequence
+                        else
+                            v2_pbrsb_status=unknown
+                        fi
                     else
                         v2_pbrsb_status=unknown
                     fi
-                else
-                    v2_pbrsb_status=unknown
-                fi
-                case "$v2_pbrsb_status" in
-                    not-affected) pstatus green "Not affected" ;;
-                    sw-sequence) pstatus green "SW sequence" ;;
-                    vulnerable) pstatus red "Vulnerable" ;;
-                    *) pstatus yellow UNKNOWN ;;
-                esac
-                ;;
-            *) v2_pbrsb_status=n/a ;;
-        esac
-
-        # --- v2_bhi_status ---
-        pr_info_nol "  * BHI mitigation: "
-        if [ -n "$ret_sys_interface_check_fullmsg" ]; then
-            case "$ret_sys_interface_check_fullmsg" in
-                *"BHI: Not affected"*) v2_bhi_status=not-affected ;;
-                *"BHI: BHI_DIS_S"*) v2_bhi_status=bhi_dis_s ;;
-                *"BHI: SW loop"*) v2_bhi_status=sw-loop ;;
-                *"BHI: Retpoline"*) v2_bhi_status=retpoline ;;
-                *"BHI: Vulnerable, KVM: SW loop"*) v2_bhi_status=vuln-kvm-loop ;;
-                *"BHI: Vulnerable"*) v2_bhi_status=vulnerable ;;
-                *) v2_bhi_status=unknown ;;
+                    case "$v2_pbrsb_status" in
+                        not-affected) pstatus green "Not affected" ;;
+                        sw-sequence) pstatus green "SW sequence" ;;
+                        vulnerable) pstatus red "Vulnerable" ;;
+                        *) pstatus yellow UNKNOWN ;;
+                    esac
+                    ;;
+                *) v2_pbrsb_status=n/a ;;
             esac
-        elif [ "$opt_live" != 1 ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
-            if grep -q '^CONFIG_\(MITIGATION_\)\?SPECTRE_BHI' "$opt_config"; then
-                if [ "$cap_bhi" = 1 ]; then
-                    v2_bhi_status=bhi_dis_s
+
+            # --- v2_bhi_status ---
+            pr_info_nol "  * BHI mitigation: "
+            if [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                case "$ret_sys_interface_check_fullmsg" in
+                    *"BHI: Not affected"*) v2_bhi_status=not-affected ;;
+                    *"BHI: BHI_DIS_S"*) v2_bhi_status=bhi_dis_s ;;
+                    *"BHI: SW loop"*) v2_bhi_status=sw-loop ;;
+                    *"BHI: Retpoline"*) v2_bhi_status=retpoline ;;
+                    *"BHI: Vulnerable, KVM: SW loop"*) v2_bhi_status=vuln-kvm-loop ;;
+                    *"BHI: Vulnerable"*) v2_bhi_status=vulnerable ;;
+                    *) v2_bhi_status=unknown ;;
+                esac
+            elif [ "$g_mode" != live ] && [ -n "$opt_config" ] && [ -r "$opt_config" ]; then
+                if grep -q '^CONFIG_\(MITIGATION_\)\?SPECTRE_BHI' "$opt_config"; then
+                    if [ "$cap_bhi" = 1 ]; then
+                        v2_bhi_status=bhi_dis_s
+                    else
+                        v2_bhi_status=sw-loop
+                    fi
                 else
-                    v2_bhi_status=sw-loop
+                    v2_bhi_status=unknown
                 fi
             else
                 v2_bhi_status=unknown
             fi
-        else
-            v2_bhi_status=unknown
-        fi
-        case "$v2_bhi_status" in
-            not-affected) pstatus green "Not affected" ;;
-            bhi_dis_s) pstatus green "BHI_DIS_S (hardware)" ;;
-            sw-loop) pstatus green "SW loop" ;;
-            retpoline) pstatus green "Retpoline" ;;
-            vuln-kvm-loop) pstatus yellow "Vulnerable (KVM: SW loop)" ;;
-            vulnerable) pstatus red "Vulnerable" ;;
-            *) pstatus yellow UNKNOWN ;;
-        esac
+            case "$v2_bhi_status" in
+                not-affected) pstatus green "Not affected" ;;
+                bhi_dis_s) pstatus green "BHI_DIS_S (hardware)" ;;
+                sw-loop) pstatus green "SW loop" ;;
+                retpoline) pstatus green "Retpoline" ;;
+                vuln-kvm-loop) pstatus yellow "Vulnerable (KVM: SW loop)" ;;
+                vulnerable) pstatus red "Vulnerable" ;;
+                *) pstatus yellow UNKNOWN ;;
+            esac
 
-        # --- v2_vuln_module ---
-        if [ "$opt_live" = 1 ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
-            pr_info_nol "  * Non-retpoline module loaded: "
-            if echo "$ret_sys_interface_check_fullmsg" | grep -q 'vulnerable module loaded'; then
-                v2_vuln_module=1
-                pstatus red YES
-            else
-                v2_vuln_module=0
-                pstatus green NO
+            # --- v2_vuln_module ---
+            if [ "$g_mode" = live ] && [ -n "$ret_sys_interface_check_fullmsg" ]; then
+                pr_info_nol "  * Non-retpoline module loaded: "
+                if echo "$ret_sys_interface_check_fullmsg" | grep -q 'vulnerable module loaded'; then
+                    v2_vuln_module=1
+                    pstatus red YES
+                else
+                    v2_vuln_module=0
+                    pstatus green NO
+                fi
             fi
-        fi
+
+        fi # is_x86_kernel (retpoline + Mitigation 3)
 
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
@@ -5801,9 +7710,9 @@ check_CVE_2017_5715_linux() {
             # ARM branch predictor hardening (unchanged)
             if [ -n "$bp_harden" ]; then
                 pvulnstatus "$cve" OK "Branch predictor hardening mitigates the vulnerability"
-            elif [ -z "$bp_harden" ] && [ "$cpu_vendor" = ARM ]; then
+            elif [ -z "$bp_harden" ] && is_arm_kernel; then
                 pvulnstatus "$cve" VULN "Branch predictor hardening is needed to mitigate the vulnerability"
-                explain "Your kernel has not been compiled with the CONFIG_UNMAP_KERNEL_AT_EL0 option, recompile it with this option enabled."
+                explain "Your kernel does not have branch predictor hardening. On kernels v5.10+, this code is compiled unconditionally so you may need a newer kernel. On older kernels (v4.16 to v5.9), recompile with the CONFIG_HARDEN_BRANCH_PREDICTOR option enabled."
 
             # LFENCE-only is always VULN (reclassified in v5.17)
             elif [ "$v2_base_mode" = "lfence" ]; then
@@ -5868,7 +7777,7 @@ check_CVE_2017_5715_linux() {
                     if [ -n "${SMC_MOCK_UNPRIVILEGED_BPF_DISABLED:-}" ]; then
                         _ebpf_disabled="$SMC_MOCK_UNPRIVILEGED_BPF_DISABLED"
                         g_mocked=1
-                    elif [ "$opt_live" = 1 ] && [ -r "$g_procfs/sys/kernel/unprivileged_bpf_disabled" ]; then
+                    elif [ "$g_mode" = live ] && [ -r "$g_procfs/sys/kernel/unprivileged_bpf_disabled" ]; then
                         _ebpf_disabled=$(cat "$g_procfs/sys/kernel/unprivileged_bpf_disabled" 2>/dev/null)
                         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_UNPRIVILEGED_BPF_DISABLED='$_ebpf_disabled'")
                     fi
@@ -6055,19 +7964,19 @@ check_CVE_2017_5715_linux() {
             elif [ "$g_ibpb_enabled" = 2 ] && [ "$smt_enabled" != 0 ]; then
                 pvulnstatus "$cve" OK "Full IBPB is mitigating the vulnerability"
 
-            # Offline mode fallback
-            elif [ "$opt_live" != 1 ]; then
+            # No-runtime mode fallback
+            elif [ "$g_mode" != live ]; then
                 if [ "$retpoline" = 1 ] && [ -n "$g_ibpb_supported" ]; then
-                    pvulnstatus "$cve" OK "offline mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
+                    pvulnstatus "$cve" OK "no-runtime mode: kernel supports retpoline + IBPB to mitigate the vulnerability"
                 elif [ -n "$g_ibrs_supported" ] && [ -n "$g_ibpb_supported" ]; then
-                    pvulnstatus "$cve" OK "offline mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
+                    pvulnstatus "$cve" OK "no-runtime mode: kernel supports IBRS + IBPB to mitigate the vulnerability"
                 elif [ "$cap_ibrs_all" = 1 ] || [ "$cap_autoibrs" = 1 ]; then
-                    pvulnstatus "$cve" OK "offline mode: CPU supports Enhanced / Automatic IBRS"
+                    pvulnstatus "$cve" OK "no-runtime mode: CPU supports Enhanced / Automatic IBRS"
                 # CONFIG_MITIGATION_SPECTRE_V2 (v6.12+): top-level on/off for all Spectre V2 mitigations
                 elif [ -n "$opt_config" ] && [ -r "$opt_config" ] && grep -q '^CONFIG_MITIGATION_SPECTRE_V2=y' "$opt_config"; then
-                    pvulnstatus "$cve" OK "offline mode: kernel has Spectre V2 mitigation framework enabled (CONFIG_MITIGATION_SPECTRE_V2)"
+                    pvulnstatus "$cve" OK "no-runtime mode: kernel has Spectre V2 mitigation framework enabled (CONFIG_MITIGATION_SPECTRE_V2)"
                 elif [ "$g_ibrs_can_tell" != 1 ]; then
-                    pvulnstatus "$cve" UNK "offline mode: not enough information"
+                    pvulnstatus "$cve" UNK "no-runtime mode: not enough information"
                     explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
                 fi
             fi
@@ -6215,12 +8124,12 @@ check_CVE_2017_5753_linux() {
         status=$ret_sys_interface_check_status
     fi
     if [ "$opt_sysfs_only" != 1 ]; then
-        # no /sys interface (or offline mode), fallback to our own ways
+        # no /sys interface (or no-runtime mode), fallback to our own ways
 
         # Primary detection: grep for sysfs mitigation strings in the kernel binary.
         # The string "__user pointer sanitization" is present in all kernel versions
         # that have spectre_v1 sysfs support (x86 v4.16+, ARM64 v5.2+, ARM32 v5.17+),
-        # including RHEL "Load fences" variants. This is cheap and works offline.
+        # including RHEL "Load fences" variants. This is cheap and works in no-runtime mode.
         pr_info_nol "* Kernel has spectre_v1 mitigation (kernel image): "
         v1_kernel_mitigated=''
         v1_kernel_mitigated_err=''
@@ -6256,63 +8165,51 @@ check_CVE_2017_5753_linux() {
         # Fallback for v4.15-era kernels: binary pattern matching for array_index_mask_nospec().
         # The sysfs mitigation strings were not present in the kernel image until v4.16 (x86)
         # and v5.2 (ARM64), but the actual mitigation code landed in v4.15 (x86) and v4.16 (ARM64).
-        # For offline analysis of these old kernels, match the specific instruction patterns.
+        # For no-runtime analysis of these old kernels, match the specific instruction patterns.
         if [ -z "$v1_kernel_mitigated" ]; then
             pr_info_nol "* Kernel has array_index_mask_nospec (v4.15 binary pattern): "
-            # vanilla: look for the Linus' mask aka array_index_mask_nospec()
-            # that is inlined at least in raw_copy_from_user (__get_user_X symbols)
-            #mov PER_CPU_VAR(current_task), %_ASM_DX
-            #cmp TASK_addr_limit(%_ASM_DX),%_ASM_AX
-            #jae bad_get_user
-            # /* array_index_mask_nospec() are the 2 opcodes that follow */
-            #+sbb %_ASM_DX, %_ASM_DX
-            #+and %_ASM_DX, %_ASM_AX
-            #ASM_STAC
-            # x86 64bits: jae(0x0f 0x83 0x?? 0x?? 0x?? 0x??) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
-            # x86 32bits: cmp(0x3b 0x82 0x?? 0x?? 0x00 0x00) jae(0x73 0x??) sbb(0x19 0xd2) and(0x21 0xd0)
-            #
-            # arm32
-            ##ifdef CONFIG_THUMB2_KERNEL
-            ##define CSDB	".inst.w 0xf3af8014"
-            ##else
-            ##define CSDB	".inst	0xe320f014"     e320f014
-            ##endif
-            #asm volatile(
-            #	"cmp	%1, %2\n"      e1500003
-            #"	sbc	%0, %1, %1\n"  e0c03000
-            #CSDB
-            #: "=r" (mask)
-            #: "r" (idx), "Ir" (sz)
-            #: "cc");
-            #
-            # http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
             v1_mask_nospec=''
             if [ -n "$g_kernel_err" ]; then
                 pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-            elif ! command -v perl >/dev/null 2>&1; then
-                pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-            else
-                perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
-                ret=$?
-                if [ "$ret" -eq 0 ]; then
-                    pstatus green YES "x86 64 bits array_index_mask_nospec()"
-                    v1_mask_nospec="x86 64 bits array_index_mask_nospec"
+            elif is_x86_kernel; then
+                # x86: binary pattern matching for array_index_mask_nospec()
+                # x86 64bits: jae(0x0f 0x83 ....) sbb(0x48 0x19 0xd2) and(0x48 0x21 0xd0)
+                # x86 32bits: cmp(0x3b 0x82 .. .. 0x00 0x00) jae(0x73 ..) sbb(0x19 0xd2) and(0x21 0xd0)
+                if ! command -v perl >/dev/null 2>&1; then
+                    pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
                 else
-                    perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
+                    perl -ne '/\x0f\x83....\x48\x19\xd2\x48\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
                     ret=$?
                     if [ "$ret" -eq 0 ]; then
-                        pstatus green YES "x86 32 bits array_index_mask_nospec()"
-                        v1_mask_nospec="x86 32 bits array_index_mask_nospec"
+                        pstatus green YES "x86 64 bits array_index_mask_nospec()"
+                        v1_mask_nospec="x86 64 bits array_index_mask_nospec"
                     else
-                        ret=$("${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
-                        if [ "$ret" -gt 0 ]; then
-                            pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
-                            v1_mask_nospec="arm 32 bits array_index_mask_nospec"
+                        perl -ne '/\x3b\x82..\x00\x00\x73.\x19\xd2\x21\xd0/ and $found++; END { exit($found ? 0 : 1) }' "$g_kernel"
+                        ret=$?
+                        if [ "$ret" -eq 0 ]; then
+                            pstatus green YES "x86 32 bits array_index_mask_nospec()"
+                            v1_mask_nospec="x86 32 bits array_index_mask_nospec"
                         else
                             pstatus yellow NO
                         fi
                     fi
                 fi
+            elif is_arm_kernel; then
+                # arm32: match CSDB instruction (0xf3af8014 Thumb2 or 0xe320f014 ARM) preceded by sbc+cmp
+                # http://git.arm.linux.org.uk/cgit/linux-arm.git/commit/?h=spectre&id=a78d156587931a2c3b354534aa772febf6c9e855
+                if ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+                    pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+                else
+                    ret=$("${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | grep -w -e f3af8014 -e e320f014 -B2 | grep -B1 -w sbc | grep -w -c cmp)
+                    if [ "$ret" -gt 0 ]; then
+                        pstatus green YES "$ret occurrence(s) found of arm 32 bits array_index_mask_nospec()"
+                        v1_mask_nospec="arm 32 bits array_index_mask_nospec"
+                    else
+                        pstatus yellow NO
+                    fi
+                fi
+            else
+                pstatus yellow NO
             fi
         fi
 
@@ -6330,67 +8227,69 @@ check_CVE_2017_5753_linux() {
             pstatus yellow NO
         fi
 
-        pr_info_nol "* Kernel has mask_nospec64 (arm64): "
-        #.macro	mask_nospec64, idx, limit, tmp
-        #sub	\tmp, \idx, \limit
-        #bic	\tmp, \tmp, \idx
-        #and	\idx, \idx, \tmp, asr #63
-        #csdb
-        #.endm
-        #$ aarch64-linux-gnu-objdump -d vmlinux | grep -w bic -A1 -B1 | grep -w sub -A2 | grep -w and -B2
-        #ffffff8008082e44:       cb190353        sub     x19, x26, x25
-        #ffffff8008082e48:       8a3a0273        bic     x19, x19, x26
-        #ffffff8008082e4c:       8a93ff5a        and     x26, x26, x19, asr #63
-        #ffffff8008082e50:       d503229f        hint    #0x14
-        # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
-        #
-        # if we already have a detection, don't bother disassembling the kernel, the answer is no.
-        if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
-            pstatus yellow NO
-        elif [ -n "$g_kernel_err" ]; then
-            pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-        elif ! command -v perl >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-        elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
-        else
-            "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'
-            ret=$?
-            if [ "$ret" -eq 9 ]; then
-                pstatus green YES "mask_nospec64 macro is present and used"
-                v1_mask_nospec="arm64 mask_nospec64"
-            else
+        if is_arm_kernel; then
+            pr_info_nol "* Kernel has mask_nospec64 (arm64): "
+            #.macro	mask_nospec64, idx, limit, tmp
+            #sub	\tmp, \idx, \limit
+            #bic	\tmp, \tmp, \idx
+            #and	\idx, \idx, \tmp, asr #63
+            #csdb
+            #.endm
+            #$ aarch64-linux-gnu-objdump -d vmlinux | grep -w bic -A1 -B1 | grep -w sub -A2 | grep -w and -B2
+            #ffffff8008082e44:       cb190353        sub     x19, x26, x25
+            #ffffff8008082e48:       8a3a0273        bic     x19, x19, x26
+            #ffffff8008082e4c:       8a93ff5a        and     x26, x26, x19, asr #63
+            #ffffff8008082e50:       d503229f        hint    #0x14
+            # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
+            #
+            # if we already have a detection, don't bother disassembling the kernel, the answer is no.
+            if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
                 pstatus yellow NO
+            elif [ -n "$g_kernel_err" ]; then
+                pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+            elif ! command -v perl >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
+            elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+            else
+                "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\ssub\s+(x\d+)/ && $r[1]=~/\sbic\s+$1,\s+$1,/ && $r[2]=~/\sand\s/ && exit(9); shift @r if @r>3'
+                ret=$?
+                if [ "$ret" -eq 9 ]; then
+                    pstatus green YES "mask_nospec64 macro is present and used"
+                    v1_mask_nospec="arm64 mask_nospec64"
+                else
+                    pstatus yellow NO
+                fi
             fi
-        fi
 
-        pr_info_nol "* Kernel has array_index_nospec (arm64): "
-        # in 4.19+ kernels, the mask_nospec64 asm64 macro is replaced by array_index_nospec, defined in nospec.h, and used in invoke_syscall()
-        # ffffff8008090a4c:       2a0203e2        mov     w2, w2
-        # ffffff8008090a50:       eb0200bf        cmp     x5, x2
-        # ffffff8008090a54:       da1f03e2        ngc     x2, xzr
-        # ffffff8008090a58:       d503229f        hint    #0x14
-        # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
-        #
-        # if we already have a detection, don't bother disassembling the kernel, the answer is no.
-        if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
-            pstatus yellow NO
-        elif [ -n "$g_kernel_err" ]; then
-            pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
-        elif ! command -v perl >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
-        elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
-            pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
-        else
-            "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\smov\s+(w\d+),\s+(w\d+)/ && $r[1]=~/\scmp\s+(x\d+),\s+(x\d+)/ && $r[2]=~/\sngc\s+$2,/ && exit(9); shift @r if @r>3'
-            ret=$?
-            if [ "$ret" -eq 9 ]; then
-                pstatus green YES "array_index_nospec macro is present and used"
-                v1_mask_nospec="arm64 array_index_nospec"
-            else
+            pr_info_nol "* Kernel has array_index_nospec (arm64): "
+            # in 4.19+ kernels, the mask_nospec64 asm64 macro is replaced by array_index_nospec, defined in nospec.h, and used in invoke_syscall()
+            # ffffff8008090a4c:       2a0203e2        mov     w2, w2
+            # ffffff8008090a50:       eb0200bf        cmp     x5, x2
+            # ffffff8008090a54:       da1f03e2        ngc     x2, xzr
+            # ffffff8008090a58:       d503229f        hint    #0x14
+            # /!\ can also just be "csdb" instead of "hint #0x14" for native objdump
+            #
+            # if we already have a detection, don't bother disassembling the kernel, the answer is no.
+            if [ -n "$v1_kernel_mitigated" ] || [ -n "$v1_mask_nospec" ] || [ "$g_redhat_canonical_spectre" -gt 0 ]; then
                 pstatus yellow NO
+            elif [ -n "$g_kernel_err" ]; then
+                pstatus yellow UNKNOWN "couldn't check ($g_kernel_err)"
+            elif ! command -v perl >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing 'perl' binary, please install it"
+            elif ! command -v "${opt_arch_prefix}objdump" >/dev/null 2>&1; then
+                pstatus yellow UNKNOWN "missing '${opt_arch_prefix}objdump' tool, please install it, usually it's in the binutils package"
+            else
+                "${opt_arch_prefix}objdump" "$g_objdump_options" "$g_kernel" | perl -ne 'push @r, $_; /\s(hint|csdb)\s/ && $r[0]=~/\smov\s+(w\d+),\s+(w\d+)/ && $r[1]=~/\scmp\s+(x\d+),\s+(x\d+)/ && $r[2]=~/\sngc\s+$2,/ && exit(9); shift @r if @r>3'
+                ret=$?
+                if [ "$ret" -eq 9 ]; then
+                    pstatus green YES "array_index_nospec macro is present and used"
+                    v1_mask_nospec="arm64 array_index_nospec"
+                else
+                    pstatus yellow NO
+                fi
             fi
-        fi
+        fi # is_arm_kernel
 
     elif [ "$sys_interface_available" = 0 ]; then
         msg="/sys vulnerability interface use forced, but it's not available!"
@@ -6551,7 +8450,7 @@ check_CVE_2017_5754_linux() {
 
         mount_debugfs
         pr_info_nol "  * PTI enabled and active: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             dmesg_grep="Kernel/User page tables isolation: enabled"
             dmesg_grep="$dmesg_grep|Kernel page table isolation enabled"
             dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
@@ -6597,10 +8496,13 @@ check_CVE_2017_5754_linux() {
                 pstatus yellow NO
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
 
-        pti_performance_check
+        # PCID/INVPCID are x86-only CPU features
+        if is_x86_cpu; then
+            pti_performance_check
+        fi
 
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
@@ -6614,7 +8516,7 @@ check_CVE_2017_5754_linux() {
     is_xen_dom0 && xen_pv_domo=1
     is_xen_domU && xen_pv_domu=1
 
-    if [ "$opt_live" = 1 ]; then
+    if [ "$g_mode" = live ]; then
         # checking whether we're running under Xen PV 64 bits. If yes, we are affected by affected_variant3
         # (unless we are a Dom0)
         pr_info_nol "* Running as a Xen PV DomU: "
@@ -6630,7 +8532,7 @@ check_CVE_2017_5754_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ "$kpti_enabled" = 1 ]; then
                 pvulnstatus "$cve" OK "PTI mitigates the vulnerability"
             elif [ "$xen_pv_domo" = 1 ]; then
@@ -6656,12 +8558,12 @@ check_CVE_2017_5754_linux() {
             fi
         else
             if [ -n "$kpti_support" ]; then
-                pvulnstatus "$cve" OK "offline mode: PTI will mitigate the vulnerability if enabled at runtime"
+                pvulnstatus "$cve" OK "no-runtime mode: PTI will mitigate the vulnerability if enabled at runtime"
             elif [ "$kpti_can_tell" = 1 ]; then
                 pvulnstatus "$cve" VULN "PTI is needed to mitigate the vulnerability"
                 explain "If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel with the CONFIG_(MITIGATION_)PAGE_TABLE_ISOLATION option (named CONFIG_KAISER for some kernels), or the CONFIG_UNMAP_KERNEL_AT_EL0 option (for ARM64)"
             else
-                pvulnstatus "$cve" UNK "offline mode: not enough information"
+                pvulnstatus "$cve" UNK "no-runtime mode: not enough information"
                 explain "Re-run this script with root privileges, and give it the kernel image (--kernel), the kernel configuration (--config) and the System.map file (--map) corresponding to the kernel you would like to inspect."
             fi
         fi
@@ -6782,7 +8684,7 @@ check_CVE_2018_12207_linux() {
         if [ -n "$g_kernel_err" ]; then
             kernel_itlbmh_err="$g_kernel_err"
         # commit 5219505fcbb640e273a0d51c19c38de0100ec5a9
-        elif grep -q 'itlb_multihit' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'itlb_multihit' "$g_kernel"; then
             kernel_itlbmh="found itlb_multihit in kernel image"
         fi
         if [ -n "$kernel_itlbmh" ]; then
@@ -6794,7 +8696,7 @@ check_CVE_2018_12207_linux() {
         fi
 
         pr_info_nol "* iTLB Multihit mitigation enabled and active: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qF 'Mitigation'; then
                     pstatus green YES "$ret_sys_interface_check_fullmsg"
@@ -6805,7 +8707,7 @@ check_CVE_2018_12207_linux() {
                 pstatus yellow NO "itlb_multihit not found in sysfs hierarchy"
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
@@ -6821,7 +8723,7 @@ check_CVE_2018_12207_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$opt_sysfs_only" != 1 ]; then
-            if [ "$opt_live" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
                 pvulnstatus "$cve" VULN "Your kernel doesn't support iTLB Multihit mitigation, update it"
             else
@@ -6883,15 +8785,10 @@ check_CVE_2018_3615() {
     pr_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
     pr_info_nol "* CPU microcode mitigates the vulnerability: "
-    if { [ "$cap_flush_cmd" = 1 ] || { [ "$g_msr_locked_down" = 1 ] && [ "$cap_l1df" = 1 ]; }; } && [ "$cap_sgx" = 1 ]; then
-        # no easy way to detect a fixed SGX but we know that
-        # microcodes that have the FLUSH_CMD MSR also have the
-        # fixed SGX (for CPUs that support it), because Intel
-        # delivered fixed microcodes for both issues at the same time
-        #
-        # if the system we're running on is locked down (no way to write MSRs),
-        # make the assumption that if the L1D flush CPUID bit is set, probably
-        # that FLUSH_CMD MSR is here too
+    if [ "$cap_l1df" = 1 ] && [ "$cap_sgx" = 1 ]; then
+        # the L1D flush CPUID bit indicates that the microcode supports L1D flushing,
+        # and microcodes that have this also have the fixed SGX (for CPUs that support it),
+        # because Intel delivered fixed microcodes for both issues at the same time
         pstatus green YES
     elif [ "$cap_sgx" = 1 ]; then
         pstatus red NO
@@ -6902,7 +8799,7 @@ check_CVE_2018_3615() {
     if ! is_cpu_affected "$cve"; then
         # override status & msg in case CPU is not vulnerable after all
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
-    elif [ "$cap_flush_cmd" = 1 ] || { [ "$g_msr_locked_down" = 1 ] && [ "$cap_l1df" = 1 ]; }; then
+    elif [ "$cap_l1df" = 1 ]; then
         pvulnstatus "$cve" OK "your CPU microcode mitigates the vulnerability"
     else
         pvulnstatus "$cve" VULN "your CPU supports SGX and the microcode is not up to date"
@@ -6950,7 +8847,7 @@ check_CVE_2018_3620_linux() {
         fi
 
         pr_info_nol "* PTE inversion enabled and active: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -q 'Mitigation: PTE Inversion'; then
                     pstatus green YES
@@ -6964,7 +8861,7 @@ check_CVE_2018_3620_linux() {
                 pteinv_active=-1
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
@@ -6979,7 +8876,7 @@ check_CVE_2018_3620_linux() {
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$opt_sysfs_only" != 1 ]; then
             if [ "$pteinv_supported" = 1 ]; then
-                if [ "$pteinv_active" = 1 ] || [ "$opt_live" != 1 ]; then
+                if [ "$pteinv_active" = 1 ] || [ "$g_mode" != live ]; then
                     pvulnstatus "$cve" OK "PTE inversion mitigates the vulnerability"
                 else
                     pvulnstatus "$cve" VULN "Your kernel supports PTE inversion but it doesn't seem to be enabled"
@@ -7051,19 +8948,19 @@ check_CVE_2018_3639_linux() {
     fi
     if [ "$opt_sysfs_only" != 1 ]; then
         pr_info_nol "* Kernel supports disabling speculative store bypass (SSB): "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if grep -Eq 'Speculation.?Store.?Bypass:' "$g_procfs/self/status" 2>/dev/null; then
                 kernel_ssb="found in $g_procfs/self/status"
                 pr_debug "found Speculation.Store.Bypass: in $g_procfs/self/status"
             fi
         fi
-        # arm64 kernels can have cpu_show_spec_store_bypass with ARM64_SSBD, so exclude them
-        if [ -z "$kernel_ssb" ] && [ -n "$g_kernel" ] && ! grep -q 'arm64_sys_' "$g_kernel"; then
+        # spec_store_bypass is x86-specific; ARM kernels use ARM64_SSBD instead
+        if [ -z "$kernel_ssb" ] && [ -n "$g_kernel" ] && is_x86_kernel; then
             kernel_ssb=$("${opt_arch_prefix}strings" "$g_kernel" | grep spec_store_bypass | head -n1)
             [ -n "$kernel_ssb" ] && kernel_ssb="found $kernel_ssb in kernel"
         fi
-        # arm64 kernels can have cpu_show_spec_store_bypass with ARM64_SSBD, so exclude them
-        if [ -z "$kernel_ssb" ] && [ -n "$opt_map" ] && ! grep -q 'arm64_sys_' "$opt_map"; then
+        # spec_store_bypass is x86-specific; ARM kernels use ARM64_SSBD instead
+        if [ -z "$kernel_ssb" ] && [ -n "$opt_map" ] && is_x86_kernel; then
             kernel_ssb=$(grep spec_store_bypass "$opt_map" | awk '{print $3}' | head -n1)
             [ -n "$kernel_ssb" ] && kernel_ssb="found $kernel_ssb in System.map"
         fi
@@ -7090,7 +8987,7 @@ check_CVE_2018_3639_linux() {
         fi
 
         kernel_ssbd_enabled=-1
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             # https://elixir.bootlin.com/linux/v5.0/source/fs/proc/array.c#L340
             pr_info_nol "* SSB mitigation is enabled and active: "
             if grep -Eq 'Speculation.?Store.?Bypass:[[:space:]]+thread' "$g_procfs/self/status" 2>/dev/null; then
@@ -7139,7 +9036,7 @@ check_CVE_2018_3639_linux() {
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ -n "$cap_ssbd" ]; then
             if [ -n "$kernel_ssb" ]; then
-                if [ "$opt_live" = 1 ]; then
+                if [ "$g_mode" = live ]; then
                     if [ "$kernel_ssbd_enabled" -gt 0 ]; then
                         pvulnstatus "$cve" OK "your CPU and kernel both support SSBD and mitigation is enabled"
                     else
@@ -7154,11 +9051,21 @@ check_CVE_2018_3639_linux() {
             fi
         else
             if [ -n "$kernel_ssb" ]; then
-                pvulnstatus "$cve" VULN "Your CPU doesn't support SSBD"
-                explain "Your kernel is recent enough to use the CPU microcode features for mitigation, but your CPU microcode doesn't actually provide the necessary features for the kernel to use. The microcode of your CPU hence needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
+                if is_arm_kernel; then
+                    pvulnstatus "$cve" VULN "no SSB mitigation is active on your system"
+                    explain "ARM CPUs mitigate SSB either through a hardware SSBS bit (ARMv8.5+ CPUs) or through firmware support for SMCCC ARCH_WORKAROUND_2. Your kernel reports SSB status but neither mechanism appears to be active. For CPUs predating ARMv8.5 (such as Cortex-A57 or Cortex-A72), check with your board or SoC vendor for a firmware update that provides SMCCC ARCH_WORKAROUND_2 support."
+                else
+                    pvulnstatus "$cve" VULN "Your CPU doesn't support SSBD"
+                    explain "Your kernel is recent enough to use the CPU microcode features for mitigation, but your CPU microcode doesn't actually provide the necessary features for the kernel to use. The microcode of your CPU hence needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
+                fi
             else
-                pvulnstatus "$cve" VULN "Neither your CPU nor your kernel support SSBD"
-                explain "Both your CPU microcode and your kernel are lacking support for mitigation. If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel from recent-enough sources. The microcode of your CPU also needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
+                if is_arm_kernel; then
+                    pvulnstatus "$cve" VULN "your kernel and firmware do not support SSB mitigation"
+                    explain "ARM SSB mitigation requires kernel support (CONFIG_ARM64_SSBD) combined with either a hardware SSBS bit (ARMv8.5+ CPUs) or firmware support for SMCCC ARCH_WORKAROUND_2. Ensure you are running a recent kernel compiled with CONFIG_ARM64_SSBD. For CPUs predating ARMv8.5, also check with your board or SoC vendor for a firmware update providing SMCCC ARCH_WORKAROUND_2 support."
+                else
+                    pvulnstatus "$cve" VULN "Neither your CPU nor your kernel support SSBD"
+                    explain "Both your CPU microcode and your kernel are lacking support for mitigation. If you're using a distro kernel, upgrade your distro to get the latest kernel available. Otherwise, recompile the kernel from recent-enough sources. The microcode of your CPU also needs to be upgraded. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section)."
+                fi
             fi
         fi
     else
@@ -7224,7 +9131,7 @@ check_CVE_2018_3639_bsd() {
 # CVE-2018-3640, Variant 3a, Rogue System Register Read
 
 check_CVE_2018_3640() {
-    local status sys_interface_available msg cve
+    local status sys_interface_available msg cve arm_v3a_mitigation
     cve='CVE-2018-3640'
     pr_info "\033[1;34m$cve aka '$(cve2name "$cve")'\033[0m"
 
@@ -7232,23 +9139,53 @@ check_CVE_2018_3640() {
     sys_interface_available=0
     msg=''
 
-    pr_info_nol "* CPU microcode mitigates the vulnerability: "
-    if [ -n "$cap_ssbd" ]; then
-        # microcodes that ship with SSBD are known to also fix affected_variant3a
-        # there is no specific cpuid bit as far as we know
-        pstatus green YES
-    else
-        pstatus yellow NO
-    fi
+    if is_arm_kernel; then
+        # ARM64: mitigation is via an EL2 indirect trampoline (spectre_v3a_enable_mitigation),
+        # applied automatically at boot for affected CPUs (Cortex-A57, Cortex-A72).
+        # No microcode update is involved.
+        arm_v3a_mitigation=''
+        if [ -n "$opt_map" ] && grep -qw spectre_v3a_enable_mitigation "$opt_map" 2>/dev/null; then
+            arm_v3a_mitigation="found spectre_v3a_enable_mitigation in System.map"
+        fi
+        if [ -z "$arm_v3a_mitigation" ] && [ -n "$g_kernel" ]; then
+            if "${opt_arch_prefix}strings" "$g_kernel" 2>/dev/null | grep -qw spectre_v3a_enable_mitigation; then
+                arm_v3a_mitigation="found spectre_v3a_enable_mitigation in kernel image"
+            fi
+        fi
 
-    if ! is_cpu_affected "$cve"; then
-        # override status & msg in case CPU is not vulnerable after all
-        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
-    elif [ -n "$cap_ssbd" ]; then
-        pvulnstatus "$cve" OK "your CPU microcode mitigates the vulnerability"
+        pr_info_nol "* Kernel mitigates the vulnerability via EL2 hardening: "
+        if [ -n "$arm_v3a_mitigation" ]; then
+            pstatus green YES "$arm_v3a_mitigation"
+        else
+            pstatus yellow NO
+        fi
+
+        if ! is_cpu_affected "$cve"; then
+            pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+        elif [ -n "$arm_v3a_mitigation" ]; then
+            pvulnstatus "$cve" OK "your kernel mitigates the vulnerability via EL2 vector hardening"
+        else
+            pvulnstatus "$cve" VULN "your kernel does not include the EL2 vector hardening mitigation"
+            explain "ARM64 Spectre v3a mitigation is provided by the kernel using an indirect trampoline for EL2 (hypervisor) vectors (spectre_v3a_enable_mitigation). Ensure you are running a recent kernel. If you're using a distro kernel, upgrading your distro should provide a kernel with this mitigation included."
+        fi
     else
-        pvulnstatus "$cve" VULN "an up-to-date CPU microcode is needed to mitigate this vulnerability"
-        explain "The microcode of your CPU needs to be upgraded to mitigate this vulnerability. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). The microcode update is enough, there is no additional OS, kernel or software change needed."
+        # x86: microcodes that ship with SSBD are known to also fix variant 3a;
+        # there is no specific CPUID bit for variant 3a as far as we know.
+        pr_info_nol "* CPU microcode mitigates the vulnerability: "
+        if [ -n "$cap_ssbd" ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        if ! is_cpu_affected "$cve"; then
+            pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+        elif [ -n "$cap_ssbd" ]; then
+            pvulnstatus "$cve" OK "your CPU microcode mitigates the vulnerability"
+        else
+            pvulnstatus "$cve" VULN "an up-to-date CPU microcode is needed to mitigate this vulnerability"
+            explain "The microcode of your CPU needs to be upgraded to mitigate this vulnerability. This is usually done at boot time by your kernel (the upgrade is not persistent across reboots which is why it's done at each boot). If you're using a distro, make sure you are up to date, as microcode updates are usually shipped alongside with the distro kernel. Availability of a microcode update for you CPU model depends on your CPU vendor. You can usually find out online if a microcode update is available for your CPU by searching for your CPUID (indicated in the Hardware Check section). The microcode update is enough, there is no additional OS, kernel or software change needed."
+        fi
     fi
 }
 
@@ -7325,22 +9262,27 @@ check_CVE_2018_3646_linux() {
         pr_info "* Mitigation 1 (KVM)"
         pr_info_nol "  * EPT is disabled: "
         ept_disabled=-1
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if ! [ -r "$SYS_MODULE_BASE/kvm_intel/parameters/ept" ]; then
                 pstatus blue N/A "the kvm_intel module is not loaded"
-            elif [ "$(cat "$SYS_MODULE_BASE/kvm_intel/parameters/ept")" = N ]; then
-                pstatus green YES
-                ept_disabled=1
             else
-                pstatus yellow NO
+                ept_value="$(cat "$SYS_MODULE_BASE/kvm_intel/parameters/ept" 2>/dev/null || echo ERROR)"
+                if [ "$ept_value" = N ]; then
+                    pstatus green YES
+                    ept_disabled=1
+                elif [ "$ept_value" = ERROR ]; then
+                    pstatus yellow UNK "Couldn't read $SYS_MODULE_BASE/kvm_intel/parameters/ept"
+                else
+                    pstatus yellow NO
+                fi
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
 
         pr_info "* Mitigation 2"
         pr_info_nol "  * L1D flush is supported by kernel: "
-        if [ "$opt_live" = 1 ] && grep -qw flush_l1d "$g_procfs/cpuinfo"; then
+        if [ "$g_mode" = live ] && grep -qw flush_l1d "$g_procfs/cpuinfo"; then
             l1d_kernel="found flush_l1d in $g_procfs/cpuinfo"
         fi
         if [ -z "$l1d_kernel" ]; then
@@ -7362,7 +9304,7 @@ check_CVE_2018_3646_linux() {
         fi
 
         pr_info_nol "  * L1D flush enabled: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 # vanilla: VMX: $l1dstatus, SMT $smtstatus
                 # Red Hat: VMX: SMT $smtstatus, L1D $l1dstatus
@@ -7408,18 +9350,18 @@ check_CVE_2018_3646_linux() {
             fi
         else
             l1d_mode=-1
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
 
         pr_info_nol "  * Hardware-backed L1D flush supported: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if grep -qw flush_l1d "$g_procfs/cpuinfo" || [ -n "$l1d_xen_hardware" ]; then
                 pstatus green YES "performance impact of the mitigation will be greatly reduced"
             else
                 pstatus blue NO "flush will be done in software, this is slower"
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
 
         pr_info_nol "  * Hyper-Threading (SMT) is enabled: "
@@ -7559,7 +9501,7 @@ check_CVE_2019_11135_linux() {
         kernel_taa=''
         if [ -n "$g_kernel_err" ]; then
             kernel_taa_err="$g_kernel_err"
-        elif grep -q 'tsx_async_abort' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'tsx_async_abort' "$g_kernel"; then
             kernel_taa="found tsx_async_abort in kernel image"
         fi
         if [ -n "$kernel_taa" ]; then
@@ -7571,7 +9513,7 @@ check_CVE_2019_11135_linux() {
         fi
 
         pr_info_nol "* TAA mitigation enabled and active: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qE '^Mitigation'; then
                     pstatus green YES "$ret_sys_interface_check_fullmsg"
@@ -7582,7 +9524,7 @@ check_CVE_2019_11135_linux() {
                 pstatus yellow NO "tsx_async_abort not found in sysfs hierarchy"
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
@@ -7595,7 +9537,7 @@ check_CVE_2019_11135_linux() {
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
             pvulnstatus "$cve" VULN "Your kernel doesn't support TAA mitigation, update it"
         else
@@ -7608,7 +9550,19 @@ check_CVE_2019_11135_linux() {
     else
         if [ "$opt_paranoid" = 1 ]; then
             # in paranoid mode, TSX or SMT enabled are not OK, even if TAA is mitigated
-            if ! echo "$ret_sys_interface_check_fullmsg" | grep -qF 'TSX disabled'; then
+            # first check sysfs, then fall back to MSR-based detection for older kernels
+            # that may not report TSX as disabled even when microcode has done so
+            tsx_disabled=0
+            if echo "$ret_sys_interface_check_fullmsg" | grep -qF 'TSX disabled'; then
+                tsx_disabled=1
+            elif [ "$cap_tsx_ctrl_rtm_disable" = 1 ] && [ "$cap_tsx_ctrl_cpuid_clear" = 1 ]; then
+                # TSX disabled via IA32_TSX_CTRL MSR (0x122)
+                tsx_disabled=1
+            elif [ "$cap_tsx_force_abort_rtm_disable" = 1 ] && [ "$cap_tsx_force_abort_cpuid_clear" = 1 ]; then
+                # TSX disabled via IA32_TSX_FORCE_ABORT MSR (0x10F), for older Skylake-era CPUs
+                tsx_disabled=1
+            fi
+            if [ "$tsx_disabled" = 0 ]; then
                 pvulnstatus "$cve" VULN "TSX must be disabled for full mitigation"
             elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT vulnerable'; then
                 pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
@@ -7702,7 +9656,7 @@ check_CVE_2020_0543_linux() {
         kernel_srbds=''
         if [ -n "$g_kernel_err" ]; then
             kernel_srbds_err="$g_kernel_err"
-        elif grep -q 'Dependent on hypervisor' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'Dependent on hypervisor' "$g_kernel"; then
             kernel_srbds="found SRBDS implementation evidence in kernel image. Your kernel is up to date for SRBDS mitigation"
         fi
         if [ -n "$kernel_srbds" ]; then
@@ -7713,7 +9667,7 @@ check_CVE_2020_0543_linux() {
             pstatus yellow NO
         fi
         pr_info_nol "* SRBDS mitigation control is enabled and active: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ -n "$ret_sys_interface_check_fullmsg" ]; then
                 if echo "$ret_sys_interface_check_fullmsg" | grep -qE '^Mitigation'; then
                     pstatus green YES "$ret_sys_interface_check_fullmsg"
@@ -7724,7 +9678,7 @@ check_CVE_2020_0543_linux() {
                 pstatus yellow NO "SRBDS not found in sysfs hierarchy"
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
     elif [ "$sys_interface_available" = 0 ]; then
         # we have no sysfs but were asked to use it only!
@@ -7742,7 +9696,7 @@ check_CVE_2020_0543_linux() {
                     # SRBDS mitigation control is enabled
                     if [ -z "$msg" ]; then
                         # if msg is empty, sysfs check didn't fill it, rely on our own test
-                        if [ "$opt_live" = 1 ]; then
+                        if [ "$g_mode" = live ]; then
                             # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
                             pvulnstatus "$cve" OK "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated"
                         fi
@@ -7756,7 +9710,7 @@ check_CVE_2020_0543_linux() {
                 elif [ "$cap_srbds_on" = 0 ]; then
                     # SRBDS mitigation control is disabled
                     if [ -z "$msg" ]; then
-                        if [ "$opt_live" = 1 ]; then
+                        if [ "$g_mode" = live ]; then
                             # if we're in live mode and $msg is empty, sysfs file is not there so kernel is too old
                             pvulnstatus "$cve" VULN "Your microcode is up to date for SRBDS mitigation control. The kernel needs to be updated. Mitigation is disabled"
                         fi
@@ -7823,6 +9777,36 @@ check_CVE_2020_0543_bsd() {
     else
         pvulnstatus "$cve" VULN "your kernel doesn't support SRBDS mitigation, update it"
     fi
+}
+
+# >>>>>> vulns/CVE-2022-21123.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2022-21123, SBDR, Shared Buffers Data Read, MMIO Stale Data
+
+check_CVE_2022_21123() {
+    check_cve 'CVE-2022-21123' check_mmio
+}
+
+# >>>>>> vulns/CVE-2022-21125.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2022-21125, SBDS, Shared Buffers Data Sampling, MMIO Stale Data
+
+check_CVE_2022_21125() {
+    check_cve 'CVE-2022-21125' check_mmio
+}
+
+# >>>>>> vulns/CVE-2022-21166.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2022-21166, DRPW, Device Register Partial Write, MMIO Stale Data
+
+check_CVE_2022_21166() {
+    check_cve 'CVE-2022-21166' check_mmio
 }
 
 # >>>>>> vulns/CVE-2022-29900.sh <<<<<<
@@ -8003,14 +9987,14 @@ check_CVE_2022_29900_linux() {
         # Zen/Zen+/Zen2: check IBPB microcode support and SMT
         if [ "$cpu_family" = $((0x17)) ]; then
             pr_info_nol "* CPU supports IBPB: "
-            if [ "$opt_live" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 if [ -n "$cap_ibpb" ]; then
                     pstatus green YES "$cap_ibpb"
                 else
                     pstatus yellow NO
                 fi
             else
-                pstatus blue N/A "not testable in offline mode"
+                pstatus blue N/A "not testable in no-runtime mode"
             fi
 
             pr_info_nol "* Hyper-Threading (SMT) is enabled: "
@@ -8046,7 +10030,7 @@ check_CVE_2022_29900_linux() {
                         "doesn't fully protect cross-thread speculation."
                 elif [ -z "$kernel_unret" ] && [ -z "$kernel_ibpb_entry" ]; then
                     pvulnstatus "$cve" VULN "Your kernel doesn't have either UNRET_ENTRY or IBPB_ENTRY compiled-in"
-                elif [ "$smt_enabled" = 0 ] && [ -z "$cap_ibpb" ] && [ "$opt_live" = 1 ]; then
+                elif [ "$smt_enabled" = 0 ] && [ -z "$cap_ibpb" ] && [ "$g_mode" = live ]; then
                     pvulnstatus "$cve" VULN "SMT is enabled and your microcode doesn't support IBPB"
                     explain "Update your CPU microcode to get IBPB support, or disable SMT by adding\n" \
                         "\`nosmt\` to your kernel command line."
@@ -8170,7 +10154,7 @@ check_CVE_2022_29901_linux() {
         fi
 
         pr_info_nol "* CPU supports Enhanced IBRS (IBRS_ALL): "
-        if [ "$opt_live" = 1 ] || [ "$cap_ibrs_all" != -1 ]; then
+        if [ "$g_mode" = live ] || [ "$cap_ibrs_all" != -1 ]; then
             if [ "$cap_ibrs_all" = 1 ]; then
                 pstatus green YES
             elif [ "$cap_ibrs_all" = 0 ]; then
@@ -8179,11 +10163,11 @@ check_CVE_2022_29901_linux() {
                 pstatus yellow UNKNOWN
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
 
         pr_info_nol "* CPU has RSB Alternate Behavior (RSBA): "
-        if [ "$opt_live" = 1 ] || [ "$cap_rsba" != -1 ]; then
+        if [ "$g_mode" = live ] || [ "$cap_rsba" != -1 ]; then
             if [ "$cap_rsba" = 1 ]; then
                 pstatus yellow YES "this CPU is affected by RSB underflow"
             elif [ "$cap_rsba" = 0 ]; then
@@ -8192,7 +10176,7 @@ check_CVE_2022_29901_linux() {
                 pstatus yellow UNKNOWN
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
 
     elif [ "$sys_interface_available" = 0 ]; then
@@ -8365,17 +10349,17 @@ check_CVE_2022_40982_linux() {
         kernel_gds_err=''
         if [ -n "$g_kernel_err" ]; then
             kernel_gds_err="$g_kernel_err"
-        elif grep -q 'gather_data_sampling' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'gather_data_sampling' "$g_kernel"; then
             kernel_gds="found gather_data_sampling in kernel image"
         fi
-        if [ -z "$kernel_gds" ] && [ -r "$opt_config" ]; then
+        if [ -z "$kernel_gds" ] && is_x86_kernel && [ -r "$opt_config" ]; then
             if grep -q '^CONFIG_GDS_FORCE_MITIGATION=y' "$opt_config" ||
                 grep -q '^CONFIG_MITIGATION_GDS_FORCE=y' "$opt_config" ||
                 grep -q '^CONFIG_MITIGATION_GDS=y' "$opt_config"; then
                 kernel_gds="GDS mitigation config option found enabled in kernel config"
             fi
         fi
-        if [ -z "$kernel_gds" ] && [ -n "$opt_map" ]; then
+        if [ -z "$kernel_gds" ] && is_x86_kernel && [ -n "$opt_map" ]; then
             if grep -q 'gds_select_mitigation' "$opt_map"; then
                 kernel_gds="found gds_select_mitigation in System.map"
             fi
@@ -8391,17 +10375,17 @@ check_CVE_2022_40982_linux() {
         if [ -n "$kernel_gds" ]; then
             pr_info_nol "* Kernel has disabled AVX as a mitigation: "
 
-            if [ "$opt_live" = 1 ]; then
+            if [ "$g_mode" = live ]; then
                 # Check dmesg message to see whether AVX has been disabled
                 dmesg_grep 'Microcode update needed! Disabling AVX as mitigation'
                 dmesgret=$?
                 if [ "$dmesgret" -eq 0 ]; then
                     kernel_avx_disabled="AVX disabled by the kernel (dmesg)"
                     pstatus green YES "$kernel_avx_disabled"
-                elif [ "$cap_avx2" = 0 ]; then
+                elif [ "$cap_avx2" = 0 ] && is_x86_cpu; then
                     # Find out by ourselves
                     # cpuinfo says we don't have AVX2, query
-                    # the CPU directly about AVX2 support
+                    # the CPU directly about AVX2 support (x86-only)
                     read_cpuid 0x7 0x0 "$EBX" 5 1 1
                     ret=$?
                     if [ "$ret" -eq "$READ_CPUID_RET_OK" ]; then
@@ -8418,7 +10402,7 @@ check_CVE_2022_40982_linux() {
                     pstatus yellow NO "AVX support is enabled"
                 fi
             else
-                pstatus blue N/A "not testable in offline mode"
+                pstatus blue N/A "not testable in no-runtime mode"
             fi
         fi
 
@@ -8485,7 +10469,7 @@ check_CVE_2023_20569() {
 }
 
 check_CVE_2023_20569_linux() {
-    local status sys_interface_available msg kernel_sro kernel_sro_err kernel_srso kernel_ibpb_entry smt_enabled
+    local status sys_interface_available msg kernel_sro kernel_sro_err kernel_srso kernel_ibpb_entry kernel_ibpb_no_ret smt_enabled
     status=UNK
     sys_interface_available=0
     msg=''
@@ -8502,6 +10486,15 @@ check_CVE_2023_20569_linux() {
         if echo "$ret_sys_interface_check_fullmsg" | grep -qi 'Mitigation:.*safe RET.*no microcode'; then
             status=VULN
             msg="Vulnerable: Safe RET, no microcode (your kernel incorrectly reports this as mitigated, it was fixed in more recent kernels)"
+        fi
+        # kernels before the IBPB_NO_RET fix (v6.12, backported to v6.11.5/v6.6.58/v6.1.114/v5.15.169/v5.10.228)
+        # don't fill the RSB after IBPB, so when sysfs reports an IBPB-based mitigation, the return predictor
+        # can still be poisoned cross-process (PB-Inception). Override sysfs in that case.
+        if [ "$status" = OK ] && echo "$ret_sys_interface_check_fullmsg" | grep -qi 'IBPB'; then
+            if [ "$cap_ibpb_ret" != 1 ] && ! grep -q 'ibpb_no_ret' "$g_kernel" 2>/dev/null; then
+                status=VULN
+                msg="Vulnerable: IBPB-based mitigation active but kernel lacks return prediction clearing after IBPB (PB-Inception, upgrade to kernel 6.12+)"
+            fi
         fi
     fi
 
@@ -8595,6 +10588,19 @@ check_CVE_2023_20569_linux() {
             fi
         fi
 
+        # check whether the kernel is aware of the IBPB return predictor bypass (PB-Inception).
+        # kernels with the fix (v6.12+, backported) contain the "ibpb_no_ret" bug flag string,
+        # and add an RSB fill after every IBPB on affected CPUs (Zen 1-3).
+        pr_info_nol "* Kernel is aware of IBPB return predictor bypass: "
+        if [ -n "$g_kernel_err" ]; then
+            pstatus yellow UNKNOWN "$g_kernel_err"
+        elif grep -q 'ibpb_no_ret' "$g_kernel"; then
+            kernel_ibpb_no_ret="ibpb_no_ret found in kernel image"
+            pstatus green YES "$kernel_ibpb_no_ret"
+        else
+            pstatus yellow NO
+        fi
+
         # Zen & Zen2 : if the right IBPB microcode applied + SMT off --> not vuln
         if [ "$cpu_family" = $((0x17)) ]; then
             pr_info_nol "* CPU supports IBPB: "
@@ -8644,7 +10650,11 @@ check_CVE_2023_20569_linux() {
                 elif [ -z "$kernel_sro" ]; then
                     pvulnstatus "$cve" VULN "Your kernel is too old and doesn't have the SRSO mitigation logic"
                 elif [ -n "$cap_ibpb" ]; then
-                    pvulnstatus "$cve" OK "SMT is disabled and both your kernel and microcode support mitigation"
+                    if [ "$cap_ibpb_ret" != 1 ] && [ -z "$kernel_ibpb_no_ret" ]; then
+                        pvulnstatus "$cve" VULN "IBPB alone doesn't flush return predictions on this CPU, kernel update needed (PB-Inception, fixed in 6.12+)"
+                    else
+                        pvulnstatus "$cve" OK "SMT is disabled and both your kernel and microcode support mitigation"
+                    fi
                 else
                     pvulnstatus "$cve" VULN "Your microcode is too old"
                 fi
@@ -8659,7 +10669,11 @@ check_CVE_2023_20569_linux() {
                 elif [ "$cap_sbpb" = 2 ]; then
                     pvulnstatus "$cve" VULN "Your microcode doesn't support SBPB"
                 else
-                    pvulnstatus "$cve" OK "Your kernel and microcode both support mitigation"
+                    if [ "$cap_ibpb_ret" != 1 ] && [ -z "$kernel_ibpb_no_ret" ] && [ -n "$kernel_ibpb_entry" ]; then
+                        pvulnstatus "$cve" VULN "IBPB alone doesn't flush return predictions on this CPU, kernel update needed (PB-Inception, fixed in 6.12+)"
+                    else
+                        pvulnstatus "$cve" OK "Your kernel and microcode both support mitigation"
+                    fi
                 fi
             else
                 # not supposed to happen, as normally this CPU should not be affected and not run this code
@@ -8683,6 +10697,186 @@ check_CVE_2023_20569_linux() {
 }
 
 check_CVE_2023_20569_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-2023-20588.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2023-20588, DIV0, AMD Division by Zero Speculative Data Leak
+
+check_CVE_2023_20588() {
+    check_cve 'CVE-2023-20588'
+}
+
+# shellcheck disable=SC2034
+_cve_2023_20588_pvulnstatus_smt() {
+    # common logic for both live (cpuinfo) and live (kernel image fallback) paths:
+    # if --paranoid and SMT is on, report VULN; otherwise OK.
+    # $1 = mitigation detail message
+    if [ "$opt_paranoid" != 1 ] || ! is_cpu_smt_enabled; then
+        pvulnstatus "$cve" OK "Mitigation: amd_clear_divider on exit to user/guest"
+    else
+        pvulnstatus "$cve" VULN "DIV0 mitigation is active but SMT is enabled, data leak possible between sibling threads"
+        explain "Disable SMT (Simultaneous Multi-Threading) for full protection against DIV0.\n " \
+            "The kernel mitigation only covers kernel-to-user and host-to-guest leak paths, not cross-SMT-thread leaks.\n " \
+            "You can disable SMT by booting with the \`nosmt\` kernel parameter, or at runtime:\n " \
+            "\`echo off > /sys/devices/system/cpu/smt/control\`"
+    fi
+}
+
+# shellcheck disable=SC2034
+_cve_2023_20588_pvulnstatus_no_kernel() {
+    pvulnstatus "$cve" VULN "your kernel doesn't support DIV0 mitigation"
+    explain "Update your kernel to a version that includes the amd_clear_divider mitigation (Linux >= 6.5 or a backported stable/vendor kernel).\n " \
+        "The kernel fix adds a dummy division on every exit to userspace and before VMRUN, preventing stale quotient data from leaking.\n " \
+        "Also disable SMT for full protection, as the mitigation doesn't cover cross-SMT-thread leaks."
+}
+
+check_CVE_2023_20588_linux() {
+    local status sys_interface_available msg kernel_mitigated cpuinfo_div0 dmesg_div0 ret
+    status=UNK
+    sys_interface_available=0
+    msg=''
+    # No sysfs interface exists for this CVE (no /sys/devices/system/cpu/vulnerabilities/div0).
+    # sys_interface_available stays 0.
+    #
+    # Kernel source inventory for CVE-2023-20588 (DIV0), traced via git blame:
+    #
+    # --- sysfs messages ---
+    # none: this vulnerability has no sysfs entry
+    #
+    # --- Kconfig symbols ---
+    # none: the mitigation is unconditional, not configurable (no CONFIG_* knob)
+    #
+    # --- kernel functions (for $opt_map / System.map) ---
+    # 77245f1c3c64 (v6.5, initial fix): amd_clear_divider()
+    #   initially called from exc_divide_error() (#DE handler)
+    # f58d6fbcb7c8 (v6.5, follow-up fix): moved amd_clear_divider() call to
+    #   exit-to-userspace path and before VMRUN (SVM)
+    # bfff3c6692ce (v6.8): moved DIV0 detection from model range check to
+    #   unconditional in init_amd_zen1()
+    # 501bd734f933 (v6.11): amd_clear_divider() made __always_inline
+    #   (may no longer appear in System.map on newer kernels)
+    #
+    # --- dmesg ---
+    # 77245f1c3c64 (v6.5): "AMD Zen1 DIV0 bug detected. Disable SMT for full protection."
+    #   (present since the initial fix, printed via pr_notice_once)
+    #
+    # --- /proc/cpuinfo bugs field ---
+    # 77245f1c3c64 (v6.5): X86_BUG_DIV0 mapped to "div0" in bugs field
+    #
+    # --- CPU affection logic (for is_cpu_affected) ---
+    # 77245f1c3c64 (v6.5, initial model list):
+    #   AMD: family 0x17 models 0x00-0x2f, 0x50-0x5f
+    # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all Zen1
+    #   (same model ranges, just different detection path)
+    # vendor scope: AMD only (Zen1 microarchitecture)
+    #
+    # --- stable backports ---
+    # 5.10.y, 5.15.y, 6.1.y, 6.4.y: backported via cpu_has_amd_erratum() path
+    #   (same as mainline v6.5 initial implementation)
+    # 6.5.y, 6.7.y: same erratum-table detection as mainline v6.5
+    # 6.6.y: stable-specific commit 824549816609 backported the init_amd_zen1()
+    #   move (equivalent to mainline bfff3c6692ce but adapted to 6.6 context)
+    # 6.8.y, 6.9.y, 6.10.y: carry mainline bfff3c6692ce directly
+    # 6.7.y missed the init_amd_zen1() move (EOL before backport landed)
+    # 501bd734f933 (__always_inline) was NOT backported to any stable branch
+    # 4.14.y, 4.19.y, 5.4.y: do NOT have the fix (EOL or not backported)
+    # no stable-specific string or behavior differences; all branches use the
+    # same dmesg message and /proc/cpuinfo bugs field as mainline
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        pr_info_nol "* Kernel supports DIV0 mitigation: "
+        kernel_mitigated=''
+        if [ -n "$g_kernel_err" ]; then
+            pstatus yellow UNKNOWN "$g_kernel_err"
+        elif is_x86_kernel && grep -q 'amd_clear_divider' "$g_kernel"; then
+            kernel_mitigated="found amd_clear_divider in kernel image"
+            pstatus green YES "$kernel_mitigated"
+        elif is_x86_kernel && [ -n "$opt_map" ] && grep -q 'amd_clear_divider' "$opt_map"; then
+            kernel_mitigated="found amd_clear_divider in System.map"
+            pstatus green YES "$kernel_mitigated"
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "* DIV0 mitigation enabled and active: "
+        cpuinfo_div0=''
+        dmesg_div0=''
+        if [ "$g_mode" = live ]; then
+            if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'div0' "$g_procfs/cpuinfo" 2>/dev/null; then
+                cpuinfo_div0=1
+                pstatus green YES "div0 found in $g_procfs/cpuinfo bug flags"
+            else
+                # cpuinfo flag not found, fall back to dmesg
+                dmesg_grep 'AMD Zen1 DIV0 bug detected'
+                ret=$?
+                if [ "$ret" -eq 0 ]; then
+                    dmesg_div0=1
+                    pstatus green YES "DIV0 bug detected message found in dmesg"
+                elif [ "$ret" -eq 2 ]; then
+                    pstatus yellow UNKNOWN "dmesg truncated, cannot check for DIV0 message"
+                else
+                    pstatus yellow NO "div0 not found in $g_procfs/cpuinfo bug flags or dmesg"
+                fi
+            fi
+        else
+            pstatus blue N/A "not testable in no-runtime mode"
+        fi
+
+        pr_info_nol "* SMT (Simultaneous Multi-Threading) is enabled: "
+        is_cpu_smt_enabled
+        smt_ret=$?
+        if [ "$smt_ret" = 0 ]; then
+            pstatus yellow YES
+        elif [ "$smt_ret" = 2 ]; then
+            pstatus yellow UNKNOWN
+        else
+            pstatus green NO
+        fi
+    elif [ "$sys_interface_available" = 0 ]; then
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$g_mode" = live ]; then
+                # live mode: cpuinfo div0 flag is the strongest proof the mitigation is active
+                if [ "$cpuinfo_div0" = 1 ] || [ "$dmesg_div0" = 1 ]; then
+                    _cve_2023_20588_pvulnstatus_smt
+                elif [ -n "$kernel_mitigated" ]; then
+                    # kernel has the code but the bug flag is not set, it shouldn't happen on affected CPUs,
+                    # but if it does, trust the kernel image evidence
+                    _cve_2023_20588_pvulnstatus_smt
+                else
+                    _cve_2023_20588_pvulnstatus_no_kernel
+                fi
+            else
+                # no-runtime mode: only kernel image / System.map evidence is available
+                if [ -n "$kernel_mitigated" ]; then
+                    pvulnstatus "$cve" OK "Mitigation: amd_clear_divider found in kernel image"
+                else
+                    _cve_2023_20588_pvulnstatus_no_kernel
+                fi
+            fi
+        else
+            pvulnstatus "$cve" "$status" "no sysfs interface available for this CVE, use --no-sysfs to check"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2023_20588_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     else
@@ -8722,7 +10916,7 @@ check_CVE_2023_20593_linux() {
             pstatus yellow NO
         fi
         pr_info_nol "* Zenbleed kernel mitigation enabled and active: "
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             # read the DE_CFG MSR, we want to check the 9th bit
             # don't do it on non-Zen2 AMD CPUs or later, aka Family 17h,
             # as the behavior could be unknown on others
@@ -8747,7 +10941,7 @@ check_CVE_2023_20593_linux() {
                 pstatus blue N/A "CPU is incompatible"
             fi
         else
-            pstatus blue N/A "not testable in offline mode"
+            pstatus blue N/A "not testable in no-runtime mode"
         fi
 
         pr_info_nol "* Zenbleed mitigation is supported by CPU microcode: "
@@ -8776,7 +10970,7 @@ check_CVE_2023_20593_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         zenbleed_print_vuln=0
-        if [ "$opt_live" = 1 ]; then
+        if [ "$g_mode" = live ]; then
             if [ "$fp_backup_fix" = 1 ] && [ "$ucode_zenbleed" = 1 ]; then
                 # this should never happen, but if it does, it's interesting to know
                 pvulnstatus "$cve" OK "Both your CPU microcode and kernel are mitigating Zenbleed"
@@ -8892,7 +11086,10 @@ check_CVE_2023_23583_linux() {
         pvulnstatus "$cve" VULN "your CPU is affected and no microcode update is available for your CPU stepping"
     else
         pr_info_nol "* Reptar is mitigated by microcode: "
-        if [ "$cpu_ucode" -lt "$g_reptar_fixed_ucode_version" ]; then
+        if [ -z "$cpu_ucode" ]; then
+            pstatus yellow UNKNOWN "couldn't get your microcode version"
+            pvulnstatus "$cve" UNK "couldn't detect microcode version to verify mitigation"
+        elif [ "$cpu_ucode" -lt "$g_reptar_fixed_ucode_version" ]; then
             pstatus yellow NO "You have ucode $(printf "0x%x" "$cpu_ucode") and version $(printf "0x%x" "$g_reptar_fixed_ucode_version") minimum is required"
             pvulnstatus "$cve" VULN "Your microcode is too old to mitigate the vulnerability"
         else
@@ -8903,6 +11100,186 @@ check_CVE_2023_23583_linux() {
 }
 
 check_CVE_2023_23583_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-2023-28746.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2023-28746, RFDS, Register File Data Sampling
+
+check_CVE_2023_28746() {
+    check_cve 'CVE-2023-28746'
+}
+
+check_CVE_2023_28746_linux() {
+    local status sys_interface_available msg kernel_rfds kernel_rfds_err rfds_mitigated
+    status=UNK
+    sys_interface_available=0
+    msg=''
+
+    if sys_interface_check "$VULN_SYSFS_BASE/reg_file_data_sampling"; then
+        # this kernel has the /sys interface, trust it over everything
+        sys_interface_available=1
+        #
+        # Kernel source inventory for reg_file_data_sampling (RFDS)
+        #
+        # --- sysfs messages ---
+        # all versions:
+        #   "Not affected"                      (cpu_show_common, pre-existing)
+        #
+        # --- mainline ---
+        # 8076fcde016c (v6.9-rc1, initial RFDS sysfs):
+        #   "Vulnerable"                        (RFDS_MITIGATION_OFF)
+        #   "Vulnerable: No microcode"          (RFDS_MITIGATION_UCODE_NEEDED)
+        #   "Mitigation: Clear Register File"   (RFDS_MITIGATION_VERW)
+        # b8ce25df2999 (v6.15, added AUTO state):
+        #   no string changes; RFDS_MITIGATION_AUTO is internal, resolved before display
+        # 203d81f8e167 (v6.17, restructured):
+        #   no string changes; added rfds_update_mitigation() + rfds_apply_mitigation()
+        #
+        # --- stable backports ---
+        # 5.10.215, 5.15.154, 6.1.82, 6.6.22, 6.7.10, 6.8.1:
+        #   same 3 strings as mainline; no structural differences
+        #   macro ALDERLAKE_N (0xBE) used instead of mainline ATOM_GRACEMONT (same model)
+        #
+        # --- Kconfig symbols ---
+        # 8076fcde016c (v6.9-rc1): CONFIG_MITIGATION_RFDS (default y)
+        #   no renames across any version
+        #
+        # --- kernel functions (for $opt_map / System.map) ---
+        # 8076fcde016c (v6.9-rc1): rfds_select_mitigation(), rfds_parse_cmdline(),
+        #   rfds_show_state(), cpu_show_reg_file_data_sampling(), vulnerable_to_rfds()
+        # 203d81f8e167 (v6.17): + rfds_update_mitigation(), rfds_apply_mitigation()
+        #
+        # --- CPU affection logic (for is_cpu_affected) ---
+        # 8076fcde016c (v6.9-rc1, initial model list):
+        #   Intel: ATOM_GOLDMONT (0x5C), ATOM_GOLDMONT_D (0x5F),
+        #          ATOM_GOLDMONT_PLUS (0x7A), ATOM_TREMONT_D (0x86),
+        #          ATOM_TREMONT (0x96), ATOM_TREMONT_L (0x9C),
+        #          ATOM_GRACEMONT (0xBE), ALDERLAKE (0x97),
+        #          ALDERLAKE_L (0x9A), RAPTORLAKE (0xB7),
+        #          RAPTORLAKE_P (0xBA), RAPTORLAKE_S (0xBF)
+        # 722fa0dba74f (v6.15, P-only hybrid exclusion):
+        #   ALDERLAKE (0x97) and RAPTORLAKE (0xB7) narrowed to Atom core type only
+        #   via X86_HYBRID_CPU_TYPE_ATOM check in vulnerable_to_rfds(); P-cores on
+        #   these hybrid models are not affected, only E-cores (Gracemont) are.
+        #   (not modeled here, we conservatively flag all steppings per whitelist principle,
+        #   because detecting the active core type at runtime is unreliable from userspace)
+        # immunity: ARCH_CAP_RFDS_NO (bit 27 of IA32_ARCH_CAPABILITIES)
+        # mitigation: ARCH_CAP_RFDS_CLEAR (bit 28 of IA32_ARCH_CAPABILITIES)
+        # vendor scope: Intel only
+        #
+        # all messages start with either "Not affected", "Mitigation", or "Vulnerable"
+        status=$ret_sys_interface_check_status
+    fi
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        if is_x86_cpu; then
+            pr_info_nol "* CPU microcode mitigates the vulnerability: "
+            if [ "$cap_rfds_clear" = 1 ]; then
+                pstatus green YES "RFDS_CLEAR capability indicated by microcode"
+            elif [ "$cap_rfds_clear" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read MSR"
+            fi
+        fi
+
+        if is_x86_kernel; then
+            pr_info_nol "* Kernel supports RFDS mitigation (VERW on transitions): "
+            kernel_rfds=''
+            kernel_rfds_err=''
+            if [ -n "$g_kernel_err" ]; then
+                kernel_rfds_err="$g_kernel_err"
+            elif grep -q 'Clear Register File' "$g_kernel"; then
+                kernel_rfds="found 'Clear Register File' string in kernel image"
+            elif grep -q 'reg_file_data_sampling' "$g_kernel"; then
+                kernel_rfds="found reg_file_data_sampling in kernel image"
+            fi
+            if [ -z "$kernel_rfds" ] && [ -r "$opt_config" ]; then
+                if grep -q '^CONFIG_MITIGATION_RFDS=y' "$opt_config"; then
+                    kernel_rfds="RFDS mitigation config option found enabled in kernel config"
+                fi
+            fi
+            if [ -z "$kernel_rfds" ] && [ -n "$opt_map" ]; then
+                if grep -q 'rfds_select_mitigation' "$opt_map"; then
+                    kernel_rfds="found rfds_select_mitigation in System.map"
+                fi
+            fi
+            if [ -n "$kernel_rfds" ]; then
+                pstatus green YES "$kernel_rfds"
+            elif [ -n "$kernel_rfds_err" ]; then
+                pstatus yellow UNKNOWN "$kernel_rfds_err"
+            else
+                pstatus yellow NO
+            fi
+        fi
+
+        if is_x86_cpu && [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ]; then
+            pr_info_nol "* RFDS mitigation is enabled and active: "
+            if echo "$ret_sys_interface_check_fullmsg" | grep -qi '^Mitigation'; then
+                rfds_mitigated=1
+                pstatus green YES
+            else
+                rfds_mitigated=0
+                pstatus yellow NO
+            fi
+        fi
+    elif [ "$sys_interface_available" = 0 ]; then
+        # we have no sysfs but were asked to use it only!
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        # override status & msg in case CPU is not vulnerable after all
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$cap_rfds_clear" = 1 ]; then
+                if [ -n "$kernel_rfds" ]; then
+                    if [ "$g_mode" = live ]; then
+                        if [ "$rfds_mitigated" = 1 ]; then
+                            pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                        else
+                            pvulnstatus "$cve" VULN "Your microcode and kernel are both up to date for this mitigation, but the mitigation is not active"
+                            explain "The RFDS mitigation has been disabled. Remove 'reg_file_data_sampling=off' or 'mitigations=off'\n " \
+                                "from your kernel command line to re-enable it."
+                        fi
+                    else
+                        pvulnstatus "$cve" OK "Your microcode and kernel are both up to date for this mitigation"
+                    fi
+                else
+                    pvulnstatus "$cve" VULN "Your microcode supports mitigation, but your kernel doesn't, upgrade it to mitigate the vulnerability"
+                    explain "Update your kernel to a version that supports RFDS mitigation (Linux 6.9+, or check if your distro\n " \
+                        "has a backport). Your CPU microcode already provides the RFDS_CLEAR capability."
+                fi
+            else
+                if [ -n "$kernel_rfds" ]; then
+                    pvulnstatus "$cve" VULN "Your kernel supports mitigation, but your CPU microcode also needs to be updated to mitigate the vulnerability"
+                    explain "Update your CPU microcode (via BIOS/firmware update or linux-firmware package) to a version that\n " \
+                        "provides the RFDS_CLEAR capability."
+                else
+                    pvulnstatus "$cve" VULN "Neither your kernel or your microcode support mitigation, upgrade both to mitigate the vulnerability"
+                    explain "Update both your CPU microcode (via BIOS/firmware update from your OEM) and your kernel to a version\n " \
+                        "that supports RFDS mitigation (Linux 6.9+, or check if your distro has a backport)."
+                fi
+            fi
+        else
+            pvulnstatus "$cve" "$status" "$ret_sys_interface_check_fullmsg"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2023_28746_bsd() {
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     else
@@ -9006,15 +11383,15 @@ check_CVE_2024_28956_linux() {
         kernel_its_err=''
         if [ -n "$g_kernel_err" ]; then
             kernel_its_err="$g_kernel_err"
-        elif grep -q 'indirect_target_selection' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'indirect_target_selection' "$g_kernel"; then
             kernel_its="found indirect_target_selection in kernel image"
         fi
-        if [ -z "$kernel_its" ] && [ -r "$opt_config" ]; then
+        if [ -z "$kernel_its" ] && is_x86_kernel && [ -r "$opt_config" ]; then
             if grep -q '^CONFIG_MITIGATION_ITS=y' "$opt_config"; then
                 kernel_its="ITS mitigation config option found enabled in kernel config"
             fi
         fi
-        if [ -z "$kernel_its" ] && [ -n "$opt_map" ]; then
+        if [ -z "$kernel_its" ] && is_x86_kernel && [ -n "$opt_map" ]; then
             if grep -q 'its_select_mitigation' "$opt_map"; then
                 kernel_its="found its_select_mitigation in System.map"
             fi
@@ -9152,15 +11529,15 @@ check_CVE_2024_36350_linux() {
         if [ -n "$g_kernel_err" ]; then
             kernel_tsa_err="$g_kernel_err"
         # commit d8010d4ba43e: "Transient Scheduler Attacks:" is printed by tsa_select_mitigation()
-        elif grep -q 'Transient Scheduler Attacks' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'Transient Scheduler Attacks' "$g_kernel"; then
             kernel_tsa="found TSA mitigation message in kernel image"
         fi
-        if [ -z "$kernel_tsa" ] && [ -r "$opt_config" ]; then
+        if [ -z "$kernel_tsa" ] && is_x86_kernel && [ -r "$opt_config" ]; then
             if grep -q '^CONFIG_MITIGATION_TSA=y' "$opt_config"; then
                 kernel_tsa="CONFIG_MITIGATION_TSA=y found in kernel config"
             fi
         fi
-        if [ -z "$kernel_tsa" ] && [ -n "$opt_map" ]; then
+        if [ -z "$kernel_tsa" ] && is_x86_kernel && [ -n "$opt_map" ]; then
             if grep -q 'tsa_select_mitigation' "$opt_map"; then
                 kernel_tsa="found tsa_select_mitigation in System.map"
             fi
@@ -9173,22 +11550,24 @@ check_CVE_2024_36350_linux() {
             pstatus yellow NO
         fi
 
-        pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-SQ (TSA_SQ_NO): "
-        if [ "$cap_tsa_sq_no" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_tsa_sq_no" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
-        fi
+        if is_amd || is_hygon; then
+            pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-SQ (TSA_SQ_NO): "
+            if [ "$cap_tsa_sq_no" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_tsa_sq_no" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
 
-        pr_info_nol "* Microcode supports VERW buffer clearing: "
-        if [ "$cap_verw_clear" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_verw_clear" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            pr_info_nol "* Microcode supports VERW buffer clearing: "
+            if [ "$cap_verw_clear" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_verw_clear" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
         fi
 
         pr_info_nol "* Hyper-Threading (SMT) is enabled: "
@@ -9329,15 +11708,15 @@ check_CVE_2024_36357_linux() {
         if [ -n "$g_kernel_err" ]; then
             kernel_tsa_err="$g_kernel_err"
         # commit d8010d4ba43e: "Transient Scheduler Attacks:" is printed by tsa_select_mitigation()
-        elif grep -q 'Transient Scheduler Attacks' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'Transient Scheduler Attacks' "$g_kernel"; then
             kernel_tsa="found TSA mitigation message in kernel image"
         fi
-        if [ -z "$kernel_tsa" ] && [ -r "$opt_config" ]; then
+        if [ -z "$kernel_tsa" ] && is_x86_kernel && [ -r "$opt_config" ]; then
             if grep -q '^CONFIG_MITIGATION_TSA=y' "$opt_config"; then
                 kernel_tsa="CONFIG_MITIGATION_TSA=y found in kernel config"
             fi
         fi
-        if [ -z "$kernel_tsa" ] && [ -n "$opt_map" ]; then
+        if [ -z "$kernel_tsa" ] && is_x86_kernel && [ -n "$opt_map" ]; then
             if grep -q 'tsa_select_mitigation' "$opt_map"; then
                 kernel_tsa="found tsa_select_mitigation in System.map"
             fi
@@ -9350,22 +11729,24 @@ check_CVE_2024_36357_linux() {
             pstatus yellow NO
         fi
 
-        pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-L1 (TSA_L1_NO): "
-        if [ "$cap_tsa_l1_no" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_tsa_l1_no" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
-        fi
+        if is_amd || is_hygon; then
+            pr_info_nol "* CPU explicitly indicates not vulnerable to TSA-L1 (TSA_L1_NO): "
+            if [ "$cap_tsa_l1_no" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_tsa_l1_no" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
 
-        pr_info_nol "* Microcode supports VERW buffer clearing: "
-        if [ "$cap_verw_clear" = 1 ]; then
-            pstatus green YES
-        elif [ "$cap_verw_clear" = 0 ]; then
-            pstatus yellow NO
-        else
-            pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            pr_info_nol "* Microcode supports VERW buffer clearing: "
+            if [ "$cap_verw_clear" = 1 ]; then
+                pstatus green YES
+            elif [ "$cap_verw_clear" = 0 ]; then
+                pstatus yellow NO
+            else
+                pstatus yellow UNKNOWN "couldn't read CPUID leaf 0x80000021"
+            fi
         fi
 
     elif [ "$sys_interface_available" = 0 ]; then
@@ -9458,7 +11839,10 @@ check_CVE_2024_45332_linux() {
             "update is available for your specific CPU stepping."
     else
         pr_info_nol "* BPI is mitigated by microcode: "
-        if [ "$cpu_ucode" -lt "$g_bpi_fixed_ucode_version" ]; then
+        if [ -z "$cpu_ucode" ]; then
+            pstatus yellow UNKNOWN "couldn't get your microcode version"
+            pvulnstatus "$cve" UNK "couldn't detect microcode version to verify mitigation"
+        elif [ "$cpu_ucode" -lt "$g_bpi_fixed_ucode_version" ]; then
             pstatus yellow NO "You have ucode $(printf "0x%x" "$cpu_ucode") and version $(printf "0x%x" "$g_bpi_fixed_ucode_version") minimum is required"
             pvulnstatus "$cve" VULN "Your microcode is too old to mitigate the vulnerability"
             explain "CVE-2024-45332 (Branch Privilege Injection) is a race condition in the branch predictor\n" \
@@ -9568,15 +11952,15 @@ check_CVE_2025_40300_linux() {
         kernel_vmscape_err=''
         if [ -n "$g_kernel_err" ]; then
             kernel_vmscape_err="$g_kernel_err"
-        elif grep -q 'vmscape' "$g_kernel"; then
+        elif is_x86_kernel && grep -q 'vmscape' "$g_kernel"; then
             kernel_vmscape="found vmscape in kernel image"
         fi
-        if [ -z "$kernel_vmscape" ] && [ -r "$opt_config" ]; then
+        if [ -z "$kernel_vmscape" ] && is_x86_kernel && [ -r "$opt_config" ]; then
             if grep -q '^CONFIG_MITIGATION_VMSCAPE=y' "$opt_config"; then
                 kernel_vmscape="VMScape mitigation config option found enabled in kernel config"
             fi
         fi
-        if [ -z "$kernel_vmscape" ] && [ -n "$opt_map" ]; then
+        if [ -z "$kernel_vmscape" ] && is_x86_kernel && [ -n "$opt_map" ]; then
             if grep -q 'vmscape_select_mitigation' "$opt_map"; then
                 kernel_vmscape="found vmscape_select_mitigation in System.map"
             fi
@@ -9629,23 +12013,213 @@ check_CVE_2025_40300_bsd() {
     fi
 }
 
+# >>>>>> vulns/CVE-2025-54505.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-2025-54505, FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
+
+check_CVE_2025_54505() {
+    check_cve 'CVE-2025-54505'
+}
+
+# Print remediation advice for FPDSS when reporting VULN
+# Callers: check_CVE_2025_54505_linux
+_cve_2025_54505_explain_fix() {
+    explain "Update your kernel to one that carries commit e55d98e77561 (\"x86/CPU: Fix FPDSS on Zen1\", mainline Linux 7.1),\n " \
+        "or the equivalent backport from your distribution. The kernel sets bit 9 of MSR 0xc0011028 unconditionally on\n " \
+        "every Zen1 CPU at boot, which disables the hardware optimization responsible for the leak.\n " \
+        "To manually mitigate the issue right now, you may use the following command:\n " \
+        "\`wrmsr -a 0xc0011028 \$((\$(rdmsr -c 0xc0011028) | (1<<9)))\`,\n " \
+        "however note that this manual mitigation will only be active until the next reboot.\n " \
+        "No microcode update is required: the chicken bit is present on every Zen1 CPU."
+}
+
+check_CVE_2025_54505_linux() {
+    local status sys_interface_available msg kernel_mitigated dmesg_fpdss msr_fpdss ret
+    status=UNK
+    sys_interface_available=0
+    msg=''
+    # No sysfs interface exists for this vulnerability (no /sys/devices/system/cpu/vulnerabilities/fpdss).
+    # sys_interface_available stays 0.
+    #
+    # Kernel source inventory for FPDSS, traced via git blame:
+    #
+    # --- sysfs messages ---
+    # none: this vulnerability has no sysfs entry
+    #
+    # --- Kconfig symbols ---
+    # none: the mitigation is unconditional, not configurable (no CONFIG_* knob)
+    #
+    # --- kernel functions (for $opt_map / System.map) ---
+    # none: the fix is two inline lines in init_amd_zen1(), no dedicated function
+    #
+    # --- dmesg ---
+    # e55d98e77561 (v7.1, initial fix): "AMD Zen1 FPDSS bug detected, enabling mitigation."
+    #   (printed via pr_notice_once on every Zen1 CPU)
+    #
+    # --- /proc/cpuinfo bugs field ---
+    # none: no X86_BUG_FPDSS flag defined; no cpuinfo exposure
+    #
+    # --- MSR ---
+    # e55d98e77561 (v7.1): MSR_AMD64_FP_CFG = 0xc0011028, bit 9 = ZEN1_DENORM_FIX_BIT
+    #   kernel calls msr_set_bit() unconditionally on any Zen1 CPU in init_amd_zen1().
+    #   The bit is present in Zen1 silicon independently of microcode (no microcode
+    #   revision gate in the kernel, unlike Zenbleed which uses amd_zenbleed_microcode[]).
+    #
+    # --- CPU affection logic (for is_cpu_affected) ---
+    # e55d98e77561 (v7.1): applied unconditionally in init_amd_zen1(), i.e. all Zen1
+    #   AMD: family 0x17 models 0x00-0x2f, 0x50-0x5f (same cohort as DIV0)
+    # vendor scope: AMD only (Zen1 microarchitecture)
+    #
+    # --- stable backports ---
+    # as of this writing, no stable/LTS backport has landed; only mainline (Linux 7.1).
+
+    if [ "$opt_sysfs_only" != 1 ]; then
+        pr_info_nol "* Kernel supports FPDSS mitigation: "
+        kernel_mitigated=''
+        if [ -n "$g_kernel_err" ]; then
+            pstatus yellow UNKNOWN "$g_kernel_err"
+        elif is_x86_kernel && grep -q 'AMD Zen1 FPDSS bug detected' "$g_kernel"; then
+            kernel_mitigated="found FPDSS mitigation message in kernel image"
+            pstatus green YES "$kernel_mitigated"
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "* FPDSS mitigation enabled and active: "
+        msr_fpdss=''
+        dmesg_fpdss=''
+        if [ "$g_mode" = live ] && is_x86_cpu && is_cpu_affected "$cve"; then
+            # guard with is_cpu_affected to avoid #GP on non-Zen1 CPUs where 0xc0011028 is undefined
+            read_msr 0xc0011028
+            ret=$?
+            if [ "$ret" = "$READ_MSR_RET_OK" ]; then
+                if [ $((ret_read_msr_value_lo >> 9 & 1)) -eq 1 ]; then
+                    msr_fpdss=1
+                    pstatus green YES "ZEN1_DENORM_FIX_BIT set in FP_CFG MSR"
+                else
+                    msr_fpdss=0
+                    pstatus yellow NO "ZEN1_DENORM_FIX_BIT is cleared in FP_CFG MSR"
+                fi
+            else
+                # MSR unreadable (lockdown, no msr module, etc.): fall back to dmesg
+                dmesg_grep 'AMD Zen1 FPDSS bug detected'
+                ret=$?
+                if [ "$ret" -eq 0 ]; then
+                    dmesg_fpdss=1
+                    pstatus green YES "FPDSS mitigation message found in dmesg"
+                elif [ "$ret" -eq 2 ]; then
+                    pstatus yellow UNKNOWN "couldn't read MSR and dmesg is truncated"
+                else
+                    pstatus yellow UNKNOWN "couldn't read MSR and no FPDSS message in dmesg"
+                fi
+            fi
+        elif [ "$g_mode" = live ]; then
+            pstatus blue N/A "CPU is incompatible"
+        else
+            pstatus blue N/A "not testable in no-runtime mode"
+        fi
+    elif [ "$sys_interface_available" = 0 ]; then
+        msg="/sys vulnerability interface use forced, but it's not available!"
+        status=UNK
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ -z "$msg" ]; then
+        if [ "$opt_sysfs_only" != 1 ]; then
+            if [ "$g_mode" = live ]; then
+                if [ "$msr_fpdss" = 1 ] || [ "$dmesg_fpdss" = 1 ]; then
+                    pvulnstatus "$cve" OK "ZEN1_DENORM_FIX_BIT is set in FP_CFG MSR, mitigation is active"
+                elif [ "$msr_fpdss" = 0 ]; then
+                    pvulnstatus "$cve" VULN "ZEN1_DENORM_FIX_BIT is cleared in FP_CFG MSR, FPDSS can leak data between threads"
+                    _cve_2025_54505_explain_fix
+                elif [ -n "$kernel_mitigated" ]; then
+                    # MSR unreadable at runtime, but kernel image carries the mitigation code
+                    # and init_amd_zen1() sets the bit unconditionally, so mitigation is active
+                    pvulnstatus "$cve" OK "kernel image carries FPDSS mitigation code (init_amd_zen1 sets the MSR bit unconditionally at boot)"
+                else
+                    pvulnstatus "$cve" VULN "your kernel doesn't support FPDSS mitigation"
+                    _cve_2025_54505_explain_fix
+                fi
+            else
+                if [ -n "$kernel_mitigated" ]; then
+                    pvulnstatus "$cve" OK "Mitigation: FPDSS message found in kernel image"
+                else
+                    pvulnstatus "$cve" VULN "your kernel doesn't support FPDSS mitigation"
+                    _cve_2025_54505_explain_fix
+                fi
+            fi
+        else
+            pvulnstatus "$cve" "$status" "no sysfs interface available for this CVE, use --no-sysfs to check"
+        fi
+    else
+        pvulnstatus "$cve" "$status" "$msg"
+    fi
+}
+
+check_CVE_2025_54505_bsd() {
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
 # >>>>>> main.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
 
-if [ "$opt_no_hw" = 0 ] && [ -z "$opt_arch_prefix" ]; then
+check_kernel_info
+
+# Detect arch mismatch between host CPU and target kernel (e.g. x86 host
+# inspecting an ARM kernel): force no-hw mode so CPUID/MSR/sysfs reads
+# from the host don't pollute the results.
+check_kernel_cpu_arch_mismatch
+
+# Build JSON meta and system sections early (after kernel info is resolved)
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+    _build_json_meta
+fi
+
+pr_info
+
+if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
+    pr_info "\033[1;34mHardware check\033[0m"
     check_cpu
     check_cpu_vulnerabilities
     pr_info
 fi
 
-# now run the checks the user asked for
-for cve in $g_supported_cve_list; do
-    if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
-        check_"$(echo "$cve" | tr - _)"
-        pr_info
+# Build JSON system/cpu/microcode sections (after check_cpu has populated cap_* vars and VMM detection)
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+    _build_json_system
+    if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
+        _build_json_cpu
+        _build_json_cpu_microcode
     fi
-done
+fi
+
+# Build Prometheus info metric lines (same timing requirement as JSON builders above)
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
+    _build_prometheus_system_info
+    if [ "$g_mode" != no-hw ] && [ -z "$opt_arch_prefix" ]; then
+        _build_prometheus_cpu_info
+    fi
+fi
+
+# now run the checks the user asked for (hw-only mode skips CVE checks)
+if [ "$g_mode" = hw-only ]; then
+    pr_info "Hardware-only mode, skipping vulnerability checks"
+else
+    for cve in $g_supported_cve_list; do
+        if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
+            check_"$(echo "$cve" | tr - _)"
+            pr_info
+        fi
+    done
+fi # g_mode != hw-only
 
 if [ -n "$g_final_summary" ]; then
     pr_info "> \033[46m\033[30mSUMMARY:\033[0m$g_final_summary"
@@ -9653,7 +12227,7 @@ if [ -n "$g_final_summary" ]; then
 fi
 
 if [ "$g_bad_accuracy" = 1 ]; then
-    pr_warn "We're missing some kernel info (see -v), accuracy might be reduced"
+    pr_warn "We're missing some kernel information (see kernel section at the top), accuracy might be reduced"
 fi
 
 g_vars=$(set | grep -Ev '^[A-Z_[:space:]]' | grep -v -F 'g_mockme=' | sort | tr "\n" '|')
@@ -9664,7 +12238,7 @@ if [ -n "$g_mockme" ] && [ "$opt_mock" = 1 ]; then
         # not a useless use of cat: gzipping cpuinfo directly doesn't work well
         # shellcheck disable=SC2002
         if command -v "base64" >/dev/null 2>&1; then
-            g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | base64 -w0)"
+            g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | base64 | tr -d '\n')"
         elif command -v "uuencode" >/dev/null 2>&1; then
             g_mock_cpuinfo="$(cat /proc/cpuinfo | gzip -c | uuencode -m - | grep -Fv 'begin-base64' | grep -Fxv -- '====' | tr -d "\n")"
         fi
@@ -9698,25 +12272,121 @@ if [ "$g_mocked" = 1 ]; then
 fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "nrpe" ]; then
-    if [ -n "$g_nrpe_vuln" ]; then
-        echo "Vulnerable:$g_nrpe_vuln"
+    _nrpe_is_root=0
+    [ "$(id -u)" -eq 0 ] && _nrpe_is_root=1
+
+    # Non-root + VULN: demote to UNKNOWN, MSR reads were skipped so VULN findings
+    # may be false positives or genuine mitigations may have gone undetected
+    _nrpe_demoted=0
+    [ "$g_nrpe_vuln_count" -gt 0 ] && [ "$_nrpe_is_root" = 0 ] && _nrpe_demoted=1
+
+    # Determine status word and build the one-line summary
+    if [ "$_nrpe_demoted" = 1 ]; then
+        _nrpe_status_word='UNKNOWN'
+        _nrpe_summary="${g_nrpe_vuln_count}/${g_nrpe_total} CVE(s) appear vulnerable (unconfirmed, not root): ${g_nrpe_vuln_ids}"
+        [ "$g_nrpe_unk_count" -gt 0 ] && _nrpe_summary="${_nrpe_summary}, ${g_nrpe_unk_count} inconclusive"
+    elif [ "$g_nrpe_vuln_count" -gt 0 ]; then
+        _nrpe_status_word='CRITICAL'
+        _nrpe_summary="${g_nrpe_vuln_count}/${g_nrpe_total} CVE(s) vulnerable: ${g_nrpe_vuln_ids}"
+        [ "$g_nrpe_unk_count" -gt 0 ] && _nrpe_summary="${_nrpe_summary}, ${g_nrpe_unk_count} inconclusive"
+    elif [ "$g_nrpe_unk_count" -gt 0 ]; then
+        _nrpe_status_word='UNKNOWN'
+        _nrpe_summary="${g_nrpe_unk_count}/${g_nrpe_total} CVE checks inconclusive"
     else
-        echo "OK"
+        _nrpe_status_word='OK'
+        _nrpe_summary="All ${g_nrpe_total} CVE checks passed"
     fi
+
+    # Line 1: status word + summary + performance data (Nagios plugin spec)
+    echo "${_nrpe_status_word}: ${_nrpe_summary} | checked=${g_nrpe_total} vulnerable=${g_nrpe_vuln_count} unknown=${g_nrpe_unk_count}"
+
+    # Long output (lines 2+): context notes, then per-CVE details
+    [ "$opt_paranoid" = 1 ] && echo "NOTE: paranoid mode active, stricter mitigation requirements applied"
+    case "${g_has_vmm:-}" in
+        1) echo "NOTE: hypervisor host detected (${g_has_vmm_reason:-VMM}); L1TF/MDS severity is elevated" ;;
+        0) echo "NOTE: not a hypervisor host" ;;
+    esac
+    [ "$_nrpe_is_root" = 0 ] && echo "NOTE: not running as root; MSR reads skipped, results may be incomplete"
+
+    # VULN details first, then UNK details (each group in CVE-registry order)
+    [ -n "${g_nrpe_vuln_details:-}" ] && printf "%b\n" "$g_nrpe_vuln_details"
+    [ -n "${g_nrpe_unk_details:-}" ] && printf "%b\n" "$g_nrpe_unk_details"
+
+    # Exit with the correct Nagios code when we demoted VULN→UNKNOWN due to non-root
+    # (g_critical=1 would otherwise cause exit 2 below)
+    [ "$_nrpe_demoted" = 1 ] && exit 3
 fi
 
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "short" ]; then
     _pr_echo 0 "${g_short_output% }"
 fi
 
-if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json-terse" ]; then
     _pr_echo 0 "${g_json_output%?}]"
 fi
 
+if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "json" ]; then
+    # Assemble the comprehensive JSON output from pre-built sections
+    # Inject mocked flag into meta (g_mocked can be set at any point during the run)
+    g_json_meta="${g_json_meta%\}},\"mocked\":$(_json_bool "${g_mocked:-0}")}"
+    _json_final='{'
+    _json_final="${_json_final}\"meta\":${g_json_meta:-null}"
+    _json_final="${_json_final},\"system\":${g_json_system:-null}"
+    _json_final="${_json_final},\"cpu\":${g_json_cpu:-null}"
+    _json_final="${_json_final},\"cpu_microcode\":${g_json_cpu_microcode:-null}"
+    if [ -n "${g_json_vulns:-}" ]; then
+        _json_final="${_json_final},\"vulnerabilities\":[${g_json_vulns%,}]"
+    else
+        _json_final="${_json_final},\"vulnerabilities\":[]"
+    fi
+    _json_final="${_json_final}}"
+    _pr_echo 0 "$_json_final"
+fi
+
 if [ "$opt_batch" = 1 ] && [ "$opt_batch_format" = "prometheus" ]; then
-    echo "# TYPE specex_vuln_status untyped"
-    echo "# HELP specex_vuln_status Exposure of system to speculative execution vulnerabilities"
-    printf "%b\n" "$g_prometheus_output"
+    prom_run_as_root='false'
+    [ "$(id -u)" -eq 0 ] && prom_run_as_root='true'
+    prom_mode="$g_mode"
+    prom_paranoid='false'
+    [ "$opt_paranoid" = 1 ] && prom_paranoid='true'
+    prom_sysfs_only='false'
+    [ "$opt_sysfs_only" = 1 ] && prom_sysfs_only='true'
+    prom_reduced_accuracy='false'
+    [ "${g_bad_accuracy:-0}" = 1 ] && prom_reduced_accuracy='true'
+    prom_mocked='false'
+    [ "${g_mocked:-0}" = 1 ] && prom_mocked='true'
+    echo "# HELP smc_build_info spectre-meltdown-checker script metadata (always 1)"
+    echo "# TYPE smc_build_info gauge"
+    printf 'smc_build_info{version="%s",mode="%s",run_as_root="%s",paranoid="%s",sysfs_only="%s",reduced_accuracy="%s",mocked="%s"} 1\n' \
+        "$(_prom_escape "$VERSION")" \
+        "$prom_mode" \
+        "$prom_run_as_root" \
+        "$prom_paranoid" \
+        "$prom_sysfs_only" \
+        "$prom_reduced_accuracy" \
+        "$prom_mocked"
+    if [ -n "${g_smc_system_info_line:-}" ]; then
+        echo "# HELP smc_system_info Operating system and kernel metadata (always 1)"
+        echo "# TYPE smc_system_info gauge"
+        echo "$g_smc_system_info_line"
+    fi
+    if [ -n "${g_smc_cpu_info_line:-}" ]; then
+        echo "# HELP smc_cpu_info CPU hardware and microcode metadata (always 1)"
+        echo "# TYPE smc_cpu_info gauge"
+        echo "$g_smc_cpu_info_line"
+    fi
+    echo "# HELP smc_vulnerability_status Vulnerability check result per CVE: 0=not_vulnerable, 1=vulnerable, 2=unknown"
+    echo "# TYPE smc_vulnerability_status gauge"
+    printf "%b\n" "$g_smc_vuln_output"
+    echo "# HELP smc_vulnerable_count Number of CVEs with vulnerable status"
+    echo "# TYPE smc_vulnerable_count gauge"
+    echo "smc_vulnerable_count $g_smc_vuln_count"
+    echo "# HELP smc_unknown_count Number of CVEs with unknown status"
+    echo "# TYPE smc_unknown_count gauge"
+    echo "smc_unknown_count $g_smc_unk_count"
+    echo "# HELP smc_last_scan_timestamp_seconds Unix timestamp when this scan completed"
+    echo "# TYPE smc_last_scan_timestamp_seconds gauge"
+    echo "smc_last_scan_timestamp_seconds $(date +%s 2>/dev/null || echo 0)"
 fi
 
 # exit with the proper exit code
@@ -9726,14 +12396,12 @@ exit 0                          # ok
 
 # >>>>>> db/100_inteldb.sh <<<<<<
 
+# %%% ENDOFINTELDB
 # vim: set ts=4 sw=4 sts=4 et:
-# Dump from Intel affected CPU page:
-# - https://www.intel.com/content/www/us/en/developer/topic-technology/software-security-guidance/processors-affected-consolidated-product-cpu-model.html
-# Only currently-supported CPUs are listed, so only rely on it if the current CPU happens to be in the list.
-# We merge it with info from the following file:
-# - https://software.intel.com/content/dam/www/public/us/en/documents/affected-processors-transient-execution-attacks-by-cpu-aug02.xlsx
-# As it contains some information from older processors, however when information is contradictory between the two sources, the HTML takes precedence as
-# it is expected to be updated, whereas the xslx seems to be frozen.
+# Merged INTELDB: HTML (authoritative) + CSV history (supplementary) + XLSX (legacy/stale)
+# HTML source: https://www.intel.com/content/www/us/en/developer/topic-technology/software-security-guidance/processors-affected-consolidated-product-cpu-model.html
+# CSV source: https://github.com/intel/Intel-affected-processor-list
+# XSLX source: https://software.intel.com/content/dam/www/public/us/en/documents/affected-processors-transient-execution-attacks-by-cpu-aug02.xlsx
 #
 # N: Not affected
 # S: Affected, software fix
@@ -9741,9 +12409,20 @@ exit 0                          # ok
 # M: Affected, MCU update needed
 # B: Affected, BIOS update needed
 # X: Affected, no planned mitigation
-# Y: Affected (this is from the xlsx, no details are available)
+# Y: Affected (no details available)
+# MS: Affected, MCU + software fix
+# HS: Affected, hardware + software fix
+# HM: Affected, hardware + MCU fix
+#
+# Entries may have an optional hybrid qualifier after the CPUID:
+#   0xCPUID,H=1,...   matches only hybrid CPUs (CPUID.0x7.EDX[15]=1)
+#   0xCPUID,H=0,...   matches only non-hybrid CPUs (CPUID.0x7.EDX[15]=0)
+#   0xCPUID,...        matches any CPU (no qualifier = fallback)
 #
 # %%% INTELDB
+#
+# XSLX
+#
 # 0x000206A7,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
 # 0x000206D6,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
 # 0x000206D7,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
@@ -9755,8 +12434,6 @@ exit 0                          # ok
 # 0x000306D4,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=Y,2020-0543=Y,
 # 0x000306E4,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
 # 0x000306E7,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
-# 0x000306F2,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000306F4,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=N,2022-40982=N,
 # 0x00040651,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=Y,
 # 0x00040661,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=Y,
 # 0x00040671,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=Y,2020-0543=Y,
@@ -9765,84 +12442,112 @@ exit 0                          # ok
 # 0x000406C4,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000406D8,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000406E3,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=MS,
-# 0x000406F1,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=N,2022-40982=N,
-# 0x00050653,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=N,2022-40982=M,
-# 0x00050654,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=N,2022-40982=M,
-# 0x00050656,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=MS,2020-0543=N,2022-40982=M,
-# 0x00050657,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=MS,2020-0543=N,2022-40982=M,
 # 0x0005065A,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x0005065B,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x00050662,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=Y,2020-0543=N,
-# 0x00050663,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=N,2022-40982=N,
-# 0x00050664,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=N,2022-40982=N,
-# 0x00050665,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=N,2022-40982=N,
 # 0x000506A0,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000506C9,2017-5715=MS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000506CA,2017-5715=MS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000506D0,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
-# 0x000506E3,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=MS,2022-40982=N,
-# 0x000506F1,2017-5715=MS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x00060650,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000606A0,2017-5715=Y,2017-5753=Y,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=Y,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000606A4,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000606A5,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000606A6,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000606C1,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000606E1,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x0007065A,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
-# 0x000706A1,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000706A8,2017-5715=MS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000706E5,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=HM,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x00080660,2017-5715=Y,2017-5753=Y,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=Y,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x00080664,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x00080665,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x00080667,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000806A0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=HM,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000806A1,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=HM,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000806C0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000806C1,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000806C2,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000806D0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000806D1,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000806E9,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=M,2022-40982=M,
-# 0x000806EA,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=MS,2022-40982=M,
-# 0x000806EB,2017-5715=MS,2017-5753=S,2017-5754=N,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=M,2018-3646=N,2019-11135=MS,2020-0543=MS,2022-40982=M,
-# 0x000806EC,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=MS,2020-0543=MS,2022-40982=M,
-# 0x000806F7,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000806F8,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x00090660,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x00090661,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x00090670,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x00090671,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x00090672,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x00090673,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x00090674,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x00090675,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000906A0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000906A2,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000906A3,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000906A4,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000906C0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000906E9,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=MS,2022-40982=M,
-# 0x000906EA,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=MS,2022-40982=M,
-# 0x000906EB,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=MS,2022-40982=M,
-# 0x000906EC,2017-5715=MS,2017-5753=S,2017-5754=N,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=MS,2020-0543=MS,2022-40982=M,
-# 0x000906ED,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=MS,2020-0543=MS,2022-40982=M,
 # 0x000A0650,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000A0651,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000A0652,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000A0653,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000A0655,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000A0660,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000A0661,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000A0670,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
-# 0x000A0671,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000A0680,2017-5715=Y,2017-5753=Y,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=Y,2018-3615=N,2018-3620=N,2018-3639=Y,2018-3640=Y,2018-3646=N,2019-11135=N,2020-0543=N,
-# 0x000B0671,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000B06A2,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000B06A3,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000B06F2,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
-# 0x000B06F5,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
+#
+# HTML/CSV
+#
+# 0x000306F2,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000306F4,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000406F1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050653,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050654,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050656,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00050657,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x0005065B,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=M,2024-36242=N,2024-23984=M,2024-25939=M,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00050663,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=X,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050664,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050665,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000506CA,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000506E3,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=MS,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000506F1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000606A6,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=MS,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000606C1,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=MS,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000706A1,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MBS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000706A8,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MBS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000706E5,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=HM,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=HM,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00080665,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=X,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00080667,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806C1,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MB,2022-21125=MB,2022-21123=MB,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806C2,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=N,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806D1,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MB,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806E9,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=M,2022-21127=M,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000806EA,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000806EB,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=M,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000806EC,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F5,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F6,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F7,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F8,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090660,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090661,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090672,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=MS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090675,H=0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090675,H=1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906A3,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906A4,H=0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906A4,H=1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906C0,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906E9,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000906EA,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000906EB,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-2118=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000906EC,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000906ED,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0652,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0653,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0655,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0660,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0661,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0671,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06A4,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06D0,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06D1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06E1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06F2,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06F3,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0650,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0664,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0671,H=0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0671,H=1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06A2,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06A3,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06A8,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06D1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06E0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=M,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06F2,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06F5,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C0652,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C0662,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C0664,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C06C2,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C06C3,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C06F2,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+#
 # %%% ENDOFINTELDB
 
 # >>>>>> db/200_mcedb.sh <<<<<<
@@ -9857,7 +12562,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v349+i20260227+615b
+# %%% MCEDB v349+i20260227+1cce
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
