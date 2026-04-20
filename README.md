@@ -22,17 +22,23 @@ CVE | Name | Aliases
 [CVE-2019-11091](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11091) | Microarchitectural Data Sampling Uncacheable Memory | MDSUM, RIDL
 [CVE-2019-11135](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-11135) | TSX Asynchronous Abort | TAA, ZombieLoad V2
 [CVE-2020-0543](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-0543) | Special Register Buffer Data Sampling | SRBDS, CROSSTalk
+[CVE-2022-21123](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-21123) | Shared Buffers Data Read | SBDR, MMIO Stale Data
+[CVE-2022-21125](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-21125) | Shared Buffers Data Sampling | SBDS, MMIO Stale Data
+[CVE-2022-21166](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-21166) | Device Register Partial Write | DRPW, MMIO Stale Data
 [CVE-2022-29900](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29900) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (AMD)
 [CVE-2022-29901](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-29901) | Arbitrary Speculative Code Execution with Return Instructions | Retbleed (Intel), RSBA
 [CVE-2022-40982](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-40982) | Gather Data Sampling | Downfall, GDS
 [CVE-2023-20569](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20569) | Return Address Security | Inception, SRSO
+[CVE-2023-20588](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20588) | AMD Division by Zero Speculative Data Leak | DIV0
 [CVE-2023-20593](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20593) | Cross-Process Information Leak | Zenbleed
 [CVE-2023-23583](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-23583) | Redundant Prefix Issue | Reptar
+[CVE-2023-28746](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-28746) | Register File Data Sampling | RFDS
 [CVE-2024-28956](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-28956) | Indirect Target Selection | ITS
 [CVE-2024-36350](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36350) | Transient Scheduler Attack, Store Queue | TSA-SQ
 [CVE-2024-36357](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-36357) | Transient Scheduler Attack, L1 | TSA-L1
 [CVE-2025-40300](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-40300) | VM-Exit Stale Branch Prediction | VMScape
 [CVE-2024-45332](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-45332) | Branch Privilege Injection | BPI
+[CVE-2025-54505](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-54505) | AMD Zen1 Floating-Point Divider Stale Data Leak | FPDSS
 
 ## Am I at risk?
 
@@ -56,17 +62,23 @@ CVE-2018-12207 (iTLB Multihit, No eXcuses) | ✅ | ✅ | ☠️ | ✅ | Hypervis
 CVE-2019-11091 (MDSUM, RIDL) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2019-11135 (TAA, ZombieLoad V2) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2020-0543 (SRBDS, CROSSTalk) | 💥 (2) | 💥 (2) | 💥 (2) | 💥 (2) | Microcode + kernel update
+CVE-2022-21123 (SBDR, MMIO Stale Data) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2022-21125 (SBDS, MMIO Stale Data) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
+CVE-2022-21166 (DRPW, MMIO Stale Data) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2022-29900 (Retbleed AMD) | 💥 | ✅ | 💥 | ✅ | Kernel update (+ microcode for IBPB)
 CVE-2022-29901 (Retbleed Intel, RSBA) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update (eIBRS or IBRS)
 CVE-2022-40982 (Downfall, GDS) | 💥 | 💥 | 💥 | 💥 | Microcode update (or disable AVX)
 CVE-2023-20569 (Inception, SRSO) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
+CVE-2023-20588 (DIV0) | 💥 | 💥 (1) | 💥 | 💥 (1) | Kernel update (+ disable SMT)
 CVE-2023-20593 (Zenbleed) | 💥 | 💥 | 💥 | 💥 | Microcode update (or kernel workaround)
 CVE-2023-23583 (Reptar) | ☠️ | ☠️ | ☠️ | ☠️ | Microcode update
+CVE-2023-28746 (RFDS) | 💥 | ✅ | 💥 | ✅ | Microcode + kernel update
 CVE-2024-28956 (ITS) | 💥 | ✅ | 💥 (4) | ✅ | Microcode + kernel update
 CVE-2024-36350 (TSA-SQ) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2024-36357 (TSA-L1) | 💥 | 💥 (1) | 💥 | 💥 (1) | Microcode + kernel update
 CVE-2025-40300 (VMScape) | ✅ | ✅ | 💥 | ✅ | Kernel update (IBPB on VM-exit)
 CVE-2024-45332 (BPI) | 💥 | ✅ | 💥 | ✅ | Microcode update
+CVE-2025-54505 (FPDSS) | 💥 | 💥 | 💥 | 💥 | Kernel update
 
 > 💥 Data can be leaked across this boundary.
 
@@ -141,6 +153,10 @@ On CPUs with Intel TSX, a transactional abort can leave data from the line fill 
 
 Certain special CPU instructions (RDRAND, RDSEED, EGETKEY) read data through a shared staging buffer that is accessible across all cores via speculative execution. An attacker running code on any core can observe the output of these instructions from a victim on a different core, including extracting cryptographic keys from SGX enclaves (a complete ECDSA key was demonstrated). This is notable as one of the first cross-core speculative execution attacks. Mitigation requires a microcode update that serializes access to the staging buffer, plus a kernel update to manage the mitigation. Performance impact is low, mainly affecting workloads that heavily use RDRAND/RDSEED.
 
+**CVE-2022-21123, CVE-2022-21125, CVE-2022-21166 — Processor MMIO Stale Data (SBDR, SBDS, DRPW)**
+
+A class of MMIO (Memory-Mapped I/O) vulnerabilities where stale data from CPU internal fill buffers can be inferred through side-channel attacks during MMIO operations. Three sub-vulnerabilities are covered: Shared Buffers Data Read (SBDR, CVE-2022-21123), Shared Buffers Data Sampling (SBDS, CVE-2022-21125), and Device Register Partial Write (DRPW, CVE-2022-21166). Affected Intel CPUs include Haswell through Rocket Lake server and client processors, plus Tremont Atom cores. Mitigation requires a microcode update providing the FB_CLEAR capability (VERW instruction clears fill buffers) plus a kernel update (Linux 5.19+) that invokes VERW at kernel/user transitions and VM entry/exit. When SMT is enabled, sibling threads can still exploit the vulnerability even with mitigations active. Performance impact is low, as the VERW mechanism is shared with the existing MDS mitigation.
+
 **CVE-2022-29900 — Arbitrary Speculative Code Execution with Return Instructions (Retbleed AMD)**
 
 On AMD processors from families 0x15 through 0x17 (Bulldozer through Zen 2) and Hygon family 0x18, an attacker can exploit return instructions to redirect speculative execution and leak kernel memory, bypassing retpoline mitigations that were effective against Spectre V2. Unlike Spectre V2 which targets indirect jumps and calls, Retbleed specifically targets return instructions, which were previously considered safe. Mitigation requires a kernel update providing either the untrained return thunk (safe RET) or IBPB-on-entry mechanism, plus a microcode update providing IBPB support on Zen 1/2. On Zen 1/2, SMT should be disabled for full protection when using IBPB-based mitigation. Performance impact is medium.
@@ -157,6 +173,10 @@ The AVX GATHER instructions can leak data from previously used vector registers 
 
 On AMD Zen 1 through Zen 4 processors, an attacker can manipulate the return address predictor to redirect speculative execution on return instructions, leaking kernel memory. Mitigation requires both a kernel update (providing SRSO safe-return sequences or IBPB-on-entry) and a microcode update (providing SBPB on Zen 3/4, or IBPB support on Zen 1/2 — which additionally requires SMT to be disabled). Performance impact ranges from low to significant depending on the chosen mitigation and CPU generation.
 
+**CVE-2023-20588 — AMD Division by Zero Speculative Data Leak (DIV0)**
+
+On AMD Zen 1 processors, a #DE (divide-by-zero) exception can leave stale quotient data from a previous division in the divider unit, observable by a subsequent division via speculative side channels. This can leak data across any privilege boundary, including between SMT sibling threads sharing the same physical core. Mitigation requires a kernel update (Linux 6.5+) that adds a dummy division (`amd_clear_divider()`) on every exit to userspace and before VMRUN, preventing stale data from persisting. No microcode update is needed. Disabling SMT provides additional protection because the kernel mitigation does not cover cross-SMT-thread leaks. Performance impact is negligible.
+
 **CVE-2023-20593 — Cross-Process Information Leak (Zenbleed)**
 
 A bug in AMD Zen 2 processors causes the VZEROUPPER instruction to incorrectly zero register files during speculative execution, leaving stale data from other processes observable in vector registers. This can leak data across any privilege boundary, including from the kernel and other processes, at rates up to 30 KB/s per core. Mitigation is available either through a microcode update that fixes the bug, or through a kernel workaround that sets the FP_BACKUP_FIX bit (bit 9) in the DE_CFG MSR, disabling the faulty optimization. Either approach alone is sufficient. Performance impact is negligible.
@@ -164,6 +184,10 @@ A bug in AMD Zen 2 processors causes the VZEROUPPER instruction to incorrectly z
 **CVE-2023-23583 — Redundant Prefix Issue (Reptar)**
 
 A bug in Intel processors causes unexpected behavior when executing instructions with specific redundant REX prefixes. Depending on the circumstances, this can result in a system crash (MCE), unpredictable behavior, or potentially privilege escalation. Any software running on an affected CPU can trigger the bug. Mitigation requires a microcode update. Performance impact is low.
+
+**CVE-2023-28746 — Register File Data Sampling (RFDS)**
+
+On certain Intel Atom and hybrid processors (Goldmont, Goldmont Plus, Tremont, Gracemont, and the Atom cores of Alder Lake and Raptor Lake), the register file can retain stale data from previous operations that is accessible via speculative execution, allowing an attacker to infer data across privilege boundaries. Mitigation requires both a microcode update (providing the RFDS_CLEAR capability) and a kernel update (CONFIG_MITIGATION_RFDS, Linux 6.9+) that uses the VERW instruction to clear the register file on privilege transitions. CPUs with the RFDS_NO capability bit are not affected. Performance impact is low.
 
 **CVE-2024-28956 — Indirect Target Selection (ITS)**
 
@@ -185,6 +209,10 @@ After a guest VM exits to the host, stale branch predictions from the guest can 
 
 A race condition in the branch predictor update mechanism of Intel processors (Coffee Lake through Raptor Lake, plus some server and Atom parts) allows user-space branch predictions to briefly influence kernel-space speculative execution, undermining eIBRS and IBPB protections. This means systems relying solely on eIBRS for Spectre V2 mitigation may not be fully protected without the microcode fix. Mitigation requires a microcode update (intel-microcode 20250512+) that fixes the asynchronous branch predictor update timing so that eIBRS and IBPB work as originally intended. No kernel changes are required. Performance impact is negligible.
 
+**CVE-2025-54505 — AMD Zen1 Floating-Point Divider Stale Data Leak (FPDSS)**
+
+On AMD Zen1 and Zen+ processors (EPYC 7001, EPYC Embedded 3000, Athlon 3000 with Radeon, Ryzen 3000 with Radeon, Ryzen PRO 3000 with Radeon Vega), the hardware floating-point divider can retain partial quotient data from previous operations. Under certain circumstances, those results can be leaked to another thread sharing the same divider, crossing any privilege boundary. This was assigned CVE-2025-54505 and published by AMD as AMD-SB-7053 on 2026-04-17. Mitigation requires a kernel update (mainline commit e55d98e77561, "x86/CPU: Fix FPDSS on Zen1", Linux 7.1) that sets bit 9 (ZEN1_DENORM_FIX_BIT) of MSR 0xc0011028 (MSR_AMD64_FP_CFG) unconditionally on every Zen1 CPU at boot, disabling the hardware optimization responsible for the leak. No microcode update is required: the chicken bit is present in Zen1 silicon from the factory and is independent of microcode revision. Performance impact is limited to a small reduction in floating-point divide throughput, which is why AMD does not enable the bit by default in hardware.
+
 </details>
 
 ## Unsupported CVEs
@@ -192,17 +220,17 @@ A race condition in the branch predictor update mechanism of Intel processors (C
 Several transient execution CVEs are not covered by this tool, for various reasons (duplicates, only
 affecting non-supported hardware or OS, theoretical with no known exploitation, etc.).
 The complete list along with the reason for each exclusion is available in the
-[UNSUPPORTED_CVE_LIST.md](https://github.com/speed47/spectre-meltdown-checker/blob/source/UNSUPPORTED_CVE_LIST.md) file.
+[UNSUPPORTED_CVE_LIST.md](doc/UNSUPPORTED_CVE_LIST.md) file.
 
 ## Scope
 
 Supported operating systems:
 - Linux (all versions, flavors and distros)
-- FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](FAQ.md#which-bsd-oses-are-supported))
+- FreeBSD, NetBSD, DragonFlyBSD and derivatives (others BSDs are [not supported](doc/FAQ.md#which-bsd-oses-are-supported))
 
-For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](FAQ.md#how-does-this-script-work).
+For Linux systems, the tool will detect mitigations, including backported non-vanilla patches, regardless of the advertised kernel version number and the distribution (such as Debian, Ubuntu, CentOS, RHEL, Fedora, openSUSE, Arch, ...), it also works if you've compiled your own kernel. More information [here](doc/FAQ.md#how-does-this-script-work).
 
-Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](FAQ.md#why-is-my-os-not-supported).
+Other operating systems such as MacOS, Windows, ESXi, etc. [will never be supported](doc/FAQ.md#why-is-my-os-not-supported).
 
 Supported architectures:
 - `x86` (32 bits)
@@ -214,7 +242,29 @@ Supported architectures:
 
 What is the purpose of this tool? Why was it written? How can it be useful to me? How does it work? What can I expect from it?
 
-All these questions (and more) have detailed answers in the [FAQ](FAQ.md), please have a look!
+All these questions (and more) have detailed answers in the [FAQ](doc/FAQ.md), please have a look!
+
+## Operating modes
+
+The script supports four operating modes, depending on whether you want to inspect the running kernel, a kernel image, the CPU hardware, or a combination.
+
+| Mode | Flag | CPU hardware | Running kernel | Kernel image | Use case |
+|------|------|:---:|:---:|:---:|----------|
+| **Live** *(default)* | *(none)* | Yes | Yes | auto-detect | Day-to-day auditing of the current system |
+| **No-runtime** | `--no-runtime` | Yes | No | required | Check a different kernel against this CPU (e.g. pre-deployment) |
+| **No-hardware** | `--no-hw` | No | No | required | Pure static analysis of a kernel image for another system or architecture |
+| **Hardware-only** | `--hw-only` | Yes | No | No | Quickly check CPU affectedness without inspecting any kernel |
+
+In **Live** mode (the default), the script inspects both the CPU and the running kernel.
+You can optionally pass `--kernel`, `--config`, or `--map` to point the script at files it couldn't auto-detect.
+
+In **No-runtime** mode, the script still reads the local CPU (CPUID, MSRs, microcode) but skips all running-kernel artifacts (`/sys`, `/proc`, `dmesg`).
+Use this when you have a kernel image from another system but want to evaluate it against the current CPU.
+
+In **No-hardware** mode, both CPU inspection and running-kernel artifacts are skipped entirely.
+This is useful for cross-architecture analysis, for example inspecting an ARM kernel image on an x86 workstation.
+
+In **Hardware-only** mode, the script only reports CPU information and per-CVE hardware affectedness, without inspecting any kernel.
 
 ## Running the script
 
@@ -266,15 +316,6 @@ docker run --rm --privileged -v /boot:/boot:ro -v /dev/cpu:/dev/cpu:ro -v /lib/m
 
 ## Example of script output
 
-- Intel Haswell CPU running under Ubuntu 16.04 LTS
+- AMD EPYC-Milan running under Debian Trixie
 
-![haswell](https://user-images.githubusercontent.com/218502/108764885-6dcfc380-7553-11eb-81ac-4d19060a3acf.png)
-
-- AMD Ryzen running under OpenSUSE Tumbleweed
-
-![ryzen](https://user-images.githubusercontent.com/218502/108764896-70321d80-7553-11eb-9dd2-fad2a0a1a737.png)
-
-- Batch mode (JSON flavor)
-
-![batch](https://user-images.githubusercontent.com/218502/108764902-71634a80-7553-11eb-9678-fd304995fa64.png)
-
+![alt text](https://raw.githubusercontent.com/speed47/spectre-meltdown-checker/refs/heads/test/img/smc_amd_epyc_milan.jpg)

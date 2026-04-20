@@ -85,7 +85,7 @@ However I see a few reasons why this script might still be useful to you, and th
 
 - The script can be pointed at a kernel image, and will deep dive into it, telling you if this kernel will mitigate vulnerabilities that might be present on your system. This is a good way to verify before booting a new kernel, that it'll mitigate the vulnerabilities you expect it to, especially if you modified a few config options around these topics.
 
-- The script will also work regardless of the custom patches that might be integrated in the kernel you're running (or you're pointing it to, in offline mode), and completely ignores the advertised kernel version, to tell whether a given kernel mitigates vulnerabilities. This is especially useful for non-vanilla kernel, where patches might be backported, sometimes silently (this has already happened, too).
+- The script will also work regardless of the custom patches that might be integrated in the kernel you're running (or you're pointing it to, in no-runtime mode), and completely ignores the advertised kernel version, to tell whether a given kernel mitigates vulnerabilities. This is especially useful for non-vanilla kernel, where patches might be backported, sometimes silently (this has already happened, too).
 
 - Educational purposes: the script gives interesting insights about a vulnerability, and how the different parts of the system work together to mitigate it.
 
