@@ -1093,7 +1093,7 @@ check_cpu() {
         pr_info_nol "  * CPU explicitly indicates not being affected by MMIO Stale Data (FBSDP_NO & PSDP_NO & SBDR_SSDP_NO): "
         if [ "$cap_sbdr_ssdp_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
-        elif [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+        elif is_arch_cap_mmio_immune; then
             pstatus green YES
         else
             pstatus yellow NO
