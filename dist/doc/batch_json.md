@@ -102,7 +102,9 @@ boundaries by a malicious guest.  Prioritise remediation where
 
 ### `cpu`
 
-CPU hardware identification.  `null` when `--no-hw` is active.
+CPU hardware identification.  `null` when `--no-hw` is active, or when
+`--arch-prefix` is set (host CPU info is then suppressed to avoid mixing
+with a different-arch target kernel).
 
 The object uses `arch` as a discriminator: `"x86"` for Intel/AMD/Hygon CPUs,
 `"arm"` for ARM/Cavium/Phytium.  Arch-specific fields live under a matching
@@ -140,7 +142,7 @@ fields from the other architecture.
 
 #### `cpu.x86.capabilities`
 
-Each capability is a **tri-state**: `true` (present), `false` (absent), or
+Every capability is a **tri-state**: `true` (present), `false` (absent), or
 `null` (not applicable or could not be read, e.g. when not root or on AMD for
 Intel-specific features).
 
@@ -238,7 +240,7 @@ with an unknown CVE ID).
 | `status` | string | `"OK"` / `"VULN"` / `"UNK"` | Check outcome (see below) |
 | `vulnerable` | boolean \| null | `false` / `true` / `null` | `false`=OK, `true`=VULN, `null`=UNK |
 | `info` | string | | Human-readable description of the specific mitigation state or reason |
-| `sysfs_status` | string \| null | `"OK"` / `"VULN"` / `"UNK"` / null | Status as reported by the kernel via `/sys/devices/system/cpu/vulnerabilities/`; null if sysfs was not consulted for this CVE |
+| `sysfs_status` | string \| null | `"OK"` / `"VULN"` / `"UNK"` / null | Status as reported by the kernel via `/sys/devices/system/cpu/vulnerabilities/`; null if sysfs was not consulted for this CVE, or if the CVE's check read sysfs in silent/quiet mode (raw message is still captured in `sysfs_message`) |
 | `sysfs_message` | string \| null | | Raw text from the sysfs file (e.g. `"Mitigation: PTI"`); null if sysfs was not consulted |
 
 #### Status values

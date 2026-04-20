@@ -15,15 +15,17 @@ _prom_escape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '
 }
 
-# Convert a shell capability value to a JSON token
-# Args: $1=value (1=true, 0=false, -1/empty=null, other string=quoted string)
-# Prints: JSON token
+# Convert a shell capability value to a JSON boolean token
+# Args: $1=value (1=true, 0=false, -1/empty=null, any other non-empty string=true)
+# Prints: JSON token (true/false/null)
+# Note: capability variables can be set to arbitrary strings internally to carry
+# detection-path context (e.g. cap_ssbd='Intel SSBD'); for the JSON output those
+# are normalized to true so consumers see a clean boolean | null type.
 _json_cap() {
     case "${1:-}" in
-        1) printf 'true' ;;
         0) printf 'false' ;;
         -1 | '') printf 'null' ;;
-        *) printf '"%s"' "$(_json_escape "$1")" ;;
+        *) printf 'true' ;;
     esac
 }
 
@@ -126,7 +128,7 @@ _build_json_system() {
 # Sets: g_json_cpu
 # shellcheck disable=SC2034
 _build_json_cpu() {
-    local cpuid_hex codename caps arch_sub arch_type
+    local cpuid_hex codename caps arch_sub arch_type sbpb_norm
     if [ -n "${cpu_cpuid:-}" ]; then
         cpuid_hex=$(printf '0x%08x' "$cpu_cpuid")
     else
@@ -136,6 +138,15 @@ _build_json_cpu() {
     if is_intel; then
         codename=$(get_intel_codename 2>/dev/null || true)
     fi
+
+    # cap_sbpb uses non-standard encoding (1=YES, 2=NO, 3=UNKNOWN) because the
+    # CVE-2023-20569 check distinguishes the unknown case. Normalize for JSON.
+    case "${cap_sbpb:-}" in
+        1) sbpb_norm=1 ;;
+        2) sbpb_norm=0 ;;
+        3) sbpb_norm=-1 ;;
+        *) sbpb_norm='' ;;
+    esac
 
     # Determine architecture type and build the arch-specific sub-object
     case "${cpu_vendor:-}" in
@@ -190,7 +201,7 @@ _build_json_cpu() {
                 "$(_json_cap "${cap_tsa_l1_no:-}")" \
                 "$(_json_cap "${cap_verw_clear:-}")" \
                 "$(_json_cap "${cap_autoibrs:-}")" \
-                "$(_json_cap "${cap_sbpb:-}")" \
+                "$(_json_cap "$sbpb_norm")" \
                 "$(_json_cap "${cap_avx2:-}")" \
                 "$(_json_cap "${cap_avx512:-}")")
             arch_sub=$(printf '{"family":%s,"model":%s,"stepping":%s,"cpuid":%s,"platform_id":%s,"hybrid":%s,"codename":%s,"capabilities":%s}' \
