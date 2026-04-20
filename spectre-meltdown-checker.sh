@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.33.0420669'
+VERSION='26.33.0420863'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -1674,58 +1674,76 @@ is_cpu_srbds_free() {
 
 }
 
+# Check whether the CPU is architecturally immune to MMIO Stale Data
+# Mirrors the kernel's arch_cap_mmio_immune() helper: ALL THREE ARCH_CAP bits must be set:
+#   ARCH_CAP_SBDR_SSDP_NO (bit 13), ARCH_CAP_FBSDP_NO (bit 14), ARCH_CAP_PSDP_NO (bit 15)
+# Returns: 0 if immune, 1 otherwise
+is_arch_cap_mmio_immune() {
+    [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]
+}
+
 # Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
+# Matches the kernel's NO_MMIO whitelist plus arch_cap_mmio_immune().
+# Model inventory and kernel-commit history are documented in check_mmio_linux().
 # Returns: 0 if MMIO-free, 1 if affected or unknown
 is_cpu_mmio_free() {
-    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
-    #
-    # CPU affection logic from kernel (51802186158c, v5.19):
-    #   Bug is set when: cpu_matches(blacklist, MMIO) AND NOT arch_cap_mmio_immune()
-    #   arch_cap_mmio_immune() requires ALL THREE bits set:
-    #     ARCH_CAP_FBSDP_NO (bit 14) AND ARCH_CAP_PSDP_NO (bit 15) AND ARCH_CAP_SBDR_SSDP_NO (bit 13)
-    #
-    # Intel Family 6 model blacklist (unchanged since v5.19):
-    #   HASWELL_X (0x3F)
-    #   BROADWELL_D (0x56), BROADWELL_X (0x4F)
-    #   SKYLAKE_X (0x55), SKYLAKE_L (0x4E), SKYLAKE (0x5E)
-    #   KABYLAKE_L (0x8E), KABYLAKE (0x9E)
-    #   ICELAKE_L (0x7E), ICELAKE_D (0x6C), ICELAKE_X (0x6A)
-    #   COMETLAKE (0xA5), COMETLAKE_L (0xA6)
-    #   LAKEFIELD (0x8A)
-    #   ROCKETLAKE (0xA7)
-    #   ATOM_TREMONT (0x96), ATOM_TREMONT_D (0x86), ATOM_TREMONT_L (0x9C)
-    #
-    # Vendor scope: Intel only. Non-Intel CPUs are not affected.
     parse_cpu_details
-    # ARCH_CAP immunity: all three bits must be set
-    if [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+    is_arch_cap_mmio_immune && return 0
+    # Non-Intel x86 vendors the kernel unconditionally whitelists (AMD/Hygon all
+    # families; Centaur/Zhaoxin fam 7 only).
+    if is_amd || is_hygon; then
         return 0
     fi
-    if is_intel; then
-        if [ "$cpu_family" = 6 ]; then
-            if [ "$cpu_model" = "$INTEL_FAM6_HASWELL_X" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_D" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_X" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_LAKEFIELD" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
-                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ]; then
-                return 1
-            fi
+    if { [ "$cpu_vendor" = "CentaurHauls" ] || [ "$cpu_vendor" = "Shanghai" ]; } && [ "$cpu_family" = 7 ]; then
+        return 0
+    fi
+    # Intel NO_MMIO whitelist
+    if is_intel && [ "$cpu_family" = 6 ]; then
+        if [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_TIGERLAKE_L" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ]; then
+            return 0
         fi
     fi
+    return 1
+}
 
+# Check whether the CPU's MMIO Stale Data status is unknown ("out of servicing period")
+# Matches the kernel's X86_BUG_MMIO_UNKNOWN: Intel CPU not MMIO-free and not in the
+# MMIO blacklist. The kernel reports "Unknown: No mitigations" for such CPUs.
+# Callers: check_mmio_linux, check_mmio_bsd
+# Returns: 0 if unknown, 1 if known (either affected or not affected)
+is_cpu_mmio_unknown() {
+    parse_cpu_details
+    # Only Intel can reach the unknown bucket — other x86 vendors are whitelisted by vendor-id.
+    is_intel || return 1
+    is_cpu_mmio_free && return 1
+    if [ "$cpu_family" = 6 ]; then
+        if [ "$cpu_model" = "$INTEL_FAM6_HASWELL_X" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_D" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_X" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_LAKEFIELD" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+            [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ]; then
+            return 1
+        fi
+    fi
     return 0
 }
 
@@ -5540,7 +5558,7 @@ check_cpu() {
         pr_info_nol "  * CPU explicitly indicates not being affected by MMIO Stale Data (FBSDP_NO & PSDP_NO & SBDR_SSDP_NO): "
         if [ "$cap_sbdr_ssdp_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
-        elif [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+        elif is_arch_cap_mmio_immune; then
             pstatus green YES
         else
             pstatus yellow NO
@@ -6230,16 +6248,30 @@ check_mds_linux() {
 # vim: set ts=4 sw=4 sts=4 et:
 # MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - BSD mitigation check
 check_mmio_bsd() {
+    # No BSD (FreeBSD, OpenBSD, NetBSD, DragonFlyBSD) has implemented an OS-level
+    # MMIO Stale Data mitigation. All four stopped at MDS/TAA. Microcode update is
+    # the only partial defense available, and without OS-level VERW invocation it
+    # cannot close the vulnerability.
+    local unk
+    unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif is_cpu_mmio_unknown; then
+        if [ "$opt_paranoid" = 1 ]; then
+            pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
+            explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+        else
+            pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+        fi
     else
-        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+        pvulnstatus "$cve" VULN "your CPU is affected and no BSD has implemented an MMIO Stale Data mitigation"
+        explain "No BSD kernel currently implements an MMIO Stale Data mitigation (which would require invoking VERW at context switches and VM-entries). Updating CPU microcode alone does not mitigate this vulnerability without OS cooperation."
     fi
 }
 
 # MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - Linux mitigation check
 check_mmio_linux() {
-    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg
+    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
     status=UNK
     sys_interface_available=0
     msg=''
@@ -6341,9 +6373,33 @@ check_mmio_linux() {
         #
         # No models have been added to or removed from the MMIO blacklist since v5.19.
         #
+        # 7df548840c49 (v6.0, NO_MMIO whitelist added, Pawan Gupta 2022-08-03):
+        #   Intel Family 6:
+        #     TIGERLAKE (0x8D), TIGERLAKE_L (0x8C)
+        #     ALDERLAKE (0x97), ALDERLAKE_L (0x9A)
+        #     ATOM_GOLDMONT (0x5C), ATOM_GOLDMONT_D (0x5F), ATOM_GOLDMONT_PLUS (0x7A)
+        #   AMD: fam 0x0f-0x12 + X86_FAMILY_ANY (all families)
+        #   Hygon: all families
+        #   Centaur fam 7, Zhaoxin fam 7
+        #
+        # Kernel logic (v6.0+):
+        #   if (!arch_cap_mmio_immune(ia32_cap)) {
+        #       if (cpu_matches(cpu_vuln_blacklist, MMIO))
+        #           setup_force_cpu_bug(X86_BUG_MMIO_STALE_DATA);
+        #       else if (!cpu_matches(cpu_vuln_whitelist, NO_MMIO))
+        #           setup_force_cpu_bug(X86_BUG_MMIO_UNKNOWN);
+        #   }
+        #   => Intel CPUs that are neither blacklisted nor whitelisted (e.g. Ivy Bridge,
+        #      Haswell client, Broadwell client, Sandy Bridge, pre-Goldmont Atom, etc.) get
+        #      X86_BUG_MMIO_UNKNOWN and report "Unknown: No mitigations" in sysfs. Intel
+        #      never published an affected-processor evaluation for these models because
+        #      their servicing period had already ended.
+        #   => is_cpu_mmio_unknown() matches this set so the script can report UNK (or
+        #      VULN under --paranoid) rather than the misleading "not affected" that
+        #      a plain blacklist check would produce.
+        #
         # immunity: ARCH_CAP_SBDR_SSDP_NO (bit 13) AND ARCH_CAP_FBSDP_NO (bit 14) AND ARCH_CAP_PSDP_NO (bit 15)
         #   All three must be set. Checked via arch_cap_mmio_immune() in common.c.
-        #   Bug is set only when: cpu_matches(blacklist, MMIO) AND NOT arch_cap_mmio_immune().
         #
         # microcode mitigation: ARCH_CAP_FB_CLEAR (bit 17) -- VERW clears fill buffers.
         #   Alternative: MD_CLEAR CPUID + FLUSH_L1D CPUID when MDS_NO is not set (legacy path).
@@ -6422,6 +6478,17 @@ check_mmio_linux() {
     if ! is_cpu_affected "$cve"; then
         # override status & msg in case CPU is not vulnerable after all
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ "$opt_sysfs_only" != 1 ] && is_cpu_mmio_unknown; then
+        # Bypass the normal sysfs reconciliation: sysfs reports "Unknown: No mitigations"
+        # only on v6.0-v6.15. On earlier and on v6.16+ kernels it wrongly says "Not affected"
+        # for these CPUs (which predate FB_CLEAR microcode and Intel's affected-processor list).
+        unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+        if [ "$opt_paranoid" = 1 ]; then
+            pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
+            explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released. Consider replacing affected hardware."
+        else
+            pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+        fi
     else
         if [ "$opt_sysfs_only" != 1 ]; then
             # compute mystatus and mymsg from our own logic
