@@ -272,23 +272,23 @@ In **Hardware-only** mode, the script only reports CPU information and per-CVE h
 
 - Get the latest version of the script using `curl` *or* `wget`
 
-```bash
-curl -L https://meltdown.ovh -o spectre-meltdown-checker.sh
-wget https://meltdown.ovh -O spectre-meltdown-checker.sh
-```
+    ```bash
+    curl -L https://meltdown.ovh -o spectre-meltdown-checker.sh
+    wget https://meltdown.ovh -O spectre-meltdown-checker.sh
+    ```
 
 - Inspect the script. You never blindly run scripts you downloaded from the Internet, do you?
 
-```bash
-vim spectre-meltdown-checker.sh
-```
+    ```bash
+    vim spectre-meltdown-checker.sh
+    ```
 
 - When you're ready, run the script as root
 
-```bash
-chmod +x spectre-meltdown-checker.sh
-sudo ./spectre-meltdown-checker.sh
-```
+    ```bash
+    chmod +x spectre-meltdown-checker.sh
+    sudo ./spectre-meltdown-checker.sh
+    ```
 
 ### Using a docker container
 
