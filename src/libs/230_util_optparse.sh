@@ -47,7 +47,7 @@ while [ -n "${1:-}" ]; do
         opt_arch_prefix="$2"
         shift 2
     elif [ "$1" = "--live" ]; then
-        opt_live=1
+        # deprecated, kept for backward compatibility (live is now the default)
         shift
     elif [ "$1" = "--no-color" ]; then
         opt_no_color=1
@@ -68,17 +68,21 @@ while [ -n "${1:-}" ]; do
     elif [ "$1" = "--paranoid" ]; then
         opt_paranoid=1
         shift
+    elif [ "$1" = "--extra" ]; then
+        opt_extra=1
+        shift
     elif [ "$1" = "--hw-only" ]; then
         opt_hw_only=1
         shift
+    elif [ "$1" = "--no-runtime" ]; then
+        opt_runtime=0
+        shift
     elif [ "$1" = "--no-hw" ]; then
         opt_no_hw=1
+        opt_runtime=0
         shift
     elif [ "$1" = "--allow-msr-write" ]; then
         opt_allow_msr_write=1
-        shift
-    elif [ "$1" = "--no-intel-db" ]; then
-        opt_intel_db=0
         shift
     elif [ "$1" = "--cpu" ]; then
         opt_cpu=$2
@@ -113,7 +117,7 @@ while [ -n "${1:-}" ]; do
         opt_no_color=1
         shift
         case "$1" in
-            text | short | nrpe | json | prometheus)
+            text | short | nrpe | json | json-terse | prometheus)
                 opt_batch_format="$1"
                 shift
                 ;;
@@ -121,7 +125,7 @@ while [ -n "${1:-}" ]; do
             '') ;;  # allow nothing at all
             *)
                 echo "$0: error: unknown batch format '$1'" >&2
-                echo "$0: error: --batch expects a format from: text, nrpe, json" >&2
+                echo "$0: error: --batch expects a format from: text, short, nrpe, json, json-terse, prometheus" >&2
                 exit 255
                 ;;
         esac
@@ -166,7 +170,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, zenbleed, downfall, retbleed, inception, reptar, tsa, tsa-sq, tsa-l1, its, vmscape, bpi"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, fpdss, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
                 exit 0
                 ;;
             1)
@@ -221,6 +225,30 @@ while [ -n "${1:-}" ]; do
                 opt_cve_list="$opt_cve_list CVE-2020-0543"
                 opt_cve_all=0
                 ;;
+            mmio)
+                opt_cve_list="$opt_cve_list CVE-2022-21123 CVE-2022-21125 CVE-2022-21166"
+                opt_cve_all=0
+                ;;
+            sbdr)
+                opt_cve_list="$opt_cve_list CVE-2022-21123"
+                opt_cve_all=0
+                ;;
+            sbds)
+                opt_cve_list="$opt_cve_list CVE-2022-21125"
+                opt_cve_all=0
+                ;;
+            drpw)
+                opt_cve_list="$opt_cve_list CVE-2022-21166"
+                opt_cve_all=0
+                ;;
+            div0)
+                opt_cve_list="$opt_cve_list CVE-2023-20588"
+                opt_cve_all=0
+                ;;
+            fpdss)
+                opt_cve_list="$opt_cve_list CVE-2025-54505"
+                opt_cve_all=0
+                ;;
             zenbleed)
                 opt_cve_list="$opt_cve_list CVE-2023-20593"
                 opt_cve_all=0
@@ -239,6 +267,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             reptar)
                 opt_cve_list="$opt_cve_list CVE-2023-23583"
+                opt_cve_all=0
+                ;;
+            rfds)
+                opt_cve_list="$opt_cve_list CVE-2023-28746"
                 opt_cve_all=0
                 ;;
             tsa)
@@ -263,6 +295,10 @@ while [ -n "${1:-}" ]; do
                 ;;
             bpi)
                 opt_cve_list="$opt_cve_list CVE-2024-45332"
+                opt_cve_all=0
+                ;;
+            sls)
+                opt_cve_list="$opt_cve_list CVE-0000-0001"
                 opt_cve_all=0
                 ;;
             *)
@@ -303,11 +339,25 @@ if [ "$opt_no_hw" = 1 ] && [ "$opt_hw_only" = 1 ]; then
     exit 255
 fi
 
-if [ "$opt_live" = -1 ]; then
-    if [ -n "$opt_kernel" ] || [ -n "$opt_config" ] || [ -n "$opt_map" ]; then
-        # no --live specified and we have a least one of the kernel/config/map files on the cmdline: offline mode
-        opt_live=0
-    else
-        opt_live=1
-    fi
+if [ "$opt_runtime" = 0 ] && [ "$opt_sysfs_only" = 1 ]; then
+    pr_warn "Incompatible options specified (--no-runtime and --sysfs-only), aborting"
+    exit 255
+fi
+
+if [ "$opt_runtime" = 0 ] && [ -z "$opt_kernel" ] && [ -z "$opt_config" ] && [ -z "$opt_map" ]; then
+    pr_warn "Option --no-runtime requires at least one of --kernel, --config, or --map"
+    exit 255
+fi
+
+# Derive the canonical run mode from the option flags.
+# Modes: live (default), no-runtime (--no-runtime), no-hw (--no-hw), hw-only (--hw-only)
+# shellcheck disable=SC2034
+if [ "$opt_hw_only" = 1 ]; then
+    g_mode='hw-only'
+elif [ "$opt_no_hw" = 1 ]; then
+    g_mode='no-hw'
+elif [ "$opt_runtime" = 0 ]; then
+    g_mode='no-runtime'
+else
+    g_mode='live'
 fi

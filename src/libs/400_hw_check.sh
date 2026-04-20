@@ -18,7 +18,7 @@ if [ "$g_os" = Darwin ] || [ "$g_os" = VMkernel ]; then
 fi
 
 # check for mode selection inconsistency
-if [ "$opt_hw_only" = 1 ]; then
+if [ "$g_mode" = hw-only ]; then
     if [ "$opt_cve_all" = 0 ]; then
         show_usage
         echo "$0: error: incompatible modes specified, --hw-only vs --variant" >&2
@@ -89,10 +89,8 @@ if [ "$opt_cpu" != all ] && [ "$opt_cpu" -gt "$g_max_core_id" ]; then
     exit 255
 fi
 
-if [ "$opt_live" = 1 ]; then
+if has_runtime; then
     pr_info "Checking for vulnerabilities on current system"
-    pr_info "Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
-    pr_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 
     # try to find the image of the current running kernel
     if [ -n "$opt_kernel" ]; then
@@ -189,7 +187,6 @@ if [ "$opt_live" = 1 ]; then
     fi
 else
     pr_info "Checking for vulnerabilities against specified kernel"
-    pr_info "CPU is \033[35m$cpu_friendly_name\033[0m"
 fi
 
 if [ -n "$opt_kernel" ]; then
@@ -222,16 +219,14 @@ if [ "$g_os" = Linux ]; then
         g_bad_accuracy=1
     fi
 
-    if [ "${g_bad_accuracy:=0}" = 1 ]; then
-        pr_warn "We're missing some kernel info (see -v), accuracy might be reduced"
-    fi
+    : "${g_bad_accuracy:=0}"
 fi
 
 if [ -e "$opt_kernel" ]; then
     if ! command -v "${opt_arch_prefix}readelf" >/dev/null 2>&1; then
         pr_debug "readelf not found"
         g_kernel_err="missing '${opt_arch_prefix}readelf' tool, please install it, usually it's in the 'binutils' package"
-    elif [ "$opt_sysfs_only" = 1 ] || [ "$opt_hw_only" = 1 ]; then
+    elif [ "$opt_sysfs_only" = 1 ] || [ "$g_mode" = hw-only ]; then
         g_kernel_err='kernel image decompression skipped'
     else
         extract_kernel "$opt_kernel"
@@ -256,13 +251,13 @@ else
     fi
     if [ -n "$g_kernel_version" ]; then
         # in live mode, check if the img we found is the correct one
-        if [ "$opt_live" = 1 ]; then
+        if has_runtime; then
             pr_verbose "Kernel image is \033[35m$g_kernel_version"
             if ! echo "$g_kernel_version" | grep -qF "$(uname -r)"; then
                 pr_warn "Possible discrepancy between your running kernel '$(uname -r)' and the image '$g_kernel_version' we found ($opt_kernel), results might be incorrect"
             fi
         else
-            pr_info "Kernel image is \033[35m$g_kernel_version"
+            pr_verbose "Kernel image is \033[35m$g_kernel_version"
         fi
     else
         pr_verbose "Kernel image version is unknown"
@@ -288,7 +283,7 @@ sys_interface_check() {
     msg=''
     ret_sys_interface_check_fullmsg=''
 
-    if [ "$opt_live" = 1 ] && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
+    if has_runtime && [ "$opt_no_sysfs" = 0 ] && [ -r "$file" ]; then
         :
     else
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_SYSFS_$(basename "$file")_RET=1")
@@ -317,9 +312,14 @@ sys_interface_check() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_SYSFS_$(basename "$file")='$ret_sys_interface_check_fullmsg'")
     fi
     if [ "$mode" = silent ]; then
+        # capture sysfs message for JSON even in silent mode
+        # shellcheck disable=SC2034
+        g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
         return 0
     elif [ "$mode" = quiet ]; then
         pr_info "* Information from the /sys interface: $ret_sys_interface_check_fullmsg"
+        # shellcheck disable=SC2034
+        g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
         return 0
     fi
     pr_info_nol "* Mitigated according to the /sys interface: "
@@ -339,17 +339,81 @@ sys_interface_check() {
         ret_sys_interface_check_status=UNK
         pstatus yellow UNKNOWN "$ret_sys_interface_check_fullmsg"
     fi
+    # capture for JSON full output (read by _emit_json_full via pvulnstatus)
+    # shellcheck disable=SC2034
+    g_json_cve_sysfs_status="$ret_sys_interface_check_status"
+    # shellcheck disable=SC2034
+    g_json_cve_sysfs_msg="$ret_sys_interface_check_fullmsg"
     pr_debug "sys_interface_check: $file=$msg (re=$regex)"
     return 0
 }
 
+# Display kernel image, config, and System.map availability
+check_kernel_info() {
+    local config_display
+    pr_info "\033[1;34mKernel information\033[0m"
+    if has_runtime; then
+        pr_info "* Kernel is \033[35m$g_os $(uname -r) $(uname -v) $(uname -m)\033[0m"
+    elif [ -n "$g_kernel_version" ]; then
+        pr_info "* Kernel is \033[35m$g_kernel_version\033[0m"
+    else
+        pr_info "* Kernel is \033[35munknown\033[0m"
+    fi
+    if [ -n "$opt_kernel" ] && [ -e "$opt_kernel" ]; then
+        pr_info "* Kernel image found at \033[35m$opt_kernel\033[0m"
+    else
+        pr_info "* Kernel image NOT found"
+    fi
+    if [ -n "$opt_config" ]; then
+        if [ -n "${g_dumped_config:-}" ]; then
+            config_display="$g_procfs/config.gz"
+        else
+            config_display="$opt_config"
+        fi
+        pr_info "* Kernel config found at \033[35m$config_display\033[0m"
+    else
+        pr_info "* Kernel config NOT found"
+    fi
+    if [ -n "$opt_map" ]; then
+        pr_info "* Kernel System.map found at \033[35m$opt_map\033[0m"
+    else
+        pr_info "* Kernel System.map NOT found"
+    fi
+    if [ "${g_bad_accuracy:-0}" = 1 ]; then
+        pr_warn "We're missing some kernel info, accuracy might be reduced"
+    fi
+}
+
 # Display hardware-level CPU mitigation support (microcode features, ARCH_CAPABILITIES, etc.)
 check_cpu() {
-    local capabilities ret spec_ctrl_msr
-    pr_info "\033[1;34mHardware check\033[0m"
+    local capabilities ret spec_ctrl_msr codename ucode_str
 
     if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
         return
+    fi
+
+    pr_info "* CPU details"
+    pr_info "  * Vendor: $cpu_vendor"
+    pr_info "  * Model name: $cpu_friendly_name"
+    pr_info "  * Family: $(printf '0x%02x' "$cpu_family")  Model: $(printf '0x%02x' "$cpu_model")  Stepping: $(printf '0x%02x' "$cpu_stepping")"
+    if [ -n "$cpu_ucode" ]; then
+        ucode_str=$(printf '0x%x' "$cpu_ucode")
+    else
+        ucode_str="N/A"
+    fi
+    pr_info "  * Microcode: $ucode_str"
+    pr_info "  * CPUID: $(printf '0x%08x' "$cpu_cpuid")"
+    if is_intel; then
+        pr_info "  * Platform ID: $(printf '0x%02x' "$cpu_platformid")"
+        if [ "$cpu_hybrid" = 1 ]; then
+            pr_info "  * Hybrid CPU: YES"
+        else
+            pr_info "  * Hybrid CPU: NO"
+        fi
+        codename=$(get_intel_codename)
+        if [ -n "$codename" ]; then
+            pr_info "  * Codename: $codename"
+        fi
     fi
 
     pr_info "* Hardware support (CPU microcode) for mitigation techniques"
@@ -391,6 +455,15 @@ check_cpu() {
     else
         ret=invalid
         pstatus yellow NO "unknown CPU"
+    fi
+    if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
+            cap_ibrs='IBRS (cpuinfo)'
+            cap_spec_ctrl=1
+            pstatus green YES "ibrs flag in $g_procfs/cpuinfo"
+            ret=$READ_CPUID_RET_OK
+        fi
     fi
     if [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
@@ -460,9 +533,33 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            cap_ibpb='IBPB (cpuinfo)'
+            pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
         else
+            pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+        fi
+    fi
+
+    # IBPB_RET: CPUID EAX=0x80000008, ECX=0x00 return EBX[30] indicates IBPB also flushes
+    # return predictions (Zen4+). Without this bit, IBPB alone does not clear the return
+    # predictor, requiring an additional RSB fill (kernel X86_BUG_IBPB_NO_RET fix).
+    cap_ibpb_ret=''
+    if is_amd || is_hygon; then
+        pr_info_nol "    * CPU indicates IBPB flushes return predictions: "
+        read_cpuid 0x80000008 0x0 $EBX 30 1 1
+        ret=$?
+        if [ $ret = $READ_CPUID_RET_OK ]; then
+            cap_ibpb_ret=1
+            pstatus green YES "IBPB_RET feature bit"
+        elif [ $ret = $READ_CPUID_RET_KO ]; then
+            cap_ibpb_ret=0
+            pstatus yellow NO
+        else
+            cap_ibpb_ret=-1
             pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         fi
     fi
@@ -475,7 +572,7 @@ check_cpu() {
     elif [ "$spec_ctrl_msr" = 0 ]; then
         pstatus yellow NO
     else
-        pstatus yellow UNKNOWN "is msr kernel module available?"
+        pstatus yellow UNKNOWN "$ret_read_msr_msg"
     fi
 
     pr_info_nol "    * CPU indicates STIBP capability: "
@@ -506,6 +603,14 @@ check_cpu() {
     else
         ret=invalid
         pstatus yellow UNKNOWN "unknown CPU"
+    fi
+    if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
+            cap_stibp='STIBP (cpuinfo)'
+            pstatus green YES "stibp flag in $g_procfs/cpuinfo"
+            ret=$READ_CPUID_RET_OK
+        fi
     fi
     if [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
@@ -571,6 +676,15 @@ check_cpu() {
         fi
     fi
 
+    if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+            cap_ssbd='SSBD (cpuinfo)'
+        elif grep ^flags "$g_procfs/cpuinfo" | grep -qw virt_ssbd; then
+            cap_ssbd='SSBD in VIRT_SPEC_CTRL (cpuinfo)'
+        fi
+    fi
+
     if [ -n "${cap_ssbd:=}" ]; then
         pstatus green YES "$cap_ssbd"
     elif [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ]; then
@@ -606,17 +720,16 @@ check_cpu() {
     if [ "$opt_allow_msr_write" = 1 ]; then
         pr_info_nol "    * FLUSH_CMD MSR is available: "
         # the new MSR 'FLUSH_CMD' is at offset 0x10b, write-only
+        # this is probed for informational purposes only, the CPUID L1D flush bit
+        # (cap_l1df) is the authoritative indicator per Intel guidance
         write_msr 0x10b
         ret=$?
         if [ $ret = $WRITE_MSR_RET_OK ]; then
             pstatus green YES
-            cap_flush_cmd=1
         elif [ $ret = $WRITE_MSR_RET_KO ]; then
             pstatus yellow NO
-            cap_flush_cmd=0
         else
             pstatus yellow UNKNOWN "$ret_write_msr_msg"
-            cap_flush_cmd=-1
         fi
     fi
 
@@ -627,18 +740,16 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+        # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+        pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
+        cap_l1df=1
     elif [ $ret = $READ_CPUID_RET_KO ]; then
         pstatus yellow NO
         cap_l1df=0
     else
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
         cap_l1df=-1
-    fi
-
-    # if we weren't allowed to probe the write-only MSR but the CPUID
-    # bit says that it shoul be there, make the assumption that it is
-    if [ "$opt_allow_msr_write" != 1 ]; then
-        cap_flush_cmd=$cap_l1df
     fi
 
     if is_intel; then
@@ -649,6 +760,10 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            cap_md_clear=1
+            pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             cap_md_clear=0
             pstatus yellow NO
@@ -715,6 +830,10 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+            # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+            pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
+            cap_arch_capabilities=1
         elif [ $ret = $READ_CPUID_RET_KO ]; then
             pstatus yellow NO
             cap_arch_capabilities=0
@@ -734,7 +853,13 @@ check_cpu() {
         cap_tsx_ctrl_msr=-1
         cap_gds_ctrl=-1
         cap_gds_no=-1
+        cap_rfds_no=-1
+        cap_rfds_clear=-1
         cap_its_no=-1
+        cap_sbdr_ssdp_no=-1
+        cap_fbsdp_no=-1
+        cap_psdp_no=-1
+        cap_fb_clear=-1
         if [ "$cap_arch_capabilities" = -1 ]; then
             pstatus yellow UNKNOWN
         elif [ "$cap_arch_capabilities" != 1 ]; then
@@ -749,7 +874,13 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
+            cap_sbdr_ssdp_no=0
+            cap_fbsdp_no=0
+            cap_psdp_no=0
+            cap_fb_clear=0
             pstatus yellow NO
         else
             read_msr $MSR_IA32_ARCH_CAPABILITIES
@@ -765,7 +896,13 @@ check_cpu() {
             cap_tsx_ctrl_msr=0
             cap_gds_ctrl=0
             cap_gds_no=0
+            cap_rfds_no=0
+            cap_rfds_clear=0
             cap_its_no=0
+            cap_sbdr_ssdp_no=0
+            cap_fbsdp_no=0
+            cap_psdp_no=0
+            cap_fb_clear=0
             if [ $ret = $READ_MSR_RET_OK ]; then
                 capabilities=$ret_read_msr_value
                 # https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/arch/x86/include/asm/msr-index.h#n82
@@ -779,10 +916,16 @@ check_cpu() {
                 [ $((ret_read_msr_value_lo >> 6 & 1)) -eq 1 ] && cap_pschange_msc_no=1
                 [ $((ret_read_msr_value_lo >> 7 & 1)) -eq 1 ] && cap_tsx_ctrl_msr=1
                 [ $((ret_read_msr_value_lo >> 8 & 1)) -eq 1 ] && cap_taa_no=1
+                [ $((ret_read_msr_value_lo >> 13 & 1)) -eq 1 ] && cap_sbdr_ssdp_no=1
+                [ $((ret_read_msr_value_lo >> 14 & 1)) -eq 1 ] && cap_fbsdp_no=1
+                [ $((ret_read_msr_value_lo >> 15 & 1)) -eq 1 ] && cap_psdp_no=1
+                [ $((ret_read_msr_value_lo >> 17 & 1)) -eq 1 ] && cap_fb_clear=1
                 [ $((ret_read_msr_value_lo >> 25 & 1)) -eq 1 ] && cap_gds_ctrl=1
                 [ $((ret_read_msr_value_lo >> 26 & 1)) -eq 1 ] && cap_gds_no=1
+                [ $((ret_read_msr_value_lo >> 27 & 1)) -eq 1 ] && cap_rfds_no=1
+                [ $((ret_read_msr_value_lo >> 28 & 1)) -eq 1 ] && cap_rfds_clear=1
                 [ $((ret_read_msr_value_hi >> 30 & 1)) -eq 1 ] && cap_its_no=1
-                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no its_no=$cap_its_no"
+                pr_debug "capabilities says rdcl_no=$cap_rdcl_no ibrs_all=$cap_ibrs_all rsba=$cap_rsba l1dflush_no=$cap_l1dflush_no ssb_no=$cap_ssb_no mds_no=$cap_mds_no taa_no=$cap_taa_no pschange_msc_no=$cap_pschange_msc_no rfds_no=$cap_rfds_no rfds_clear=$cap_rfds_clear its_no=$cap_its_no sbdr_ssdp_no=$cap_sbdr_ssdp_no fbsdp_no=$cap_fbsdp_no psdp_no=$cap_psdp_no fb_clear=$cap_fb_clear"
                 if [ "$cap_ibrs_all" = 1 ]; then
                     pstatus green YES
                 else
@@ -867,6 +1010,8 @@ check_cpu() {
             pstatus yellow NO
         fi
 
+        # IA32_TSX_CTRL (MSR 0x122): architectural way to disable TSX, available on
+        # Cascade Lake and newer, and some Coffee Lake steppings via microcode update
         if [ "$cap_tsx_ctrl_msr" = 1 ]; then
             read_msr $MSR_IA32_TSX_CTRL
             ret=$?
@@ -881,7 +1026,8 @@ check_cpu() {
             elif [ "$cap_tsx_ctrl_rtm_disable" = 0 ]; then
                 pstatus blue NO
             else
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x122_msg"
             fi
 
             pr_info_nol "    * TSX_CTRL MSR indicates TSX CPUID bit is cleared: "
@@ -890,7 +1036,8 @@ check_cpu() {
             elif [ "$cap_tsx_ctrl_cpuid_clear" = 0 ]; then
                 pstatus blue NO
             else
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x122_msg"
             fi
         fi
 
@@ -915,7 +1062,8 @@ check_cpu() {
 
             pr_info_nol "    * GDS microcode mitigation is disabled (GDS_MITG_DIS): "
             if [ "$cap_gds_mitg_dis" = -1 ]; then
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x123_msg"
             elif [ "$cap_gds_mitg_dis" = 1 ]; then
                 pstatus yellow YES
             else
@@ -924,7 +1072,8 @@ check_cpu() {
 
             pr_info_nol "    * GDS microcode mitigation is locked in enabled state (GDS_MITG_LOCK): "
             if [ "$cap_gds_mitg_lock" = -1 ]; then
-                pstatus yellow UNKNOWN "couldn't read MSR"
+                # shellcheck disable=SC2154
+                pstatus yellow UNKNOWN "$ret_read_msr_0x123_msg"
             elif [ "$cap_gds_mitg_lock" = 1 ]; then
                 pstatus blue YES
             else
@@ -936,6 +1085,42 @@ check_cpu() {
         if [ "$cap_gds_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
         elif [ "$cap_gds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU explicitly indicates not being affected by MMIO Stale Data (FBSDP_NO & PSDP_NO & SBDR_SSDP_NO): "
+        if [ "$cap_sbdr_ssdp_no" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU microcode supports Fill Buffer clearing (FB_CLEAR): "
+        if [ "$cap_fb_clear" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_fb_clear" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU explicitly indicates not being affected by RFDS (RFDS_NO): "
+        if [ "$cap_rfds_no" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_no" = 1 ]; then
+            pstatus green YES
+        else
+            pstatus yellow NO
+        fi
+
+        pr_info_nol "  * CPU microcode supports clearing register files (RFDS_CLEAR): "
+        if [ "$cap_rfds_clear" = -1 ]; then
+            pstatus yellow UNKNOWN "couldn't read MSR"
+        elif [ "$cap_rfds_clear" = 1 ]; then
             pstatus green YES
         else
             pstatus yellow NO
@@ -1043,6 +1228,54 @@ check_cpu() {
         pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
     fi
 
+    pr_info_nol "  * CPU supports TSX Force Abort (TSX_FORCE_ABORT): "
+    ret=$READ_CPUID_RET_KO
+    cap_tsx_force_abort=0
+    if is_intel; then
+        read_cpuid 0x7 0x0 $EDX 13 1 1
+        ret=$?
+    fi
+    if [ $ret = $READ_CPUID_RET_OK ]; then
+        cap_tsx_force_abort=1
+        pstatus blue YES
+    elif [ $ret = $READ_CPUID_RET_KO ]; then
+        pstatus yellow NO
+    else
+        cap_tsx_force_abort=-1
+        pstatus yellow UNKNOWN "$ret_read_cpuid_msg"
+    fi
+
+    # IA32_TSX_FORCE_ABORT (MSR 0x10F): stopgap for older Skylake/Kaby Lake CPUs that
+    # don't support IA32_TSX_CTRL, forces all RTM transactions to abort via microcode update
+    if [ "$cap_tsx_force_abort" = 1 ]; then
+        read_msr $MSR_IA32_TSX_FORCE_ABORT
+        ret=$?
+        if [ "$ret" = $READ_MSR_RET_OK ]; then
+            cap_tsx_force_abort_rtm_disable=$((ret_read_msr_value_lo >> 0 & 1))
+            cap_tsx_force_abort_cpuid_clear=$((ret_read_msr_value_lo >> 1 & 1))
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates all TSX transactions are aborted: "
+        if [ "$cap_tsx_force_abort_rtm_disable" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_rtm_disable" = 0 ]; then
+            pstatus blue NO
+        else
+            # shellcheck disable=SC2154
+            pstatus yellow UNKNOWN "$ret_read_msr_0x10f_msg"
+        fi
+
+        pr_info_nol "    * TSX_FORCE_ABORT MSR indicates TSX CPUID bit is cleared: "
+        if [ "$cap_tsx_force_abort_cpuid_clear" = 1 ]; then
+            pstatus blue YES
+        elif [ "$cap_tsx_force_abort_cpuid_clear" = 0 ]; then
+            pstatus blue NO
+        else
+            # shellcheck disable=SC2154
+            pstatus yellow UNKNOWN "$ret_read_msr_0x10f_msg"
+        fi
+    fi
+
     pr_info_nol "  * CPU supports Software Guard Extensions (SGX): "
     ret=$READ_CPUID_RET_KO
     cap_sgx=0
@@ -1076,11 +1309,11 @@ check_cpu() {
         read_msr $MSR_IA32_MCU_OPT_CTRL
         ret=$?
         if [ $ret = $READ_MSR_RET_OK ]; then
-            if [ "$ret_read_msr_value" = "0000000000000000" ]; then
-                #SRBDS mitigation control exists and is enabled via microcode
+            if [ "$((ret_read_msr_value_lo >> 0 & 1))" = 0 ]; then
+                #SRBDS mitigation control exists and is enabled via microcode (RNGDS_MITG_DIS bit is 0)
                 cap_srbds_on=1
             else
-                #SRBDS mitigation control exists but is disabled via microcode
+                #SRBDS mitigation control exists but is disabled via microcode (RNGDS_MITG_DIS bit is 1)
                 cap_srbds_on=0
             fi
         else

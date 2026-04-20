@@ -85,6 +85,37 @@ is_cpu_mds_free() {
     return 1
 }
 
+# Check whether the CPU is known to be affected by MSBDS only (not MFBDS/MLPDS/MDSUM)
+# These CPUs have a different microarchitecture that is only susceptible to
+# Microarchitectural Store Buffer Data Sampling, not the other MDS variants.
+# Returns: 0 if MSBDS-only, 1 otherwise
+is_cpu_msbds_only() {
+    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+    #VULNWL_INTEL(ATOM_SILVERMONT,       MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_D,     MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID,   MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_SILVERMONT_MID2,  MSBDS_ONLY),
+    #VULNWL_INTEL(ATOM_AIRMONT,          MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNL,         MSBDS_ONLY),
+    #VULNWL_INTEL(XEON_PHI_KNM,         MSBDS_ONLY),
+    parse_cpu_details
+    if is_intel; then
+        if [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_SILVERMONT_MID2" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_AIRMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNL" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_XEON_PHI_KNM" ]; then
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
 # Check whether the CPU is known to be unaffected by TSX Asynchronous Abort (TAA)
 # Returns: 0 if TAA-free, 1 if affected or unknown
 is_cpu_taa_free() {
@@ -143,7 +174,7 @@ is_cpu_srbds_free() {
                 return 1
             elif [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] && [ "$cpu_stepping" -le 12 ] ||
                 [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] && [ "$cpu_stepping" -le 13 ]; then
-                if [ "$cap_mds_no" -eq 1 ] && { [ "$cap_rtm" -eq 0 ] || [ "$cap_tsx_ctrl_rtm_disable" -eq 1 ]; }; then
+                if [ "$cap_mds_no" -eq 1 ] && { [ "$cap_rtm" -eq 0 ] || [ "$cap_tsx_ctrl_rtm_disable" -eq 1 ] || [ "$cap_tsx_force_abort_rtm_disable" -eq 1 ]; }; then
                     return 0
                 else
                     return 1
@@ -154,6 +185,61 @@ is_cpu_srbds_free() {
 
     return 0
 
+}
+
+# Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
+# Returns: 0 if MMIO-free, 1 if affected or unknown
+is_cpu_mmio_free() {
+    # source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/kernel/cpu/common.c
+    #
+    # CPU affection logic from kernel (51802186158c, v5.19):
+    #   Bug is set when: cpu_matches(blacklist, MMIO) AND NOT arch_cap_mmio_immune()
+    #   arch_cap_mmio_immune() requires ALL THREE bits set:
+    #     ARCH_CAP_FBSDP_NO (bit 14) AND ARCH_CAP_PSDP_NO (bit 15) AND ARCH_CAP_SBDR_SSDP_NO (bit 13)
+    #
+    # Intel Family 6 model blacklist (unchanged since v5.19):
+    #   HASWELL_X (0x3F)
+    #   BROADWELL_D (0x56), BROADWELL_X (0x4F)
+    #   SKYLAKE_X (0x55), SKYLAKE_L (0x4E), SKYLAKE (0x5E)
+    #   KABYLAKE_L (0x8E), KABYLAKE (0x9E)
+    #   ICELAKE_L (0x7E), ICELAKE_D (0x6C), ICELAKE_X (0x6A)
+    #   COMETLAKE (0xA5), COMETLAKE_L (0xA6)
+    #   LAKEFIELD (0x8A)
+    #   ROCKETLAKE (0xA7)
+    #   ATOM_TREMONT (0x96), ATOM_TREMONT_D (0x86), ATOM_TREMONT_L (0x9C)
+    #
+    # Vendor scope: Intel only. Non-Intel CPUs are not affected.
+    parse_cpu_details
+    # ARCH_CAP immunity: all three bits must be set
+    if [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+        return 0
+    fi
+    if is_intel; then
+        if [ "$cpu_family" = 6 ]; then
+            if [ "$cpu_model" = "$INTEL_FAM6_HASWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_BROADWELL_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_SKYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_KABYLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ICELAKE_X" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_COMETLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_LAKEFIELD" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ROCKETLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ]; then
+                return 1
+            fi
+        fi
+    fi
+
+    return 0
 }
 
 # Check whether the CPU is known to be unaffected by Speculative Store Bypass (SSB)

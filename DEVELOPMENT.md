@@ -19,7 +19,7 @@ Even though the Linux `sysfs` hierarchy (`/sys/devices/system/cpu/vulnerabilitie
 
 - **Independent of kernel knowledge**: A given kernel only understands vulnerabilities known at compile time. This script's detection logic is maintained independently, so it can identify gaps a kernel doesn't yet know about.
 - **Detailed prerequisite breakdown**: Mitigating a vulnerability can involve multiple layers (microcode, host kernel, hypervisor, guest kernel, software). The script shows exactly which pieces are in place and which are missing.
-- **Offline kernel analysis**: The script can inspect a kernel image before it is booted (`--kernel`, `--config`, `--map`), verifying it carries the expected mitigations.
+- **No-runtime kernel analysis**: The script can inspect a kernel image before it is booted (`--kernel`, `--config`, `--map`), verifying it carries the expected mitigations.
 - **Backport-aware**: It detects actual capabilities rather than checking version strings, so it works correctly with vendor kernels that silently backport or forward-port patches.
 - **Covers gaps in sysfs**: Some vulnerabilities (e.g. Zenbleed) are not reported through `sysfs` at all.
 
@@ -84,8 +84,11 @@ sudo ./spectre-meltdown-checker.sh --variant l1tf --variant taa
 # Run specific tests that we might have just added (CVE name)
 sudo ./spectre-meltdown-checker.sh --cve CVE-2018-3640 --cve CVE-2022-40982
 
-# Batch JSON mode (CI validates exactly 19 CVEs in output)
-sudo ./spectre-meltdown-checker.sh --batch json | jq '.[] | .CVE' | wc -l  # must be 19
+# Batch JSON mode (comprehensive output)
+sudo ./spectre-meltdown-checker.sh --batch json | python3 -m json.tool
+
+# Batch JSON terse mode (legacy flat array)
+sudo ./spectre-meltdown-checker.sh --batch json-terse | python3 -m json.tool
 
 # Update microcode firmware database
 sudo ./spectre-meltdown-checker.sh --update-fwdb
@@ -102,10 +105,30 @@ The entire tool is a single bash script with no external script dependencies. Ke
 
 - **Output/logging functions** (~line 253): `pr_warn`, `pr_info`, `pr_verbose`, `pr_debug`, `explain`, `pstatus`, `pvulnstatus` - verbosity-aware output with color support
 - **CPU detection** (~line 2171): `parse_cpu_details`, `is_intel`/`is_amd`/`is_hygon`, `read_cpuid`, `read_msr`, `is_cpu_smt_enabled` - hardware identification via CPUID/MSR registers
+- **Kernel architecture detection** (`src/libs/365_kernel_arch.sh`): `is_arm_kernel`/`is_x86_kernel` - detects the **target kernel's** architecture (not the host CPU) using kernel artifacts (System.map symbols, kconfig, kernel image), with `cpu_vendor` as a fast path for live mode. Results are cached in `g_kernel_arch`. Use these helpers to guard arch-specific kernel/kconfig/System.map checks and to select the appropriate verdict messages. In no-hw mode, the target kernel may differ from the host CPU architecture.
+- **CPU architecture detection** (`src/libs/360_cpu_smt.sh`): `is_x86_cpu`/`is_arm_cpu` - detects the **host CPU's** architecture via `cpu_vendor`. Use these to gate hardware operations (CPUID, MSR, microcode) that require the physical CPU to be present. Always use positive logic: `if is_x86_cpu` (not `if ! is_arm_cpu`). These two sets of helpers are independent — a vuln check may need both, each guarding different lines.
 - **Microcode database** (embedded): Intel/AMD microcode version lookup via `read_mcedb`/`read_inteldb`; updated automatically via `.github/workflows/autoupdate.yml`
 - **Kernel analysis** (~line 1568): `extract_kernel`, `try_decompress` - extracts and inspects kernel images (handles gzip, bzip2, xz, lz4, zstd compression)
 - **Vulnerability checks**: 19 `check_CVE_<year>_<number>()` functions, each with `_linux()` and `_bsd()` variants. Uses whitelist logic (assumes affected unless proven otherwise)
-- **Main flow** (~line 6668): Parse options → detect CPU → loop through requested CVEs → output results (text/json/nrpe/prometheus) → cleanup
+- **Batch output emitters** (`src/libs/250_output_emitters.sh`): `_emit_json_full`, `_emit_json_terse`, `_emit_text`, `_emit_nrpe`, `_emit_prometheus`, plus JSON section builders (`_build_json_meta`, `_build_json_system`, `_build_json_cpu`, `_build_json_cpu_microcode`)
+- **Main flow** (~line 6668): Parse options → detect CPU → loop through requested CVEs → output results (text/json/json-terse/nrpe/prometheus) → cleanup
+
+### JSON Batch Output Formats
+
+Two JSON formats are available via `--batch`:
+
+- **`--batch json`** (comprehensive): A top-level object with five sections:
+  - `meta` — script version, format version, timestamp, `mode` (`live`, `no-runtime`, `no-hw`, `hw-only`), run mode flags (`run_as_root`, `reduced_accuracy`, `mocked`, `paranoid`, `sysfs_only`, `extra`)
+  - `system` — kernel release/version/arch/cmdline, CPU count, SMT status, hypervisor host detection
+  - `cpu` — `arch` discriminator (`x86` or `arm`), vendor, friendly name, then an arch-specific sub-object (`cpu.x86` or `cpu.arm`) with identification fields (family/model/stepping/CPUID/codename for x86; part\_list/arch\_list for ARM) and a `capabilities` sub-object containing hardware flags as booleans/nulls
+  - `cpu_microcode` — `installed_version`, `latest_version`, `microcode_up_to_date`, `is_blacklisted`, firmware DB source/info
+  - `vulnerabilities` — array of per-CVE objects: `cve`, `name`, `aliases`, `cpu_affected`, `status`, `vulnerable`, `info`, `sysfs_status`, `sysfs_message`
+
+- **`--batch json-terse`** (legacy): A flat array of objects with four fields: `NAME`, `CVE`, `VULNERABLE` (bool/null), `INFOS`. This is the original format, preserved for backward compatibility.
+
+The comprehensive format is built in two phases: static sections (`meta`, `system`, `cpu`, `cpu_microcode`) are assembled after `check_cpu()` completes, and per-CVE entries are accumulated during the main CVE loop via `_emit_json_full()`. The sysfs data for each CVE is captured by `sys_interface_check()` into `g_json_cve_sysfs_status`/`g_json_cve_sysfs_msg` globals, which are read by the emitter and reset after each CVE to prevent cross-CVE leakage. CPU affection is determined via the already-cached `is_cpu_affected()`.
+
+When adding new `cap_*` variables (for a new CVE or updated hardware support), they must be added to `_build_json_cpu()` in `src/libs/250_output_emitters.sh`. Per-CVE data is handled automatically.
 
 ## Key Design Principles
 
@@ -129,11 +152,54 @@ Never look at the microcode version to determine whether it has the proper mitig
 
 **Exception**: When a vulnerability is fixed purely by a microcode update and the fix exposes **no** detectable CPUID bit, MSR bit, or ARCH\_CAP flag, then we must hardcode the known-fixing microcode versions for each affected CPU stepping. In this case, build a `<vuln>_ucode_list` table of `FF-MM-SS/platformid_mask,fixed_ucode_version` tuples (sourced from the Intel affected processor list and the Intel-Linux-Processor-Microcode-Data-Files release notes), match against `cpu_cpuid` + `cpu_platformid` in `is_cpu_affected()`, and store the required version in a `g_<vuln>_fixed_ucode_version` global. The CVE check then compares `cpu_ucode` against this threshold. Because Intel never lists EOL CPUs, the microcode list may be incomplete: keep a model blacklist as a fallback so that affected CPUs without a known fix are still flagged as affected (the CVE check should handle the empty `g_<vuln>_fixed_ucode_version` case by reporting VULN with "no microcode update available"). See Reptar (`g_reptar_fixed_ucode_version`) and BPI (`g_bpi_fixed_ucode_version`) for reference implementations.
 
-### 4. Assume affected unless proven otherwise (whitelist approach)
+### 4. `/proc/cpuinfo` fallback for CPUID reads
+
+The primary way to read CPU capability bits is via `read_cpuid` (which uses `/dev/cpu/N/cpuid`). However, this device may be unavailable — most commonly inside virtual machines where the `cpuid` kernel module cannot be loaded. When `read_cpuid` returns `READ_CPUID_RET_ERR` (could not read at all), we can fall back to checking `/proc/cpuinfo` flags as a secondary source, **in live mode only**.
+
+This works because the kernel always has direct access to CPUID (it doesn't need `/dev/cpu`), and exposes the results as flags in `/proc/cpuinfo`. When a hypervisor virtualizes a CPUID bit for the guest, the guest kernel sees it and reports it in `/proc/cpuinfo`. This is the same information `read_cpuid` would return if the device were available.
+
+**Rules:**
+- This is strictly a fallback: `read_cpuid` via `/dev/cpu/N/cpuid` remains the primary method.
+- Only use it when `read_cpuid` returned `READ_CPUID_RET_ERR` (device unavailable), **never** when it returned `READ_CPUID_RET_KO` (device available but bit is 0 — meaning the CPU/hypervisor explicitly reports the feature as absent).
+- Only in live mode (`$g_mode = live`), since `/proc/cpuinfo` is not available in other modes.
+- Only for CPUID bits that the kernel exposes as `/proc/cpuinfo` flags. Not all bits have a corresponding flag — only those listed in the kernel's `capflags.c`. If a bit has no `/proc/cpuinfo` flag, no fallback is possible.
+- The fallback depends on the running kernel being recent enough to know about the CPUID bit in question. An older kernel won't expose a flag it doesn't know about, so the fallback will silently not trigger — which is fine (we just stay at UNKNOWN, same as the ERR case without fallback).
+
+**Known mappings** (CPUID bit → `/proc/cpuinfo` flag → script `cap_*` variable):
+
+| CPUID source | `/proc/cpuinfo` flag | `cap_*` variable |
+|---|---|---|
+| Intel 0x7.0.EDX[26] / AMD 0x80000008.EBX[14] | `ibrs` | `cap_ibrs` |
+| AMD 0x80000008.EBX[12] | `ibpb` | `cap_ibpb` |
+| Intel 0x7.0.EDX[27] / AMD 0x80000008.EBX[15] | `stibp` | `cap_stibp` |
+| Intel 0x7.0.EDX[31] / AMD 0x80000008.EBX[24,25] | `ssbd` / `virt_ssbd` | `cap_ssbd` |
+| Intel 0x7.0.EDX[28] | `flush_l1d` | `cap_l1df` |
+| Intel 0x7.0.EDX[10] | `md_clear` | `cap_md_clear` |
+| Intel 0x7.0.EDX[29] | `arch_capabilities` | `cap_arch_capabilities` |
+
+**Implementation pattern** in `check_cpu()`:
+
+```sh
+read_cpuid 0x7 0x0 $EDX 31 1 1
+ret=$?
+if [ $ret = $READ_CPUID_RET_OK ]; then
+    cap_ssbd='Intel SSBD'
+elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$g_mode" = live ]; then
+    # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
+    if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+        cap_ssbd='Intel SSBD (cpuinfo)'
+        ret=$READ_CPUID_RET_OK
+    fi
+fi
+```
+
+When the fallback sets a `cap_*` variable, append ` (cpuinfo)` to the value string so the output makes it clear the information was derived from `/proc/cpuinfo` rather than read directly from hardware. Update `ret` to `READ_CPUID_RET_OK` so downstream status display logic (`pstatus`) reports YES rather than UNKNOWN.
+
+### 5. Assume affected unless proven otherwise (whitelist approach)
 
 When a CPU is not explicitly known to be unaffected by a vulnerability, assume that it is affected. This conservative default has been the right call since the early Spectre/Meltdown days and remains sound.
 
-### 5. Offline mode
+### 6. No-runtime mode
 
 The script can analyze a non-running kernel via `--kernel`, `--config`, `--map` flags, allowing verification before deployment.
 
@@ -167,6 +233,7 @@ Common traps to avoid:
 | `xargs` | `-r` (no-op if empty, GNU only) | Guard with a prior `[ -n "..." ]` check, or accept the harmless empty invocation |
 | `readlink` | `-f` (canonicalize, GNU only) | Use only in Linux-specific code paths, or reimplement with `cd`/`pwd` |
 | `dd` | `iflag=`, `oflag=` (GNU only) | Use only in Linux-specific code paths (e.g. `/dev/cpu/*/msr`) |
+| `base64` | `-w N` (set line-wrap width, GNU only; BusyBox doesn't support it) | Pipe through `tr -d '\n'` to remove newlines instead of `-w0` |
 
 When a tool genuinely has no portable equivalent, restrict the non-portable call to a platform-specific code path (i.e. inside a BSD-only or Linux-only branch) and document why.
 
@@ -224,7 +291,12 @@ Before writing code, verify the CVE meets the inclusion criteria (see "CVE Inclu
 
 ### Step 1: Create the Vulnerability File
 
-Create `src/vulns/CVE-YYYY-NNNNN.sh`. The file header must follow this exact format:
+Create `src/vulns/CVE-YYYY-NNNNN.sh`. When no real CVE applies, two placeholder ranges are reserved:
+
+- **`CVE-0000-NNNN`** — permanent placeholder for supplementary `--extra`-only checks that will never receive a real CVE (e.g. SLS / compile-time hardening).
+- **`CVE-9999-NNNN`** — temporary placeholder for real vulnerabilities awaiting CVE assignment. Once the real CVE is issued, rename the file, the registry entry, the `--variant` alias, and the function symbols across the codebase.
+
+The file header must follow this exact format:
 
 - **Line 1**: vim modeline (`# vim: set ts=4 sw=4 sts=4 et:`)
 - **Line 2**: 31 `#` characters (`###############################`)
@@ -267,7 +339,11 @@ In `src/libs/200_cpu_affected.sh`, add an `affected_yourname` variable and popul
 
 Never use microcode version strings.
 
+When populating the CPU model list, use the **most recent version** of the Linux kernel source as the authoritative reference. The relevant lists are typically found in `arch/x86/kernel/cpu/common.c` (`cpu_vuln_blacklist`) or in the vulnerability-specific mitigation source file. Cross-reference the kernel list with the vendor's published advisory to catch any models the kernel hasn't added yet. Always document the kernel commit hash(es) you based the list on in a comment above the model checks, so future maintainers can diff against newer kernels.
+
 **Important**: Do not confuse hardware immunity bits with *mitigation* capability bits. A hardware immunity bit (e.g. `GDS_NO`, `TSA_SQ_NO`) declares that the CPU design is architecturally free of the vulnerability - it belongs here in `is_cpu_affected()`. A mitigation capability bit (e.g. `VERW_CLEAR`, `MD_CLEAR`) indicates that updated microcode provides a mechanism to work around a vulnerability the CPU *does* have - it belongs in the `check_CVE_YYYY_NNNNN_linux()` function (Phase 2), where it is used to determine whether mitigations are in place.
+
+**JSON output**: If the new CVE introduces new `cap_*` variables in `check_cpu()` (whether immunity bits or mitigation bits), these must also be added to the `_build_json_cpu()` function in `src/libs/250_output_emitters.sh`, inside the `capabilities` sub-object. Use the same name as the shell variable without the `cap_` prefix (e.g. `cap_tsa_sq_no` becomes `"tsa_sq_no"` in JSON), and emit it via `_json_cap`. The per-CVE vulnerability data (affection, status, sysfs) is handled automatically by the existing `_emit_json_full()` function and requires no changes when adding a new CVE.
 
 ### Step 3: Implement the Linux Check
 
@@ -319,18 +395,44 @@ This is where the real detection lives. Check for mitigations at each layer:
     fi
     ```
 
-  Each source may independently be unavailable (offline mode without the file, or stripped kernel), so check all that are present. A match in any one confirms kernel support.
+  Each source may independently be unavailable (no-runtime mode without the file, or stripped kernel), so check all that are present. A match in any one confirms kernel support.
 
-- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs.
+  **Architecture awareness:** Kernel symbols, kconfig options, and kernel-image strings are architecture-specific. An x86 host may be inspecting an ARM kernel (or vice versa) in offline mode, so always use positive-logic arch guards from `src/libs/365_kernel_arch.sh` and `src/libs/360_cpu_smt.sh`. This prevents searching for irrelevant strings (e.g. x86 `spec_store_bypass` in an ARM kernel image) and ensures verdict messages and `explain` text match the target architecture (e.g. "update CPU microcode" for x86 vs "update firmware for SMCCC ARCH_WORKAROUND_2" for ARM).
+
+  Use **positive logic** — always `if is_x86_kernel` (not `if ! is_arm_kernel`) and `if is_x86_cpu` (not `if ! is_arm_cpu`). This ensures unknown architectures (MIPS, RISC-V, PowerPC) are handled safely by defaulting to "skip" rather than "execute."
+
+  Two sets of helpers serve different purposes — in no-hw mode the host CPU and the kernel being inspected can be different architectures, so the correct guard depends on what is being checked:
+  - **`is_x86_kernel`/`is_arm_kernel`**: Gate checks that inspect **kernel artifacts** (kernel image strings, kconfig, System.map). These detect the architecture of the target kernel, not the host, so they work correctly in offline/no-hw mode when analyzing a foreign kernel.
+  - **`is_x86_cpu`/`is_arm_cpu`**: Gate **hardware operations** that require the host CPU to be a given architecture (CPUID, MSR reads, `/proc/cpuinfo` flags, microcode version checks). These always reflect the running host CPU.
+  - Within a single vuln check, you may need **both** guards independently — e.g. `is_x86_cpu` for the microcode/MSR check and `is_x86_kernel` for the kernel image grep, not one wrapping the other.
+
+  Example:
   ```sh
-  if [ "$opt_live" = 1 ]; then
+  # x86-specific kernel image search
+  if [ -n "$g_kernel" ] && is_x86_kernel; then
+      mitigation=$("${opt_arch_prefix}strings" "$g_kernel" | grep x86_specific_string)
+  fi
+  # ARM-specific System.map search
+  if [ -n "$opt_map" ] && is_arm_kernel; then
+      mitigation=$(grep -w arm_mitigation_function "$opt_map")
+  fi
+  # x86-specific hardware read
+  if is_x86_cpu; then
+      read_cpuid 0x7 0x0 "$EDX" 26 1 1
+  fi
+  ```
+  The same applies to Phase 4 verdict messages: when the explanation or remediation advice differs between architectures (e.g. "CPU microcode update" vs "firmware/kernel update"), branch on `is_arm_kernel`/`is_x86_kernel` rather than on `cpu_vendor`, because `cpu_vendor` reflects the host, not the target kernel.
+
+- **Runtime state** (live mode only): Read MSRs, check cpuinfo flags, parse dmesg, inspect debugfs. All runtime-only checks — including `/proc/cpuinfo` flags — must be guarded by `if [ "$g_mode" = live ]`, both when collecting the evidence in Phase 2 and when using it in Phase 4. In Phase 4, use explicit live/non-live branches so that live-only variables (e.g. cpuinfo flags, MSR values) are never referenced in the non-live path.
+  ```sh
+  if [ "$g_mode" = live ]; then
       read_msr 0xADDRESS
       ret=$?
       if [ "$ret" = "$READ_MSR_RET_OK" ]; then
           # check specific bits in ret_read_msr_value_lo / ret_read_msr_value_hi
       fi
   else
-      pstatus blue N/A "not testable in offline mode"
+      pstatus blue N/A "not testable in non-live mode"
   fi
   ```
 
@@ -421,15 +523,15 @@ four categories of information that the script consumes in different modes:
 
 1. **Sysfs messages** — every version of the string the kernel has ever produced for
    `/sys/devices/system/cpu/vulnerabilities/<name>`. Used in live mode to parse the
-   kernel's own assessment, and in offline mode to grep for known strings in `$g_kernel`.
+   kernel's own assessment, and in no-runtime mode to grep for known strings in `$g_kernel`.
 2. **Kconfig option names** — every `CONFIG_*` symbol that enables or controls the
-   mitigation. Used in offline mode to check `$opt_config`. Kconfig names change over
+   mitigation. Used in no-runtime mode to check `$opt_config`. Kconfig names change over
    time (e.g. `CONFIG_GDS_FORCE_MITIGATION` → `CONFIG_MITIGATION_GDS_FORCE` →
    `CONFIG_MITIGATION_GDS`), and vendor kernels may use their own names, so all variants
    must be catalogued.
 3. **Kernel function names** — functions introduced specifically for the mitigation (e.g.
    `gds_select_mitigation`, `gds_apply_mitigation`, `l1tf_select_mitigation`). Used in
-   offline mode to check `$opt_map` (System.map): the presence of a mitigation function
+   no-runtime mode to check `$opt_map` (System.map): the presence of a mitigation function
    proves the kernel was compiled with the mitigation code, even if the config file is
    unavailable.
 4. **CPU affection logic** — the complete algorithm the kernel uses to decide whether a
@@ -697,22 +799,30 @@ CVEs that need VMM context should call `check_has_vmm` early in their `_linux()`
 
 ### Step 4: Wire Up and Test
 
-1. **Add the CVE name mapping** in the `cve2name()` function so the header prints a human-readable name.
-2. **Build** the monolithic script with `make`.
-3. **Test live**: Run the built script and confirm your CVE appears in the output and reports a sensible status.
-4. **Test batch JSON**: Run with `--batch json` and verify the CVE count incremented by one (currently 19 → 20).
-5. **Test offline**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the offline code path reports correctly.
-6. **Lint**: Run `shellcheck` on the monolithic script and fix any warnings.
-7. **Update `dist/README.md`**: Add details about the new CVE check (name, description, what it detects) so that the user-facing documentation stays in sync with the implementation.
+1. **Add the CVE to `CVE_REGISTRY`** in `src/libs/002_core_globals.sh` with the correct fields: `CVE-YYYY-NNNNN|JSON_KEY|affected_var_suffix|Complete Name and Aliases`. This is the single source of truth for CVE metadata — it drives `cve2name()`, `is_cpu_affected()`, and the supported CVE list.
+2. **Add a `--variant` alias** in `src/libs/230_util_optparse.sh`: add a new `case` entry mapping a short name (e.g. `rfds`, `downfall`) to `opt_cve_list="$opt_cve_list CVE-YYYY-NNNNN"`, and add that short name to the `help)` echo line. The CVE is already selectable via `--cve CVE-YYYY-NNNNN` (this is handled generically by the existing `--cve` parsing code), but the `--variant` alias provides the user-friendly short name.
+3. **Update `dist/README.md`**: Add the CVE in **both** tables — the "Supported CVEs" reference table at the top (CVE link, description, alias) **and** the "Am I at risk?" matrix (with the correct leak/mitigation indicators per boundary). Also add a detailed description paragraph in the `<details>` section at the bottom.
+4. **Build** the monolithic script with `make`.
+5. **Test live**: Run the built script and confirm your CVE appears in the output and reports a sensible status.
+6. **Test batch JSON**: Run with `--batch json` and pipe through `python3 -m json.tool` to verify:
+   - The output is valid JSON.
+   - The new CVE appears in the `vulnerabilities` array with correct `cve`, `name`, `aliases`, `cpu_affected`, `status`, `vulnerable`, `info`, `sysfs_status`, and `sysfs_message` fields.
+   - If new `cap_*` variables were added in `check_cpu()`, they appear in `cpu.capabilities` (see Step 2 JSON note).
+   - Run with `--batch json-terse` as well to verify backward-compatible output.
+7. **Test no-runtime**: Run with `--kernel`/`--config`/`--map` pointing to a kernel image and verify the no-runtime code path reports correctly.
+8. **Test `--variant` and `--cve`**: Run with `--variant <shortname>` and `--cve CVE-YYYY-NNNNN` separately to confirm both selection methods work and produce the same output.
+9. **Lint**: Run `shellcheck` on the monolithic script and fix any warnings.
 
 ### Key Rules to Remember
 
 - **Never hardcode kernel or microcode versions** - detect capabilities directly (design principles 2 and 3). Exception: when a microcode fix has no detectable indicator, hardcode fixing versions per CPU (see principle 3).
 - **Assume affected by default** - only mark a CPU as unaffected when there is positive evidence (design principle 4).
-- **Always handle both live and offline modes** - use `$opt_live` to branch, and print `N/A "not testable in offline mode"` for runtime-only checks when offline.
+- **Always handle both live and non-live modes** — use `$g_mode` to branch (`if [ "$g_mode" = live ]`), and print `N/A "not testable in non-live mode"` for runtime-only checks when not in live mode. Inside CVE checks, `live` is the only mode with runtime access (hw-only skips the CVE loop). Outside CVE checks (e.g. `check_cpu`), use the `has_runtime` helper which returns true for both `live` and `hw-only`.
 - **Use `explain()`** when reporting VULN to give actionable remediation advice (see "Cross-Cutting Features" above).
 - **Handle `--paranoid` and `--vmm`** when the CVE has stricter mitigation tiers or VMM-specific aspects (see "Cross-Cutting Features" above).
+- **Keep JSON output in sync** - when adding new `cap_*` variables, add them to `_build_json_cpu()` in `src/libs/250_output_emitters.sh` (see Step 2 JSON note above). Per-CVE fields are handled automatically.
 - **All indentation must use 4 spaces** (CI enforces this via `fmt-check`; the vim modeline `et` enables expandtab).
+- **Guard arch-specific checks with positive logic** — use `is_x86_kernel`/`is_arm_kernel` for kernel artifact checks, `is_x86_cpu`/`is_arm_cpu` for hardware operations. Always use positive form (`if is_x86_cpu`, not `if ! is_arm_cpu`) so unknown architectures default to "skip." Never use `cpu_vendor` to branch on architecture in Phase 2/4 — it reflects the host, not the target kernel being inspected.
 - **Stay POSIX-compatible** - no bashisms, no GNU-only flags in portable code paths.
 
 ## Function documentation headers

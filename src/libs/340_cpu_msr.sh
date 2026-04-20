@@ -5,20 +5,27 @@ readonly WRITE_MSR_RET_ERR=2
 readonly WRITE_MSR_RET_LOCKDOWN=3
 # Write a value to an MSR register across one or all cores
 # Args: $1=msr_address $2=value(optional) $3=cpu_index(optional, default 0)
-# Sets: ret_write_msr_msg
+# Sets: ret_write_msr_msg, ret_write_msr_ADDR_msg (where ADDR is the hex address, e.g. ret_write_msr_0x123_msg)
 # Returns: WRITE_MSR_RET_OK | WRITE_MSR_RET_KO | WRITE_MSR_RET_ERR | WRITE_MSR_RET_LOCKDOWN
 write_msr() {
-    local ret core first_core_ret
+    local ret core first_core_ret msr_dec msr
+    msr_dec=$(($1))
+    msr=$(printf "0x%x" "$msr_dec")
     if [ "$opt_cpu" != all ]; then
         # we only have one core to write to, do it and return the result
         write_msr_one_core "$opt_cpu" "$@"
-        return $?
+        ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
+        return $ret
     fi
 
     # otherwise we must write on all cores
     for core in $(seq 0 "$g_max_core_id"); do
         write_msr_one_core "$core" "$@"
         ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
         if [ "$core" = 0 ]; then
             # save the result of the first core, for comparison with the others
             first_core_ret=$ret
@@ -26,6 +33,8 @@ write_msr() {
             # compare first core with the other ones
             if [ "$first_core_ret" != "$ret" ]; then
                 ret_write_msr_msg="result is not homogeneous between all cores, at least core 0 and $core differ!"
+                # shellcheck disable=SC2163
+                eval "ret_write_msr_${msr}_msg=\$ret_write_msr_msg"
                 return $WRITE_MSR_RET_ERR
             fi
         fi
@@ -43,7 +52,7 @@ write_msr_one_core() {
     core="$1"
     msr_dec=$(($2))
     msr=$(printf "0x%x" "$msr_dec")
-    value_dec=$(($3))
+    value_dec=$((${3:-0}))
     value=$(printf "0x%x" "$value_dec")
 
     ret_write_msr_msg='unknown error'
@@ -52,10 +61,30 @@ write_msr_one_core() {
     mockvarname="SMC_MOCK_WRMSR_${msr}_RET"
     # shellcheck disable=SC2086,SC1083
     if [ -n "$(eval echo \${$mockvarname:-})" ]; then
-        pr_debug "write_msr: MOCKING enabled for msr $msr func returns $(eval echo \$$mockvarname)"
+        local mockret
+        mockret="$(eval echo \$$mockvarname)"
+        pr_debug "write_msr: MOCKING enabled for msr $msr func returns $mockret"
         g_mocked=1
-        [ "$(eval echo \$$mockvarname)" = $WRITE_MSR_RET_LOCKDOWN ] && g_msr_locked_down=1
-        return "$(eval echo \$$mockvarname)"
+        if [ "$mockret" = "$WRITE_MSR_RET_LOCKDOWN" ]; then
+            g_msr_locked_down=1
+            ret_write_msr_msg="kernel lockdown is enabled, MSR writes are restricted"
+        elif [ "$mockret" = "$WRITE_MSR_RET_ERR" ]; then
+            ret_write_msr_msg="could not write MSR"
+        fi
+        return "$mockret"
+    fi
+
+    # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
+    # if the kernel lockdown is set to integrity or confidentiality, MSR writes will be denied,
+    # so we can skip the write attempt entirely and avoid relying on dmesg parsing
+    if [ -e "$SYSKERNEL_BASE/security/lockdown" ]; then
+        if grep -qE '\[integrity\]|\[confidentiality\]' "$SYSKERNEL_BASE/security/lockdown" 2>/dev/null; then
+            pr_debug "write_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
+            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_WRMSR_${msr}_RET=$WRITE_MSR_RET_LOCKDOWN")
+            g_msr_locked_down=1
+            ret_write_msr_msg="your kernel is locked down, please reboot with lockdown=none in the kernel cmdline and retry"
+            return $WRITE_MSR_RET_LOCKDOWN
+        fi
     fi
 
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
@@ -63,7 +92,7 @@ write_msr_one_core() {
         load_msr
     fi
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-        ret_read_msr_msg="is msr kernel module available?"
+        ret_write_msr_msg="msr kernel module is not available"
         return $WRITE_MSR_RET_ERR
     fi
 
@@ -73,14 +102,13 @@ write_msr_one_core() {
         ret=$?
     else
         # for Linux
-        # convert to decimal
         if [ ! -w $CPU_DEV_BASE/"$core"/msr ]; then
             ret_write_msr_msg="No write permission on $CPU_DEV_BASE/$core/msr"
             return $WRITE_MSR_RET_ERR
         # if wrmsr is available, use it
         elif command -v wrmsr >/dev/null 2>&1 && [ "${SMC_NO_WRMSR:-}" != 1 ]; then
             pr_debug "write_msr: using wrmsr"
-            wrmsr $msr_dec $value_dec 2>/dev/null
+            wrmsr -p "$core" $msr_dec $value_dec 2>/dev/null
             ret=$?
             # ret=4: msr doesn't exist, ret=127: msr.allow_writes=off
             [ "$ret" = 127 ] && write_denied=1
@@ -153,27 +181,37 @@ write_msr_one_core() {
 readonly MSR_IA32_PLATFORM_ID=0x17
 readonly MSR_IA32_SPEC_CTRL=0x48
 readonly MSR_IA32_ARCH_CAPABILITIES=0x10a
+readonly MSR_IA32_TSX_FORCE_ABORT=0x10f
 readonly MSR_IA32_TSX_CTRL=0x122
 readonly MSR_IA32_MCU_OPT_CTRL=0x123
 readonly READ_MSR_RET_OK=0
 readonly READ_MSR_RET_KO=1
 readonly READ_MSR_RET_ERR=2
+readonly READ_MSR_RET_LOCKDOWN=3
 # Read an MSR register value across one or all cores
 # Args: $1=msr_address $2=cpu_index(optional, default 0)
-# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
-# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
+# Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg,
+#       ret_read_msr_ADDR_msg (where ADDR is the hex address, e.g. ret_read_msr_0x10a_msg)
+# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR | READ_MSR_RET_LOCKDOWN
 read_msr() {
-    local ret core first_core_ret first_core_value
+    local ret core first_core_ret first_core_value msr_dec msr
+    msr_dec=$(($1))
+    msr=$(printf "0x%x" "$msr_dec")
     if [ "$opt_cpu" != all ]; then
         # we only have one core to read, do it and return the result
         read_msr_one_core "$opt_cpu" "$@"
-        return $?
+        ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
+        return $ret
     fi
 
     # otherwise we must read all cores
     for core in $(seq 0 "$g_max_core_id"); do
         read_msr_one_core "$core" "$@"
         ret=$?
+        # shellcheck disable=SC2163
+        eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
         if [ "$core" = 0 ]; then
             # save the result of the first core, for comparison with the others
             first_core_ret=$ret
@@ -182,6 +220,8 @@ read_msr() {
             # compare first core with the other ones
             if [ "$first_core_ret" != "$ret" ] || [ "$first_core_value" != "$ret_read_msr_value" ]; then
                 ret_read_msr_msg="result is not homogeneous between all cores, at least core 0 and $core differ!"
+                # shellcheck disable=SC2163
+                eval "ret_read_msr_${msr}_msg=\$ret_read_msr_msg"
                 return $READ_MSR_RET_ERR
             fi
         fi
@@ -193,7 +233,7 @@ read_msr() {
 # Read an MSR register value from a single CPU core
 # Args: $1=core $2=msr_address
 # Sets: ret_read_msr_value, ret_read_msr_value_hi, ret_read_msr_value_lo, ret_read_msr_msg
-# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR
+# Returns: READ_MSR_RET_OK | READ_MSR_RET_KO | READ_MSR_RET_ERR | READ_MSR_RET_LOCKDOWN
 read_msr_one_core() {
     local ret core msr msr_dec mockvarname msr_h msr_l mockval
     core="$1"
@@ -225,9 +265,29 @@ read_msr_one_core() {
     mockvarname="SMC_MOCK_RDMSR_${msr}_RET"
     # shellcheck disable=SC2086,SC1083
     if [ -n "$(eval echo \${$mockvarname:-})" ] && [ "$(eval echo \$$mockvarname)" -ne 0 ]; then
-        pr_debug "read_msr: MOCKING enabled for msr $msr func returns $(eval echo \$$mockvarname)"
+        local mockret
+        mockret="$(eval echo \$$mockvarname)"
+        pr_debug "read_msr: MOCKING enabled for msr $msr func returns $mockret"
         g_mocked=1
-        return "$(eval echo \$$mockvarname)"
+        if [ "$mockret" = "$READ_MSR_RET_LOCKDOWN" ]; then
+            ret_read_msr_msg="kernel lockdown is enabled, MSR reads are restricted"
+        elif [ "$mockret" = "$READ_MSR_RET_ERR" ]; then
+            ret_read_msr_msg="could not read MSR"
+        fi
+        return "$mockret"
+    fi
+
+    # proactive lockdown detection via sysfs (vanilla 5.4+, CentOS 8+, Rocky 9+):
+    # if the kernel lockdown is set to integrity or confidentiality, MSR reads will be denied,
+    # so we can skip the read attempt entirely and avoid relying on dmesg parsing
+    if [ -e "$SYSKERNEL_BASE/security/lockdown" ]; then
+        if grep -qE '\[integrity\]|\[confidentiality\]' "$SYSKERNEL_BASE/security/lockdown" 2>/dev/null; then
+            pr_debug "read_msr: kernel lockdown detected via $SYSKERNEL_BASE/security/lockdown"
+            g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_RDMSR_${msr}_RET=$READ_MSR_RET_LOCKDOWN")
+            g_msr_locked_down=1
+            ret_read_msr_msg="kernel lockdown is enabled, MSR reads are restricted"
+            return $READ_MSR_RET_LOCKDOWN
+        fi
     fi
 
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
@@ -235,7 +295,7 @@ read_msr_one_core() {
         load_msr
     fi
     if [ ! -e $CPU_DEV_BASE/0/msr ] && [ ! -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-        ret_read_msr_msg="is msr kernel module available?"
+        ret_read_msr_msg="msr kernel module is not available"
         return $READ_MSR_RET_ERR
     fi
 

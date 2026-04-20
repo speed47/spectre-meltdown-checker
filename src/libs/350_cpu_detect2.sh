@@ -65,6 +65,7 @@ parse_cpu_details() {
     # see https://elixir.bootlin.com/linux/v6.0/source/arch/x86/kernel/cpu/microcode/intel.c#L694
     # Set it to 8 (impossible value as it is 3 bit long) by default
     cpu_platformid=8
+    # use direct cpu_vendor comparison: is_intel() calls parse_cpu_details() which would recurse
     if [ "$cpu_vendor" = GenuineIntel ] && [ "$cpu_model" -ge 5 ]; then
         read_msr $MSR_IA32_PLATFORM_ID
         ret=$?
@@ -117,6 +118,23 @@ parse_cpu_details() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_PLATFORMID='$cpu_platformid'")
     fi
 
+    # Detect hybrid CPU: CPUID.(EAX=7,ECX=0):EDX[15] = 1 means hybrid
+    cpu_hybrid=0
+    # use direct cpu_vendor comparison: is_intel() calls parse_cpu_details() which would recurse
+    if [ "$cpu_vendor" = GenuineIntel ]; then
+        read_cpuid 0x7 0x0 $EDX 15 1 1
+        if [ $? = $READ_CPUID_RET_OK ]; then
+            cpu_hybrid=1
+        fi
+    fi
+    if [ -n "${SMC_MOCK_CPU_HYBRID:-}" ]; then
+        cpu_hybrid="$SMC_MOCK_CPU_HYBRID"
+        pr_debug "parse_cpu_details: MOCKING cpu hybrid to $cpu_hybrid"
+        g_mocked=1
+    else
+        g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_HYBRID='$cpu_hybrid'")
+    fi
+
     # get raw cpuid, it's always useful (referenced in the Intel doc for firmware updates for example)
     if [ "$g_mocked" != 1 ] && read_cpuid 0x1 0x0 $EAX 0 0xFFFFFFFF; then
         cpu_cpuid="$ret_read_cpuid_value"
@@ -130,21 +148,26 @@ parse_cpu_details() {
     if [ -z "$cpu_ucode" ] && [ "$g_os" != Linux ]; then
         load_cpuid
         if [ -e ${BSD_CPUCTL_DEV_BASE}0 ]; then
-            # init MSR with NULLs
-            cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0
-            # call CPUID
-            cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null
-            # read MSR
-            cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 | awk '{print $3}')
-            # convert to decimal
-            cpu_ucode=$((cpu_ucode))
-            # convert back to hex
-            cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            # use direct cpu_vendor comparison: is_amd/is_hygon/is_intel() call parse_cpu_details() which would recurse
+            if [ "$cpu_vendor" = AuthenticAMD ] || [ "$cpu_vendor" = HygonGenuine ]; then
+                # AMD: read MSR_PATCHLEVEL (0xC0010058) directly
+                cpu_ucode=$(cpucontrol -m 0xC0010058 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            elif [ "$cpu_vendor" = GenuineIntel ]; then
+                # Intel: write 0 to IA32_BIOS_SIGN_ID, execute CPUID, then read back
+                cpucontrol -m 0x8b=0 ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null
+                cpucontrol -i 1 ${BSD_CPUCTL_DEV_BASE}0 >/dev/null 2>&1
+                cpu_ucode=$(cpucontrol -m 0x8b ${BSD_CPUCTL_DEV_BASE}0 2>/dev/null | awk '{print $3}')
+            fi
+            if [ -n "$cpu_ucode" ]; then
+                # convert to decimal then back to hex
+                cpu_ucode=$((cpu_ucode))
+                cpu_ucode=$(printf "0x%x" "$cpu_ucode")
+            fi
         fi
     fi
 
-    # if we got no cpu_ucode (e.g. we're in a vm), fall back to 0x0
-    : "${cpu_ucode:=0x0}"
+    # if we got no cpu_ucode (e.g. we're in a vm), leave it empty
+    # so that we can detect this case and avoid false positives
 
     # on non-x86 systems (e.g. ARM), these fields may not exist in cpuinfo, fall back to 0
     : "${cpu_family:=0}"
@@ -159,9 +182,15 @@ parse_cpu_details() {
         g_mockme=$(printf "%b\n%b" "$g_mockme" "SMC_MOCK_CPU_UCODE='$cpu_ucode'")
     fi
 
-    echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
-    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode 0x%x cpuid 0x%x pfid 0x%x" \
-        "$cpu_family" "$cpu_model" "$cpu_stepping" "$cpu_ucode" "$cpu_cpuid" "$cpu_platformid")
+    local ucode_str
+    if [ -n "$cpu_ucode" ]; then
+        echo "$cpu_ucode" | grep -q ^0x && cpu_ucode=$((cpu_ucode))
+        ucode_str=$(printf "0x%x" "$cpu_ucode")
+    else
+        ucode_str="unknown"
+    fi
+    g_ucode_found=$(printf "family 0x%x model 0x%x stepping 0x%x ucode %s cpuid 0x%x pfid 0x%x" \
+        "$cpu_family" "$cpu_model" "$cpu_stepping" "$ucode_str" "$cpu_cpuid" "$cpu_platformid")
 
     g_parse_cpu_details_done=1
 }

@@ -21,6 +21,28 @@ is_intel() {
     return 1
 }
 
+# Check whether the host CPU is x86/x86_64.
+# Use this to gate CPUID, MSR, and microcode operations.
+# Returns: 0 if x86, 1 otherwise
+is_x86_cpu() {
+    parse_cpu_details
+    case "$cpu_vendor" in
+        GenuineIntel | AuthenticAMD | HygonGenuine | CentaurHauls | Shanghai) return 0 ;;
+    esac
+    return 1
+}
+
+# Check whether the host CPU is ARM/ARM64.
+# Use this to gate ARM-specific hardware checks.
+# Returns: 0 if ARM, 1 otherwise
+is_arm_cpu() {
+    parse_cpu_details
+    case "$cpu_vendor" in
+        ARM | CAVIUM | PHYTIUM) return 0 ;;
+    esac
+    return 1
+}
+
 # Check whether SMT (HyperThreading) is enabled on the system
 # Returns: 0 if SMT enabled, 1 otherwise
 is_cpu_smt_enabled() {
@@ -210,7 +232,7 @@ has_zenbleed_fixed_firmware() {
         model_high=$(echo "$tuple" | cut -d, -f2)
         fwver=$(echo "$tuple" | cut -d, -f3)
         if [ $((cpu_model)) -ge $((model_low)) ] && [ $((cpu_model)) -le $((model_high)) ]; then
-            if [ $((cpu_ucode)) -ge $((fwver)) ]; then
+            if [ -n "$cpu_ucode" ] && [ $((cpu_ucode)) -ge $((fwver)) ]; then
                 g_zenbleed_fw=0 # true
                 break
             else

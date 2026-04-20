@@ -17,7 +17,8 @@ VERSION='1.0.0'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
-readonly DEBUGFS_BASE="/sys/kernel/debug"
+readonly SYSKERNEL_BASE="/sys/kernel"
+readonly DEBUGFS_BASE="$SYSKERNEL_BASE/debug"
 readonly SYS_MODULE_BASE="/sys/module"
 readonly CPU_DEV_BASE="/dev/cpu"
 readonly BSD_CPUCTL_DEV_BASE="/dev/cpuctl"
@@ -26,12 +27,12 @@ trap 'exit_cleanup' EXIT
 trap 'pr_warn "interrupted, cleaning up..."; exit_cleanup; exit 1' INT
 # Clean up temporary files and undo module/mount side effects on exit
 exit_cleanup() {
-    local saved_ret
-    saved_ret=$?
+    local saved_ret=$?
     # cleanup the temp decompressed config & kernel image
     [ -n "${g_dumped_config:-}" ] && [ -f "$g_dumped_config" ] && rm -f "$g_dumped_config"
     [ -n "${g_kerneltmp:-}" ] && [ -f "$g_kerneltmp" ] && rm -f "$g_kerneltmp"
     [ -n "${g_kerneltmp2:-}" ] && [ -f "$g_kerneltmp2" ] && rm -f "$g_kerneltmp2"
+    [ -n "${g_sls_text_tmp:-}" ] && [ -f "$g_sls_text_tmp" ] && rm -f "$g_sls_text_tmp"
     [ -n "${g_mcedb_tmp:-}" ] && [ -f "$g_mcedb_tmp" ] && rm -f "$g_mcedb_tmp"
     [ -n "${g_intel_tmp:-}" ] && [ -d "$g_intel_tmp" ] && rm -rf "$g_intel_tmp"
     [ -n "${g_linuxfw_tmp:-}" ] && [ -f "$g_linuxfw_tmp" ] && rm -f "$g_linuxfw_tmp"

@@ -50,7 +50,12 @@ is_cpu_affected() {
         if [ "${g_intel_line:-}" = "no" ]; then
             pr_debug "is_cpu_affected: $cpuid_hex not in Intel database (cached)"
         elif [ -z "$g_intel_line" ]; then
-            g_intel_line=$(read_inteldb | grep -F "$cpuid_hex," | head -n1)
+            # Try hybrid-specific entry first (H=0 or H=1), fall back to unqualified entry
+            g_intel_line=$(read_inteldb | grep -F "$cpuid_hex,H=$cpu_hybrid," | head -n1)
+            if [ -z "$g_intel_line" ]; then
+                # No hybrid-specific entry, try unqualified (no H= field)
+                g_intel_line=$(read_inteldb | grep -F "$cpuid_hex," | grep -v ',H=' | head -n1)
+            fi
             if [ -z "$g_intel_line" ]; then
                 g_intel_line=no
                 pr_debug "is_cpu_affected: $cpuid_hex not in Intel database"
@@ -99,16 +104,21 @@ is_cpu_affected() {
     affected_taa=''
     affected_itlbmh=''
     affected_srbds=''
-    # Zenbleed and Inception are both AMD specific, look for "is_amd" below:
+    affected_mmio=''
+    affected_sls=''
+    # DIV0, FPDSS, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
+    _set_immune div0
+    _set_immune fpdss
     _set_immune zenbleed
     _set_immune inception
     # TSA is AMD specific (Zen 3/4), look for "is_amd" below:
     _set_immune tsa
     # Retbleed: AMD (CVE-2022-29900) and Intel (CVE-2022-29901) specific:
     _set_immune retbleed
-    # Downfall, Reptar, ITS & BPI are Intel specific, look for "is_intel" below:
+    # Downfall, Reptar, RFDS, ITS & BPI are Intel specific, look for "is_intel" below:
     _set_immune downfall
     _set_immune reptar
+    _set_immune rfds
     _set_immune its
     _set_immune bpi
     # VMScape affects Intel, AMD and Hygon — set immune, overridden below:
@@ -120,6 +130,11 @@ is_cpu_affected() {
         _infer_immune mlpds
         _infer_immune mdsum
         pr_debug "is_cpu_affected: cpu not affected by Microarchitectural Data Sampling"
+    elif is_cpu_msbds_only; then
+        _infer_immune mfbds
+        _infer_immune mlpds
+        _infer_immune mdsum
+        pr_debug "is_cpu_affected: cpu only affected by MSBDS, not MFBDS/MLPDS/MDSUM"
     fi
 
     if is_cpu_taa_free; then
@@ -130,6 +145,11 @@ is_cpu_affected() {
     if is_cpu_srbds_free; then
         _infer_immune srbds
         pr_debug "is_cpu_affected: cpu not affected by Special Register Buffer Data Sampling"
+    fi
+
+    if is_cpu_mmio_free; then
+        _infer_immune mmio
+        pr_debug "is_cpu_affected: cpu not affected by MMIO Stale Data"
     fi
 
     # NO_SPECTRE_V2: Centaur family 7 and Zhaoxin family 7 are immune to Spectre V2
@@ -153,6 +173,7 @@ is_cpu_affected() {
         _set_immune mdsum
         _set_immune taa
         _set_immune srbds
+        _set_immune mmio
     elif is_intel; then
         # Intel
         # https://github.com/crozone/SpectrePoC/issues/1 ^F E5200 => spectre 2 not affected
@@ -262,6 +283,32 @@ is_cpu_affected() {
                 # and GDS_NO not set: assume affected (whitelist principle)
                 pr_debug "is_cpu_affected: downfall: unknown AVX-capable CPU, defaulting to affected"
                 _infer_vuln downfall
+            fi
+            set +u
+        fi
+        # RFDS (Register File Data Sampling, CVE-2023-28746)
+        # kernel cpu_vuln_blacklist (8076fcde016c, initial model list)
+        # immunity: ARCH_CAP_RFDS_NO (bit 27 of IA32_ARCH_CAPABILITIES)
+        # vendor scope: Intel only (family 6), Atom/hybrid cores
+        if [ "$cap_rfds_no" = 1 ]; then
+            pr_debug "is_cpu_affected: rfds: not affected (RFDS_NO)"
+            _set_immune rfds
+        elif [ "$cpu_family" = 6 ]; then
+            set -u
+            if [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GOLDMONT_PLUS" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_D" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_TREMONT_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ATOM_GRACEMONT" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_ALDERLAKE_L" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_P" ] ||
+                [ "$cpu_model" = "$INTEL_FAM6_RAPTORLAKE_S" ]; then
+                pr_debug "is_cpu_affected: rfds: affected"
+                _set_vuln rfds
             fi
             set +u
         fi
@@ -559,6 +606,23 @@ is_cpu_affected() {
         fi
         _set_immune variantl1tf
 
+        # DIV0 (Zen1/Zen+)
+        # 77245f1c3c64 (v6.5, initial model list): family 0x17 models 0x00-0x2f, 0x50-0x5f
+        # bfff3c6692ce (v6.8): moved to init_amd_zen1(), unconditional for all ZEN1-flagged CPUs
+        # The kernel's X86_FEATURE_ZEN1 covers family 0x17 models 0x00-0x2f and 0x50-0x5f,
+        # which spans both Zen1 (Summit Ridge, Naples, Raven Ridge, Snowy Owl) and Zen+
+        # (Pinnacle Ridge, Picasso, Dali, Colfax) products -- all using the same divider silicon.
+        amd_legacy_erratum "$(amd_model_range 0x17 0x00 0x0 0x2f 0xf)" && _set_vuln div0
+        amd_legacy_erratum "$(amd_model_range 0x17 0x50 0x0 0x5f 0xf)" && _set_vuln div0
+
+        # FPDSS: same Zen1/Zen+ cohort as DIV0 (both applied unconditionally in init_amd_zen1()).
+        # e55d98e77561 (v7.1): unconditional in init_amd_zen1(); CVE-2025-54505 / AMD-SB-7053.
+        # AMD-SB-7053 only enumerates a subset (EPYC 7001, EPYC Embedded 3000, Athlon/Ryzen 3000
+        # with Radeon, Ryzen PRO 3000 with Radeon Vega), but the kernel mitigates the full
+        # ZEN1 cohort, so we flag all of it to match the kernel's behavior.
+        # shellcheck disable=SC2154
+        [ "$affected_div0" = 0 ] && _set_vuln fpdss
+
         # Zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x30 0x0 0x4f 0xf)" && _set_vuln zenbleed
         amd_legacy_erratum "$(amd_model_range 0x17 0x60 0x0 0x7f 0xf)" && _set_vuln zenbleed
@@ -741,13 +805,35 @@ is_cpu_affected() {
         _infer_immune itlbmh
     fi
 
-    # shellcheck disable=SC2154  # affected_zenbleed/inception/retbleed/tsa/downfall/reptar/its/vmscape/bpi set via eval (_set_immune)
+    # SLS (Straight-Line Speculation):
+    # - x86_64: all CPUs are affected (compile-time mitigation CONFIG_MITIGATION_SLS)
+    # - arm64 (CVE-2020-13844): Cortex-A32/A34/A35/A53/A57/A72/A73 confirmed affected,
+    #   and broadly all speculative Armv8-A cores. No kernel mitigation merged.
+    #   Part numbers: A32=0xd01 A34=0xd02 A53=0xd03 A35=0xd04 A57=0xd07 A72=0xd08 A73=0xd09
+    #   Plus later speculative cores: A75=0xd0a A76=0xd0b A77=0xd0d N1=0xd0c V1=0xd40 N2=0xd49 V2=0xd4f
+    if is_intel || is_amd; then
+        _infer_vuln sls
+    elif [ "$cpu_vendor" = ARM ]; then
+        for cpupart in $cpu_part_list; do
+            if echo "$cpupart" | grep -q -w -e 0xd01 -e 0xd02 -e 0xd03 -e 0xd04 \
+                -e 0xd07 -e 0xd08 -e 0xd09 -e 0xd0a -e 0xd0b -e 0xd0c -e 0xd0d \
+                -e 0xd40 -e 0xd49 -e 0xd4f; then
+                _set_vuln sls
+            fi
+        done
+        # non-speculative ARM cores (arch <= 7, or early v8 models) are not affected
+        _infer_immune sls
+    else
+        _infer_immune sls
+    fi
+
+    # shellcheck disable=SC2154
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
         pr_debug "is_cpu_affected: final results: variant4=$affected_variant4 variantl1tf=$affected_variantl1tf msbds=$affected_msbds mfbds=$affected_mfbds"
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
-        pr_debug "is_cpu_affected: final results: zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar its=$affected_its"
-        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi"
+        pr_debug "is_cpu_affected: final results: div0=$affected_div0 fpdss=$affected_fpdss zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
+        pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls mmio=$affected_mmio"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
