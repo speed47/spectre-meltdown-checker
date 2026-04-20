@@ -127,7 +127,7 @@
     },
 
     "cpu": {
-      "description": "CPU hardware identification. Null when --no-hw is active. Contains an 'arch' discriminator ('x86' or 'arm') and a matching arch-specific sub-object with identification fields and capabilities.",
+      "description": "CPU hardware identification. Null when --no-hw is active or when --arch-prefix is set (host CPU info is then suppressed to avoid mixing with a different-arch target kernel). Contains an 'arch' discriminator ('x86' or 'arm') and a matching arch-specific sub-object with identification fields and capabilities.",
       "oneOf": [
         { "type": "null" },
         {
@@ -180,16 +180,16 @@
                   "type": ["string", "null"]
                 },
                 "capabilities": {
-                  "description": "CPU feature flags detected via CPUID and MSR reads. Each value is true (present), false (absent), or null (not applicable or could not be read).",
+                  "description": "CPU feature flags detected via CPUID and MSR reads. Every value is tri-state: true=present, false=absent, null=not applicable or unreadable.",
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
                     "spec_ctrl":                      { "type": ["boolean", "null"], "description": "SPEC_CTRL MSR present (Intel; enables IBRS + IBPB via WRMSR)" },
-                    "ibrs":                           { "type": ["boolean", "null"], "description": "Indirect Branch Restricted Speculation" },
-                    "ibpb":                           { "type": ["boolean", "null"], "description": "Indirect Branch Prediction Barrier" },
+                    "ibrs":                           { "type": ["boolean", "null"], "description": "IBRS supported (via SPEC_CTRL, IBRS_SUPPORT, or cpuinfo fallback)" },
+                    "ibpb":                           { "type": ["boolean", "null"], "description": "IBPB supported (via SPEC_CTRL, IBPB_SUPPORT, or cpuinfo fallback)" },
                     "ibpb_ret":                       { "type": ["boolean", "null"], "description": "IBPB on return (enhanced form)" },
-                    "stibp":                          { "type": ["boolean", "null"], "description": "Single Thread Indirect Branch Predictors" },
-                    "ssbd":                           { "type": ["boolean", "null"], "description": "Speculative Store Bypass Disable" },
+                    "stibp":                          { "type": ["boolean", "null"], "description": "STIBP supported (Intel/AMD/HYGON or cpuinfo fallback)" },
+                    "ssbd":                           { "type": ["boolean", "null"], "description": "SSBD supported (SPEC_CTRL, VIRT_SPEC_CTRL, non-architectural MSR, or cpuinfo fallback)" },
                     "l1d_flush":                      { "type": ["boolean", "null"], "description": "L1D cache flush instruction" },
                     "md_clear":                       { "type": ["boolean", "null"], "description": "VERW clears CPU buffers (MDS mitigation)" },
                     "arch_capabilities":              { "type": ["boolean", "null"], "description": "IA32_ARCH_CAPABILITIES MSR is present" },
@@ -231,7 +231,7 @@
                     "tsa_l1_no":                      { "type": ["boolean", "null"], "description": "Not susceptible to TSA-L1" },
                     "verw_clear":                     { "type": ["boolean", "null"], "description": "VERW clears CPU buffers" },
                     "autoibrs":                       { "type": ["boolean", "null"], "description": "AMD AutoIBRS (equivalent to enhanced IBRS on Intel)" },
-                    "sbpb":                           { "type": ["boolean", "null"], "description": "Selective Branch Predictor Barrier (AMD Inception mitigation)" },
+                    "sbpb":                           { "type": ["boolean", "null"], "description": "Selective Branch Predictor Barrier (AMD Inception mitigation): true if PRED_CMD MSR SBPB bit write succeeded; false if write failed; null if not verifiable (non-root, CPUID error, or CPU does not report SBPB support)" },
                     "avx2":                           { "type": ["boolean", "null"], "description": "AVX2 supported (relevant to Downfall / GDS)" },
                     "avx512":                         { "type": ["boolean", "null"], "description": "AVX-512 supported (relevant to Downfall / GDS)" }
                   }

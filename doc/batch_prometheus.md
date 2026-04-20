@@ -90,13 +90,16 @@ smc_build_info{version="25.30.0250400123",mode="live",run_as_root="true",paranoi
 
 Operating system and kernel metadata.  Always value `1`.
 
-Absent in offline mode when neither `uname -r` nor `uname -m` is available.
+Absent entirely when none of `kernel_release`, `kernel_arch`, or
+`hypervisor_host` can be determined (e.g. non-live mode with no VMM detection).
+Each label is emitted only when its value is known; missing labels are
+omitted rather than set to an empty string.
 
 | Label | Values | Meaning |
 |---|---|---|
-| `kernel_release` | string | Output of `uname -r` (live mode only) |
-| `kernel_arch` | string | Output of `uname -m` (live mode only) |
-| `hypervisor_host` | `true` / `false` | Whether this machine is detected as a hypervisor host (running KVM, Xen, VMware, etc.) |
+| `kernel_release` | string | Output of `uname -r`; emitted only in live mode |
+| `kernel_arch` | string | Output of `uname -m`; emitted only in live mode |
+| `hypervisor_host` | `true` / `false` | Whether this machine is detected as a hypervisor host (running KVM, Xen, VMware, etc.); absent when VMM detection did not run (e.g. `--no-hw`) |
 
 **Example:**
 ```
@@ -114,26 +117,47 @@ a malicious guest.  Always prioritise remediation on hosts where
 ### `smc_cpu_info`
 
 CPU hardware and microcode metadata.  Always value `1`.  Absent when `--no-hw`
-is used.
+is used or when `--arch-prefix` is set (host CPU info is suppressed to avoid
+mixing with a different-arch target kernel).
+
+Common labels (always emitted when the data is available):
 
 | Label | Values | Meaning |
 |---|---|---|
-| `vendor` | string | CPU vendor (e.g. `Intel`, `AuthenticAMD`) |
+| `vendor` | string | CPU vendor (e.g. `GenuineIntel`, `AuthenticAMD`, `HygonGenuine`, `ARM`) |
 | `model` | string | CPU friendly name from `/proc/cpuinfo` |
+| `arch` | `x86` / `arm` | Architecture family; determines which arch-specific labels follow |
+| `smt` | `true` / `false` | Whether SMT (HyperThreading) is currently enabled; absent if undeterminable |
+| `microcode` | hex string | Installed microcode version (e.g. `0xf4`); absent if unreadable |
+| `microcode_latest` | hex string | Latest known-good microcode version from the firmware database; absent if the CPU is not in the database |
+| `microcode_up_to_date` | `true` / `false` | Whether `microcode == microcode_latest`; absent if either is unavailable |
+| `microcode_blacklisted` | `true` / `false` | Whether the installed microcode is known to cause problems and should be rolled back; emitted whenever `microcode` is emitted |
+
+x86-only labels (emitted when `arch="x86"`):
+
+| Label | Values | Meaning |
+|---|---|---|
 | `family` | integer string | CPU family number |
 | `model_id` | integer string | CPU model number |
 | `stepping` | integer string | CPU stepping number |
-| `cpuid` | hex string | Full CPUID value (e.g. `0x000906ed`); absent on some ARM CPUs |
-| `codename` | string | Intel CPU codename (e.g. `Coffee Lake`); absent on AMD and ARM |
-| `smt` | `true` / `false` | Whether SMT (HyperThreading) is currently enabled |
-| `microcode` | hex string | Installed microcode version (e.g. `0xf4`) |
-| `microcode_latest` | hex string | Latest known-good microcode version from the firmware database |
-| `microcode_up_to_date` | `true` / `false` | Whether `microcode == microcode_latest` |
-| `microcode_blacklisted` | `true` / `false` | Whether the installed microcode is known to cause problems and should be rolled back |
+| `cpuid` | hex string | Full CPUID value (e.g. `0x000906ed`) |
+| `codename` | string | Intel CPU codename (e.g. `Coffee Lake`); absent on AMD/Hygon |
 
-**Example:**
+ARM-only labels (emitted when `arch="arm"`):
+
+| Label | Values | Meaning |
+|---|---|---|
+| `part_list` | string | Space-separated list of ARM part numbers across cores (e.g. `0xd0b 0xd05` on big.LITTLE) |
+| `arch_list` | string | Space-separated list of ARM architecture levels across cores (e.g. `8 8`) |
+
+**x86 example:**
 ```
-smc_cpu_info{vendor="Intel",model="Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz",family="6",model_id="158",stepping="13",cpuid="0x000906ed",codename="Coffee Lake",smt="true",microcode="0xf4",microcode_latest="0xf4",microcode_up_to_date="true",microcode_blacklisted="false"} 1
+smc_cpu_info{vendor="GenuineIntel",model="Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz",arch="x86",family="6",model_id="158",stepping="13",cpuid="0x000906ed",codename="Coffee Lake",smt="true",microcode="0xf4",microcode_latest="0xf4",microcode_up_to_date="true",microcode_blacklisted="false"} 1
+```
+
+**ARM example:**
+```
+smc_cpu_info{vendor="ARM",model="ARM v8 model 0xd0b",arch="arm",part_list="0xd0b 0xd05",arch_list="8 8",smt="false"} 1
 ```
 
 **Microcode labels:**
@@ -352,9 +376,15 @@ queries.  CVE checks that rely on hardware capability detection (`cap_*` flags,
 MSR reads) will report `unknown` status.  `mode="no-hw"` in `smc_build_info`
 signals this.
 
+**Cross-arch inspection (`--arch-prefix`)**
+When a cross-arch toolchain prefix is passed, the script suppresses the host
+CPU metadata so it does not get mixed with data from a different-arch target
+kernel: `smc_cpu_info` is not emitted, the same as under `--no-hw`.
+
 **Hardware-only mode (`--hw-only`)**
 Only hardware detection is performed; CVE checks are skipped.  `smc_cpu_info`
-is emitted but no `smc_vuln` metrics appear.  `mode="hw-only"` in
+is emitted but no `smc_vulnerability_status` metrics appear (and
+`smc_vulnerable_count` / `smc_unknown_count` are `0`).  `mode="hw-only"` in
 `smc_build_info` signals this.
 
 **`--sysfs-only`**

@@ -51,6 +51,7 @@ STATUS: summary | perfdata
 | VULN + UNK | `N/T CVE(s) vulnerable: CVE-A CVE-B ..., M inconclusive` |
 | UNK only | `N/T CVE checks inconclusive` |
 | Non-root + VULN | `N/T CVE(s) appear vulnerable (unconfirmed, not root): CVE-A ...` |
+| Non-root + VULN + UNK | `N/T CVE(s) appear vulnerable (unconfirmed, not root): CVE-A ..., M inconclusive` |
 
 ### Lines 2+ (long output)
 
@@ -59,14 +60,18 @@ Never parsed by the monitoring core; safe to add or reorder.
 
 #### Context notes
 
-Printed before per-CVE details when applicable:
+Printed before per-CVE details when applicable.  Notes are emitted in this
+order when more than one applies:
 
 | Note | Condition |
 |---|---|
 | `NOTE: paranoid mode active, stricter mitigation requirements applied` | `--paranoid` was used |
-| `NOTE: hypervisor host detected (reason); L1TF/MDS severity is elevated` | System is a VM host (KVM, Xen, VMware…) |
+| `NOTE: hypervisor host detected (reason); L1TF/MDS severity is elevated` | System is detected as a VM host (KVM, Xen, VMware…) |
 | `NOTE: not a hypervisor host` | System is confirmed not a VM host |
 | `NOTE: not running as root; MSR reads skipped, results may be incomplete` | Script ran without root privileges |
+
+When VMM detection did not run (e.g. `--no-hw`), neither the
+`hypervisor host detected` nor the `not a hypervisor host` note is printed.
 
 #### Per-CVE detail lines
 
