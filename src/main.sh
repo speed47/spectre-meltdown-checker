@@ -43,10 +43,19 @@ if [ "$g_mode" = hw-only ]; then
     pr_info "Hardware-only mode, skipping vulnerability checks"
 else
     for cve in $g_supported_cve_list; do
-        if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
-            check_"$(echo "$cve" | tr - _)"
-            pr_info
+        # In a default "all CVEs" run, skip checks whose arch tag doesn't match
+        # the host CPU or the inspected kernel. Explicit --cve/--variant/--errata
+        # selection bypasses the gate.
+        if [ "$opt_cve_all" = 1 ]; then
+            if ! _is_cve_relevant_arch "$cve"; then
+                pr_debug "main: skipping $cve (arch tag not relevant)"
+                continue
+            fi
+        elif ! echo "$opt_cve_list" | grep -qw "$cve"; then
+            continue
         fi
+        check_"$(echo "$cve" | tr - _)"
+        pr_info
     done
 fi # g_mode != hw-only
 

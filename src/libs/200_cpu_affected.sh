@@ -27,6 +27,36 @@ _infer_immune() { eval "[ -z \"\$affected_$1\" ] && affected_$1=1 || :"; }
 # Use for: family-level catch-all fallbacks (Intel L1TF non-whitelist, itlbmh non-whitelist).
 _infer_vuln() { eval "[ -z \"\$affected_$1\" ] && affected_$1=0 || :"; }
 
+# Return 0 (true) if a CVE's arch tag matches the current context (host CPU
+# and/or target kernel), so the check is worth running. Untagged CVEs are
+# always relevant.
+# - In no-hw mode the host CPU is ignored: gate only on target kernel arch.
+# - Otherwise a match on either the host CPU or the target kernel is enough
+#   (they normally agree in live mode; if they disagree, check_kernel_cpu_arch_mismatch
+#    has already forced no-hw, handled by the branch above).
+# Args: $1=cve_id
+# Callers: src/main.sh (CVE dispatch loop), check_cpu_vulnerabilities
+_is_cve_relevant_arch() {
+    local arch
+    arch=$(_cve_registry_field "$1" 5)
+    # Untagged CVE: always relevant
+    [ -z "$arch" ] && return 0
+    case "$arch" in
+        x86)
+            [ "$g_mode" != no-hw ] && is_x86_cpu && return 0
+            is_x86_kernel && return 0
+            return 1
+            ;;
+        arm)
+            [ "$g_mode" != no-hw ] && is_arm_cpu && return 0
+            is_arm_kernel && return 0
+            return 1
+            ;;
+    esac
+    # Unknown tag value: don't gate (fail open)
+    return 0
+}
+
 # Return the cached affected_* status for a given CVE
 # Args: $1=cve_id
 # Returns: 0 if affected, 1 if not affected

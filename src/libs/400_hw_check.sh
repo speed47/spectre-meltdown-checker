@@ -1367,11 +1367,19 @@ check_cpu() {
     fi
 }
 
-# Display per-CVE CPU vulnerability status based on CPU model/family
+# Display per-CVE CPU vulnerability status based on CPU model/family.
+# Mirrors the main dispatch gate: under a default "all CVEs" run, skip CVEs
+# whose arch tag doesn't match this system. Explicit selection via
+# --cve/--variant/--errata bypasses the gate.
 check_cpu_vulnerabilities() {
     local cve
     pr_info "* CPU vulnerability to the speculative execution attack variants"
     for cve in $g_supported_cve_list; do
+        if [ "$opt_cve_all" = 1 ]; then
+            _is_cve_relevant_arch "$cve" || continue
+        elif ! echo "$opt_cve_list" | grep -qw "$cve"; then
+            continue
+        fi
         pr_info_nol "  * Affected by $cve ($(cve2name "$cve")): "
         if is_cpu_affected "$cve"; then
             pstatus yellow YES
