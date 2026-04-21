@@ -106,6 +106,10 @@ is_cpu_affected() {
     affected_srbds=''
     affected_mmio=''
     affected_sls=''
+    # ARM64 speculation-related errata (ARM Ltd, implementer 0x41); non-ARM systems are immune below.
+    affected_arm_spec_at=''
+    affected_arm_spec_unpriv_load=''
+    affected_arm_ssbs_nosync=''
     # DIV0, FPDSS, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
     _set_immune div0
     _set_immune fpdss
@@ -827,6 +831,77 @@ is_cpu_affected() {
         _infer_immune sls
     fi
 
+    # ARM64 silicon errata (speculation/security-relevant, no CVE assignments).
+    # References: arch/arm64/Kconfig (ARM64_ERRATUM_*), arch/arm64/kernel/cpu_errata.c MIDR lists.
+    # Iterates per-core (impl, part, variant, revision) tuples. Implementers currently handled:
+    #   0x41 ARM Ltd; 0x51 Qualcomm (Kryo4xx Silver for erratum 1530923).
+    # Revision ranges mirror the kernel's MIDR_RANGE/MIDR_REV_RANGE/MIDR_REV macros. A variant
+    # 'v' and revision 'p' are packed as (v<<4)|p for range compares — equivalent to the kernel's
+    # layout (MIDR_VARIANT_SHIFT=20, MIDR_REVISION_MASK=0xf) under the same order semantics.
+    # Unknown variant/revision ⇒ treat as in range (whitelist principle, DEVELOPMENT.md rule 5).
+    if [ -n "$cpu_part_list" ]; then
+        i=0
+        for cpupart in $cpu_part_list; do
+            i=$((i + 1))
+            # shellcheck disable=SC2086
+            cpuimpl=$(echo $cpu_impl_list | awk '{print $'$i'}')
+            # shellcheck disable=SC2086
+            cpuvar=$(echo $cpu_variant_list | awk '{print $'$i'}')
+            # shellcheck disable=SC2086
+            cpurev=$(echo $cpu_revision_list | awk '{print $'$i'}')
+            packed=''
+            [ -n "$cpuvar" ] && [ -n "$cpurev" ] && packed=$(((cpuvar << 4) | cpurev))
+
+            # Speculative AT TLB corruption (errata 1165522, 1319367, 1319537, 1530923)
+            if [ "$cpuimpl" = 0x41 ]; then
+                if echo "$cpupart" | grep -q -w -e 0xd07 -e 0xd08; then
+                    # Cortex-A57 (0xd07) / A72 (0xd08): all revisions
+                    _set_vuln arm_spec_at
+                elif echo "$cpupart" | grep -q -w -e 0xd05 -e 0xd0b; then
+                    # Cortex-A55 (0xd05) / A76 (0xd0b): r0p0..r2p0  (packed 0..32)
+                    if [ -z "$packed" ] || [ "$packed" -le 32 ]; then
+                        _set_vuln arm_spec_at
+                    fi
+                fi
+            elif [ "$cpuimpl" = 0x51 ] && [ "$cpupart" = 0x805 ]; then
+                # Qualcomm Kryo4xx Silver: kernel matches MIDR_REV(var 0xd, rev 0xe) only — packed 0xde = 222
+                if [ -z "$packed" ] || [ "$packed" = 222 ]; then
+                    _set_vuln arm_spec_at
+                fi
+            fi
+
+            # Speculative unprivileged load (errata 2966298 A520, 3117295 A510) — ARM Ltd only
+            if [ "$cpuimpl" = 0x41 ]; then
+                if [ "$cpupart" = 0xd46 ]; then
+                    # Cortex-A510: all revisions
+                    _set_vuln arm_spec_unpriv_load
+                elif [ "$cpupart" = 0xd80 ]; then
+                    # Cortex-A520: r0p0..r0p1  (packed 0..1)
+                    if [ -z "$packed" ] || [ "$packed" -le 1 ]; then
+                        _set_vuln arm_spec_unpriv_load
+                    fi
+                fi
+            fi
+
+            # MSR SSBS not self-synchronizing (erratum 3194386 + siblings) — ARM Ltd only, all revisions.
+            # A76/A77/A78/A78C/A710/A715/A720/A720AE/A725, X1/X1C/X2/X3/X4/X925, N1/N2/N3, V1/V2/V3/V3AE
+            if [ "$cpuimpl" = 0x41 ]; then
+                if echo "$cpupart" | grep -q -w \
+                    -e 0xd0b -e 0xd0d -e 0xd41 -e 0xd4b \
+                    -e 0xd47 -e 0xd4d -e 0xd81 -e 0xd89 -e 0xd87 \
+                    -e 0xd44 -e 0xd4c -e 0xd48 -e 0xd4e -e 0xd82 -e 0xd85 \
+                    -e 0xd0c -e 0xd49 -e 0xd8e \
+                    -e 0xd40 -e 0xd4f -e 0xd84 -e 0xd83; then
+                    _set_vuln arm_ssbs_nosync
+                fi
+            fi
+        done
+    fi
+    # Default everything else to immune (covers non-ARM, and ARM cores not in the affected lists)
+    _infer_immune arm_spec_at
+    _infer_immune arm_spec_unpriv_load
+    _infer_immune arm_ssbs_nosync
+
     # shellcheck disable=SC2154
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
@@ -834,6 +909,7 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
         pr_debug "is_cpu_affected: final results: div0=$affected_div0 fpdss=$affected_fpdss zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
         pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls mmio=$affected_mmio"
+        pr_debug "is_cpu_affected: final results: arm_spec_at=$affected_arm_spec_at arm_spec_unpriv_load=$affected_arm_spec_unpriv_load arm_ssbs_nosync=$affected_arm_ssbs_nosync"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow

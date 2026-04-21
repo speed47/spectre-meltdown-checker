@@ -24,6 +24,9 @@ show_usage() {
 					can be used multiple times (e.g. --variant 3a --variant l1tf). For a list use 'help'.
 		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
 					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
+		--errata NUMBER		specify a vendor-numbered erratum (e.g. ARM64 erratum 1530923) that has no CVE
+					assigned. Maps the erratum to the corresponding check. For a list use 'help'.
+					Can be used multiple times (e.g. --errata 1530923 --errata 3194386).
 
 	Check scope:
 		--no-sysfs		don't use the /sys interface even if present [Linux]
@@ -154,9 +157,12 @@ g_smc_cpu_info_line=''
 # CVE Registry: single source of truth for all CVE metadata.
 # Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases
 #
-# Two ranges of placeholder IDs are reserved when no real CVE applies:
+# Three ranges of placeholder IDs are reserved when no real CVE applies:
 #   CVE-0000-NNNN: permanent placeholder for supplementary checks (--extra only)
 #                  that will never receive a real CVE (e.g. SLS, compile-time hardening).
+#   CVE-0001-NNNN: permanent placeholder for vendor-numbered errata that will never
+#                  receive a CVE (e.g. ARM64 silicon errata tracked only by erratum ID).
+#                  Selectable via --errata <number>.
 #   CVE-9999-NNNN: temporary placeholder for real vulnerabilities awaiting CVE
 #                  assignment. Rename across the codebase once the real CVE is issued.
 readonly CVE_REGISTRY='
@@ -193,6 +199,9 @@ CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
 CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
 CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
 CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
+CVE-0001-0001|ARM SPEC AT|arm_spec_at|ARM64 errata 1165522/1319367/1319537/1530923, Speculative AT TLB corruption
+CVE-0001-0002|ARM SPEC UNPRIV LOAD|arm_spec_unpriv_load|ARM64 errata 2966298/3117295, Speculative unprivileged load
+CVE-0001-0003|ARM SSBS NOSYNC|arm_ssbs_nosync|ARM64 erratum 3194386, MSR SSBS not self-synchronizing
 '
 
 # Derive the supported CVE list from the registry
