@@ -55,3 +55,21 @@ is_xen_domU() {
         return 1
     fi
 }
+
+# Check whether the system is running as a guest inside a virtual machine.
+# Uses the 'hypervisor' CPUID feature flag exposed in /proc/cpuinfo by KVM,
+# VMware, Hyper-V, VirtualBox, and most other type-1 and type-2 hypervisors.
+# Returns: 0 if running as a VM guest, 1 otherwise
+# Sets: g_is_guest_vm (1=guest, 0=not a guest), g_is_guest_vm_reason
+is_running_as_guest() {
+    if [ "${g_is_guest_vm_cached:-0}" != 1 ]; then
+        g_is_guest_vm=0
+        g_is_guest_vm_reason=''
+        if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
+            g_is_guest_vm=1
+            g_is_guest_vm_reason="'hypervisor' flag in $g_procfs/cpuinfo"
+        fi
+        g_is_guest_vm_cached=1
+    fi
+    [ "$g_is_guest_vm" = 1 ]
+}

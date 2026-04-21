@@ -388,6 +388,30 @@ check_kernel_info() {
 check_cpu() {
     local capabilities ret spec_ctrl_msr codename ucode_str
 
+    if is_arm_cpu; then
+        pr_info "* CPU details"
+        pr_info "  * Vendor: $cpu_vendor"
+        pr_info "  * Model name: $cpu_friendly_name"
+        if [ -n "${cpu_impl_list:-}" ]; then
+            pr_info "  * Implementer(s): $cpu_impl_list"
+        fi
+        if [ -n "${cpu_part_list:-}" ]; then
+            pr_info "  * Part(s): $cpu_part_list"
+        fi
+        if [ -n "${cpu_arch_list:-}" ]; then
+            pr_info "  * Architecture(s): $cpu_arch_list"
+        fi
+        if has_runtime; then
+            pr_info_nol "  * Running as VM guest: "
+            if is_running_as_guest; then
+                pstatus yellow YES "$g_is_guest_vm_reason"
+            else
+                pstatus green NO
+            fi
+        fi
+        return
+    fi
+
     if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
         return
     fi
@@ -413,6 +437,15 @@ check_cpu() {
         codename=$(get_intel_codename)
         if [ -n "$codename" ]; then
             pr_info "  * Codename: $codename"
+        fi
+    fi
+
+    if has_runtime; then
+        pr_info_nol "  * Running as VM guest: "
+        if is_running_as_guest; then
+            pstatus yellow YES "$g_is_guest_vm_reason"
+        else
+            pstatus green NO
         fi
     fi
 
@@ -1364,6 +1397,13 @@ check_cpu() {
         pstatus red NO "$ret_is_latest_known_ucode_latest"
     else
         pstatus blue UNKNOWN "$ret_is_latest_known_ucode_latest"
+    fi
+    if is_running_as_guest; then
+        pr_warn
+        pr_warn "Note: this system is running inside a VM ($g_is_guest_vm_reason)."
+        pr_warn "The hypervisor may be faking the CPU model and microcode version;"
+        pr_warn "verify the above microcode information on the hypervisor host for accuracy."
+        pr_warn
     fi
 }
 
