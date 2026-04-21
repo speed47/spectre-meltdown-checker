@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.33.0420863'
+VERSION='26.36.0421288'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -79,6 +79,9 @@ show_usage() {
 					can be used multiple times (e.g. --variant 3a --variant l1tf). For a list use 'help'.
 		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
 					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
+		--errata NUMBER		specify a vendor-numbered erratum (e.g. ARM64 erratum 1530923) that has no CVE
+					assigned. Maps the erratum to the corresponding check. For a list use 'help'.
+					Can be used multiple times (e.g. --errata 1530923 --errata 3194386).
 
 	Check scope:
 		--no-sysfs		don't use the /sys interface even if present [Linux]
@@ -207,47 +210,61 @@ g_smc_system_info_line=''
 g_smc_cpu_info_line=''
 
 # CVE Registry: single source of truth for all CVE metadata.
-# Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases
+# Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases|arch
 #
-# Two ranges of placeholder IDs are reserved when no real CVE applies:
+# The optional `arch` field gates whether the check is run at all, based on the
+# host CPU architecture and the inspected kernel architecture. Values:
+#   x86      - only relevant when host CPU or inspected kernel is x86/amd64
+#   arm      - only relevant when host CPU or inspected kernel is ARM/ARM64
+#   (empty)  - always relevant (shared logic across architectures, e.g. Spectre V1-V4)
+# The gate only applies to default "all CVEs" runs; explicit --cve/--variant/--errata
+# selection bypasses it (if the user asks for it, they get it regardless of arch).
+#
+# Three ranges of placeholder IDs are reserved when no real CVE applies:
 #   CVE-0000-NNNN: permanent placeholder for supplementary checks (--extra only)
 #                  that will never receive a real CVE (e.g. SLS, compile-time hardening).
+#   CVE-0001-NNNN: permanent placeholder for vendor-numbered errata that will never
+#                  receive a CVE (e.g. ARM64 silicon errata tracked only by erratum ID).
+#                  Selectable via --errata <number>.
 #   CVE-9999-NNNN: temporary placeholder for real vulnerabilities awaiting CVE
 #                  assignment. Rename across the codebase once the real CVE is issued.
 readonly CVE_REGISTRY='
-CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass
-CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection
-CVE-2017-5754|MELTDOWN|variant3|Variant 3, Meltdown, rogue data cache load
-CVE-2018-3640|VARIANT 3A|variant3a|Variant 3a, rogue system register read
-CVE-2018-3639|VARIANT 4|variant4|Variant 4, speculative store bypass
-CVE-2018-3615|L1TF SGX|variantl1tf_sgx|Foreshadow (SGX), L1 terminal fault
-CVE-2018-3620|L1TF OS|variantl1tf|Foreshadow-NG (OS), L1 terminal fault
-CVE-2018-3646|L1TF VMM|variantl1tf|Foreshadow-NG (VMM), L1 terminal fault
-CVE-2018-12126|MSBDS|msbds|Fallout, microarchitectural store buffer data sampling (MSBDS)
-CVE-2018-12130|MFBDS|mfbds|ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)
-CVE-2018-12127|MLPDS|mlpds|RIDL, microarchitectural load port data sampling (MLPDS)
-CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable memory (MDSUM)
-CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)
-CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)
-CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)
-CVE-2022-21123|SBDR|mmio|Shared Buffers Data Read (SBDR), MMIO Stale Data
-CVE-2022-21125|SBDS|mmio|Shared Buffers Data Sampling (SBDS), MMIO Stale Data
-CVE-2022-21166|DRPW|mmio|Device Register Partial Write (DRPW), MMIO Stale Data
-CVE-2023-20588|DIV0|div0|Division by Zero, AMD Zen1 speculative data leak
-CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
-CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
-CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)
-CVE-2022-29901|RETBLEED INTEL|retbleed|Retbleed, arbitrary speculative code execution with return instructions (Intel)
-CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)
-CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue
-CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
-CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
-CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)
-CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
-CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
-CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
-CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
-CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
+CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass|
+CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection|
+CVE-2017-5754|MELTDOWN|variant3|Variant 3, Meltdown, rogue data cache load|
+CVE-2018-3640|VARIANT 3A|variant3a|Variant 3a, rogue system register read|
+CVE-2018-3639|VARIANT 4|variant4|Variant 4, speculative store bypass|
+CVE-2018-3615|L1TF SGX|variantl1tf_sgx|Foreshadow (SGX), L1 terminal fault|x86
+CVE-2018-3620|L1TF OS|variantl1tf|Foreshadow-NG (OS), L1 terminal fault|x86
+CVE-2018-3646|L1TF VMM|variantl1tf|Foreshadow-NG (VMM), L1 terminal fault|x86
+CVE-2018-12126|MSBDS|msbds|Fallout, microarchitectural store buffer data sampling (MSBDS)|x86
+CVE-2018-12130|MFBDS|mfbds|ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)|x86
+CVE-2018-12127|MLPDS|mlpds|RIDL, microarchitectural load port data sampling (MLPDS)|x86
+CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable memory (MDSUM)|x86
+CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)|x86
+CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)|x86
+CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)|x86
+CVE-2022-21123|SBDR|mmio|Shared Buffers Data Read (SBDR), MMIO Stale Data|x86
+CVE-2022-21125|SBDS|mmio|Shared Buffers Data Sampling (SBDS), MMIO Stale Data|x86
+CVE-2022-21166|DRPW|mmio|Device Register Partial Write (DRPW), MMIO Stale Data|x86
+CVE-2023-20588|DIV0|div0|Division by Zero, AMD Zen1 speculative data leak|x86
+CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak|x86
+CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)|x86
+CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)|x86
+CVE-2022-29901|RETBLEED INTEL|retbleed|Retbleed, arbitrary speculative code execution with return instructions (Intel)|x86
+CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)|x86
+CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue|x86
+CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)|x86
+CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)|x86
+CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)|x86
+CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction|x86
+CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)|x86
+CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)|x86
+CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)|
+CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak|x86
+CVE-0001-0001|ARM SPEC AT|arm_spec_at|ARM64 errata 1165522/1319367/1319537/1530923, Speculative AT TLB corruption|arm
+CVE-0001-0002|ARM SPEC UNPRIV LOAD|arm_spec_unpriv_load|ARM64 errata 2966298/3117295, Speculative unprivileged load|arm
+CVE-0001-0003|ARM SSBS NOSYNC|arm_ssbs_nosync|ARM64 erratum 3194386, MSR SSBS not self-synchronizing|arm
 '
 
 # Derive the supported CVE list from the registry
@@ -666,6 +683,36 @@ _infer_immune() { eval "[ -z \"\$affected_$1\" ] && affected_$1=1 || :"; }
 # Use for: family-level catch-all fallbacks (Intel L1TF non-whitelist, itlbmh non-whitelist).
 _infer_vuln() { eval "[ -z \"\$affected_$1\" ] && affected_$1=0 || :"; }
 
+# Return 0 (true) if a CVE's arch tag matches the current context (host CPU
+# and/or target kernel), so the check is worth running. Untagged CVEs are
+# always relevant.
+# - In no-hw mode the host CPU is ignored: gate only on target kernel arch.
+# - Otherwise a match on either the host CPU or the target kernel is enough
+#   (they normally agree in live mode; if they disagree, check_kernel_cpu_arch_mismatch
+#    has already forced no-hw, handled by the branch above).
+# Args: $1=cve_id
+# Callers: src/main.sh (CVE dispatch loop), check_cpu_vulnerabilities
+_is_cve_relevant_arch() {
+    local arch
+    arch=$(_cve_registry_field "$1" 5)
+    # Untagged CVE: always relevant
+    [ -z "$arch" ] && return 0
+    case "$arch" in
+        x86)
+            [ "$g_mode" != no-hw ] && is_x86_cpu && return 0
+            is_x86_kernel && return 0
+            return 1
+            ;;
+        arm)
+            [ "$g_mode" != no-hw ] && is_arm_cpu && return 0
+            is_arm_kernel && return 0
+            return 1
+            ;;
+    esac
+    # Unknown tag value: don't gate (fail open)
+    return 0
+}
+
 # Return the cached affected_* status for a given CVE
 # Args: $1=cve_id
 # Returns: 0 if affected, 1 if not affected
@@ -745,6 +792,10 @@ is_cpu_affected() {
     affected_srbds=''
     affected_mmio=''
     affected_sls=''
+    # ARM64 speculation-related errata (ARM Ltd, implementer 0x41); non-ARM systems are immune below.
+    affected_arm_spec_at=''
+    affected_arm_spec_unpriv_load=''
+    affected_arm_ssbs_nosync=''
     # DIV0, FPDSS, Zenbleed and Inception are all AMD specific, look for "is_amd" below:
     _set_immune div0
     _set_immune fpdss
@@ -1466,6 +1517,77 @@ is_cpu_affected() {
         _infer_immune sls
     fi
 
+    # ARM64 silicon errata (speculation/security-relevant, no CVE assignments).
+    # References: arch/arm64/Kconfig (ARM64_ERRATUM_*), arch/arm64/kernel/cpu_errata.c MIDR lists.
+    # Iterates per-core (impl, part, variant, revision) tuples. Implementers currently handled:
+    #   0x41 ARM Ltd; 0x51 Qualcomm (Kryo4xx Silver for erratum 1530923).
+    # Revision ranges mirror the kernel's MIDR_RANGE/MIDR_REV_RANGE/MIDR_REV macros. A variant
+    # 'v' and revision 'p' are packed as (v<<4)|p for range compares — equivalent to the kernel's
+    # layout (MIDR_VARIANT_SHIFT=20, MIDR_REVISION_MASK=0xf) under the same order semantics.
+    # Unknown variant/revision ⇒ treat as in range (whitelist principle, DEVELOPMENT.md rule 5).
+    if [ -n "$cpu_part_list" ]; then
+        i=0
+        for cpupart in $cpu_part_list; do
+            i=$((i + 1))
+            # shellcheck disable=SC2086
+            cpuimpl=$(echo $cpu_impl_list | awk '{print $'$i'}')
+            # shellcheck disable=SC2086
+            cpuvar=$(echo $cpu_variant_list | awk '{print $'$i'}')
+            # shellcheck disable=SC2086
+            cpurev=$(echo $cpu_revision_list | awk '{print $'$i'}')
+            packed=''
+            [ -n "$cpuvar" ] && [ -n "$cpurev" ] && packed=$(((cpuvar << 4) | cpurev))
+
+            # Speculative AT TLB corruption (errata 1165522, 1319367, 1319537, 1530923)
+            if [ "$cpuimpl" = 0x41 ]; then
+                if echo "$cpupart" | grep -q -w -e 0xd07 -e 0xd08; then
+                    # Cortex-A57 (0xd07) / A72 (0xd08): all revisions
+                    _set_vuln arm_spec_at
+                elif echo "$cpupart" | grep -q -w -e 0xd05 -e 0xd0b; then
+                    # Cortex-A55 (0xd05) / A76 (0xd0b): r0p0..r2p0  (packed 0..32)
+                    if [ -z "$packed" ] || [ "$packed" -le 32 ]; then
+                        _set_vuln arm_spec_at
+                    fi
+                fi
+            elif [ "$cpuimpl" = 0x51 ] && [ "$cpupart" = 0x805 ]; then
+                # Qualcomm Kryo4xx Silver: kernel matches MIDR_REV(var 0xd, rev 0xe) only — packed 0xde = 222
+                if [ -z "$packed" ] || [ "$packed" = 222 ]; then
+                    _set_vuln arm_spec_at
+                fi
+            fi
+
+            # Speculative unprivileged load (errata 2966298 A520, 3117295 A510) — ARM Ltd only
+            if [ "$cpuimpl" = 0x41 ]; then
+                if [ "$cpupart" = 0xd46 ]; then
+                    # Cortex-A510: all revisions
+                    _set_vuln arm_spec_unpriv_load
+                elif [ "$cpupart" = 0xd80 ]; then
+                    # Cortex-A520: r0p0..r0p1  (packed 0..1)
+                    if [ -z "$packed" ] || [ "$packed" -le 1 ]; then
+                        _set_vuln arm_spec_unpriv_load
+                    fi
+                fi
+            fi
+
+            # MSR SSBS not self-synchronizing (erratum 3194386 + siblings) — ARM Ltd only, all revisions.
+            # A76/A77/A78/A78C/A710/A715/A720/A720AE/A725, X1/X1C/X2/X3/X4/X925, N1/N2/N3, V1/V2/V3/V3AE
+            if [ "$cpuimpl" = 0x41 ]; then
+                if echo "$cpupart" | grep -q -w \
+                    -e 0xd0b -e 0xd0d -e 0xd41 -e 0xd4b \
+                    -e 0xd47 -e 0xd4d -e 0xd81 -e 0xd89 -e 0xd87 \
+                    -e 0xd44 -e 0xd4c -e 0xd48 -e 0xd4e -e 0xd82 -e 0xd85 \
+                    -e 0xd0c -e 0xd49 -e 0xd8e \
+                    -e 0xd40 -e 0xd4f -e 0xd84 -e 0xd83; then
+                    _set_vuln arm_ssbs_nosync
+                fi
+            fi
+        done
+    fi
+    # Default everything else to immune (covers non-ARM, and ARM cores not in the affected lists)
+    _infer_immune arm_spec_at
+    _infer_immune arm_spec_unpriv_load
+    _infer_immune arm_ssbs_nosync
+
     # shellcheck disable=SC2154
     {
         pr_debug "is_cpu_affected: final results: variant1=$affected_variant1 variant2=$affected_variant2 variant3=$affected_variant3 variant3a=$affected_variant3a"
@@ -1473,6 +1595,7 @@ is_cpu_affected() {
         pr_debug "is_cpu_affected: final results: mlpds=$affected_mlpds mdsum=$affected_mdsum taa=$affected_taa itlbmh=$affected_itlbmh srbds=$affected_srbds"
         pr_debug "is_cpu_affected: final results: div0=$affected_div0 fpdss=$affected_fpdss zenbleed=$affected_zenbleed inception=$affected_inception retbleed=$affected_retbleed tsa=$affected_tsa downfall=$affected_downfall reptar=$affected_reptar rfds=$affected_rfds its=$affected_its"
         pr_debug "is_cpu_affected: final results: vmscape=$affected_vmscape bpi=$affected_bpi sls=$affected_sls mmio=$affected_mmio"
+        pr_debug "is_cpu_affected: final results: arm_spec_at=$affected_arm_spec_at arm_spec_unpriv_load=$affected_arm_spec_unpriv_load arm_ssbs_nosync=$affected_arm_ssbs_nosync"
     }
     affected_variantl1tf_sgx="$affected_variantl1tf"
     # even if we are affected to L1TF, if there's no SGX, we're not affected to the original foreshadow
@@ -2185,7 +2308,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, fpdss, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, fpdss, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls, arm-spec-at, arm-spec-unpriv-load, arm-ssbs-nosync"
                 exit 0
                 ;;
             1)
@@ -2316,8 +2439,56 @@ while [ -n "${1:-}" ]; do
                 opt_cve_list="$opt_cve_list CVE-0000-0001"
                 opt_cve_all=0
                 ;;
+            arm-spec-at)
+                opt_cve_list="$opt_cve_list CVE-0001-0001"
+                opt_cve_all=0
+                ;;
+            arm-spec-unpriv-load)
+                opt_cve_list="$opt_cve_list CVE-0001-0002"
+                opt_cve_all=0
+                ;;
+            arm-ssbs-nosync)
+                opt_cve_list="$opt_cve_list CVE-0001-0003"
+                opt_cve_all=0
+                ;;
             *)
                 echo "$0: error: invalid parameter '$2' for --variant, see --variant help for a list" >&2
+                exit 255
+                ;;
+        esac
+        shift 2
+    elif [ "$1" = "--errata" ]; then
+        # Vendor-numbered errata selector (currently ARM64). Maps an erratum number
+        # (e.g. 1530923) to the CVE-0001-NNNN check that covers it.
+        if [ -z "$2" ]; then
+            echo "$0: error: option --errata expects a parameter (an erratum number, e.g. 1530923, or 'help')" >&2
+            exit 255
+        fi
+        case "$2" in
+            help)
+                echo "The following erratum numbers are supported for --errata (can be used multiple times):"
+                echo "  Speculative AT TLB corruption:       1165522, 1319367, 1319537, 1530923"
+                echo "  Speculative unprivileged load:       2966298, 3117295"
+                echo "  MSR SSBS not self-synchronizing:     3194386 (and siblings: 3312417, 3324334, 3324335,"
+                echo "                                       3324336, 3324338, 3324339, 3324341, 3324344, 3324346,"
+                echo "                                       3324347, 3324348, 3324349, 3456084, 3456091, 3456106,"
+                echo "                                       3456111)"
+                exit 0
+                ;;
+            1165522 | 1319367 | 1319537 | 1530923)
+                opt_cve_list="$opt_cve_list CVE-0001-0001"
+                opt_cve_all=0
+                ;;
+            2966298 | 3117295)
+                opt_cve_list="$opt_cve_list CVE-0001-0002"
+                opt_cve_all=0
+                ;;
+            3194386 | 3312417 | 3324334 | 3324335 | 3324336 | 3324338 | 3324339 | 3324341 | 3324344 | 3324346 | 3324347 | 3324348 | 3324349 | 3456084 | 3456091 | 3456106 | 3456111)
+                opt_cve_list="$opt_cve_list CVE-0001-0003"
+                opt_cve_all=0
+                ;;
+            *)
+                echo "$0: error: unsupported erratum number '$2' for --errata, see --errata help for a list" >&2
                 exit 255
                 ;;
         esac
@@ -3756,13 +3927,22 @@ parse_cpu_details() {
         if grep -qw avx512 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx512=1; fi
         cpu_vendor=$(grep '^vendor_id' "$g_procfs/cpuinfo" | awk '{print $3}' | head -n1)
         cpu_friendly_name=$(grep '^model name' "$g_procfs/cpuinfo" | cut -d: -f2- | head -n1 | sed -e 's/^ *//')
-        # special case for ARM follows
-        if grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' "$g_procfs/cpuinfo"; then
-            cpu_vendor='ARM'
-            # some devices (phones or other) have several ARMs and as such different part numbers,
-            # an example is "bigLITTLE", so we need to store the whole list, this is needed for is_cpu_affected
+        # ARM-style cpuinfo: parse per-core implementer/part/arch/variant/revision lists
+        # (big.LITTLE / heterogeneous systems have different values per core).
+        # cpu_variant_list and cpu_revision_list are consumed by ARM64 errata affection checks
+        # that need to match a specific revision range.
+        if grep -q 'CPU implementer' "$g_procfs/cpuinfo"; then
+            cpu_impl_list=$(awk '/CPU implementer/ {print $4}' "$g_procfs/cpuinfo")
             cpu_part_list=$(awk '/CPU part/         {print $4}' "$g_procfs/cpuinfo")
             cpu_arch_list=$(awk '/CPU architecture/ {print $3}' "$g_procfs/cpuinfo")
+            cpu_variant_list=$(awk '/CPU variant/   {print $4}' "$g_procfs/cpuinfo")
+            cpu_revision_list=$(awk '/CPU revision/ {print $4}' "$g_procfs/cpuinfo")
+        fi
+        # Map first-seen implementer to cpu_vendor; note that heterogeneous systems
+        # (e.g. DynamIQ with ARM+Kryo cores) would all map to one vendor here, but
+        # per-core vendor decisions are made via cpu_impl_list where needed.
+        if grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' "$g_procfs/cpuinfo"; then
+            cpu_vendor='ARM'
             # take the first one to fill the friendly name, do NOT quote the vars below
             # shellcheck disable=SC2086
             arch=$(echo $cpu_arch_list | awk '{ print $1 }')
@@ -5832,11 +6012,19 @@ check_cpu() {
     fi
 }
 
-# Display per-CVE CPU vulnerability status based on CPU model/family
+# Display per-CVE CPU vulnerability status based on CPU model/family.
+# Mirrors the main dispatch gate: under a default "all CVEs" run, skip CVEs
+# whose arch tag doesn't match this system. Explicit selection via
+# --cve/--variant/--errata bypasses the gate.
 check_cpu_vulnerabilities() {
     local cve
     pr_info "* CPU vulnerability to the speculative execution attack variants"
     for cve in $g_supported_cve_list; do
+        if [ "$opt_cve_all" = 1 ]; then
+            _is_cve_relevant_arch "$cve" || continue
+        elif ! echo "$opt_cve_list" | grep -qw "$cve"; then
+            continue
+        fi
         pr_info_nol "  * Affected by $cve ($(cve2name "$cve")): "
         if is_cpu_affected "$cve"; then
             pstatus yellow YES
@@ -6856,6 +7044,238 @@ check_CVE_0000_0001() {
         return 0
     fi
     check_cve 'CVE-0000-0001'
+}
+
+# >>>>>> vulns/CVE-0001-0001.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-0001-0001, ARM SPEC AT, ARM64 errata 1165522/1319367/1319537/1530923, Speculative AT TLB corruption
+
+check_CVE_0001_0001() {
+    check_cve 'CVE-0001-0001'
+}
+
+# On affected cores, a speculative address translation (AT) instruction issued from the hypervisor
+# using an out-of-context translation regime may poison the TLB, causing a subsequent guest-context
+# request to see an incorrect translation. Relevant mainly to KVM hosts. Kernel workaround:
+# invalidate TLB state across world-switch for affected cores (ARM64_WORKAROUND_SPECULATIVE_AT).
+#   * Cortex-A76 r0p0..r2p0   erratum 1165522   CONFIG_ARM64_ERRATUM_1165522
+#   * Cortex-A72 all revs     erratum 1319367   CONFIG_ARM64_ERRATUM_1319367
+#   * Cortex-A57 all revs     erratum 1319537   CONFIG_ARM64_ERRATUM_1319367 (same kconfig)
+#   * Cortex-A55 r0p0..r2p0   erratum 1530923   CONFIG_ARM64_ERRATUM_1530923
+# References:
+#   arch/arm64/Kconfig (ARM64_ERRATUM_{1165522,1319367,1530923})
+#   arch/arm64/kernel/cpu_errata.c (erratum_speculative_at_list, "ARM errata 1165522, 1319367, or 1530923")
+#   Cortex-A55 SDEN: https://developer.arm.com/documentation/SDEN-1301074/latest
+check_CVE_0001_0001_linux() {
+    local cve kernel_mitigated config_found
+    cve='CVE-0001-0001'
+    kernel_mitigated=''
+    config_found=''
+
+    if [ "$opt_sysfs_only" != 1 ] && is_arm_kernel; then
+        # kconfig: any of the three erratum config options implies the workaround is compiled in
+        if [ -n "$opt_config" ]; then
+            for erratum in 1165522 1319367 1530923; do
+                if grep -q "^CONFIG_ARM64_ERRATUM_$erratum=y" "$opt_config"; then
+                    config_found="${config_found:+$config_found, }$erratum"
+                fi
+            done
+            [ -n "$config_found" ] && kernel_mitigated="found CONFIG_ARM64_ERRATUM_$config_found=y in kernel config"
+        fi
+        # kernel image: look for the descriptor string the kernel prints at boot
+        if [ -z "$kernel_mitigated" ] && [ -n "$g_kernel" ]; then
+            if "${opt_arch_prefix}strings" "$g_kernel" 2>/dev/null | grep -qE 'ARM errata 1165522, 1319367'; then
+                kernel_mitigated="found erratum descriptor string in kernel image"
+            fi
+        fi
+        # live mode: dmesg prints the workaround once at boot
+        if [ -z "$kernel_mitigated" ] && [ "$g_mode" = live ]; then
+            if dmesg 2>/dev/null | grep -qE 'ARM errata 1165522, 1319367'; then
+                kernel_mitigated="erratum workaround reported as applied in dmesg"
+            fi
+        fi
+
+        pr_info_nol "* Kernel has the ARM64 Speculative-AT workaround compiled in: "
+        if [ -n "$kernel_mitigated" ]; then
+            pstatus green YES "$kernel_mitigated"
+        else
+            pstatus yellow NO
+        fi
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU is not affected by this erratum family"
+    elif [ "$opt_sysfs_only" = 1 ]; then
+        pvulnstatus "$cve" UNK "no sysfs interface exists for this erratum, own checks have been skipped (--sysfs-only)"
+    elif [ -n "$kernel_mitigated" ]; then
+        pvulnstatus "$cve" OK "your kernel includes the erratum workaround"
+    else
+        pvulnstatus "$cve" VULN "your CPU is affected by this erratum family and the kernel does not appear to include the workaround"
+        explain "Run a kernel built with CONFIG_ARM64_ERRATUM_1165522=y, CONFIG_ARM64_ERRATUM_1319367=y, and/or CONFIG_ARM64_ERRATUM_1530923=y (matching your CPU core). These options are 'default y' in mainline and enabled by most distro kernels. Refer to the ARM Software Developers Errata Notice for your core for full details."
+    fi
+}
+
+check_CVE_0001_0001_bsd() {
+    local cve
+    cve='CVE-0001-0001'
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU is not affected by this erratum family"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-0001-0002.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-0001-0002, ARM SPEC UNPRIV LOAD, ARM64 errata 2966298/3117295, Speculative unprivileged load
+
+check_CVE_0001_0002() {
+    check_cve 'CVE-0001-0002'
+}
+
+# On affected cores, a speculatively-executed unprivileged load from a page that is mapped as
+# privileged can leak the loaded value into the cache hierarchy, allowing a Spectre-style
+# cache side-channel to expose privileged kernel data to userspace. Kernel workaround:
+# sandwich kernel-exit sequences with an additional speculation barrier/DSB so that
+# speculative unprivileged loads cannot observe privileged state
+# (ARM64_WORKAROUND_SPECULATIVE_UNPRIV_LOAD).
+#   * Cortex-A510 all revs    erratum 3117295   CONFIG_ARM64_ERRATUM_3117295
+#   * Cortex-A520 r0p0..r0p1  erratum 2966298   CONFIG_ARM64_ERRATUM_2966298
+# References:
+#   arch/arm64/Kconfig (ARM64_ERRATUM_{2966298,3117295})
+#   arch/arm64/kernel/cpu_errata.c (erratum_spec_unpriv_load_list, "ARM errata 2966298, 3117295")
+#   Cortex-A510 SDEN: https://developer.arm.com/documentation/SDEN-2397239/latest
+check_CVE_0001_0002_linux() {
+    local cve kernel_mitigated config_found erratum
+    cve='CVE-0001-0002'
+    kernel_mitigated=''
+    config_found=''
+
+    if [ "$opt_sysfs_only" != 1 ] && is_arm_kernel; then
+        if [ -n "$opt_config" ]; then
+            for erratum in 2966298 3117295; do
+                if grep -q "^CONFIG_ARM64_ERRATUM_$erratum=y" "$opt_config"; then
+                    config_found="${config_found:+$config_found, }$erratum"
+                fi
+            done
+            [ -n "$config_found" ] && kernel_mitigated="found CONFIG_ARM64_ERRATUM_$config_found=y in kernel config"
+        fi
+        if [ -z "$kernel_mitigated" ] && [ -n "$g_kernel" ]; then
+            if "${opt_arch_prefix}strings" "$g_kernel" 2>/dev/null | grep -qE 'ARM errata 2966298, 3117295'; then
+                kernel_mitigated="found erratum descriptor string in kernel image"
+            fi
+        fi
+        if [ -z "$kernel_mitigated" ] && [ "$g_mode" = live ]; then
+            if dmesg 2>/dev/null | grep -qE 'ARM errata 2966298, 3117295'; then
+                kernel_mitigated="erratum workaround reported as applied in dmesg"
+            fi
+        fi
+
+        pr_info_nol "* Kernel has the ARM64 Speculative-Unprivileged-Load workaround compiled in: "
+        if [ -n "$kernel_mitigated" ]; then
+            pstatus green YES "$kernel_mitigated"
+        else
+            pstatus yellow NO
+        fi
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU is not affected by this erratum family"
+    elif [ "$opt_sysfs_only" = 1 ]; then
+        pvulnstatus "$cve" UNK "no sysfs interface exists for this erratum, own checks have been skipped (--sysfs-only)"
+    elif [ -n "$kernel_mitigated" ]; then
+        pvulnstatus "$cve" OK "your kernel includes the erratum workaround"
+    else
+        pvulnstatus "$cve" VULN "your CPU is affected by this erratum family and the kernel does not appear to include the workaround"
+        explain "Run a kernel built with CONFIG_ARM64_ERRATUM_2966298=y (Cortex-A520) and/or CONFIG_ARM64_ERRATUM_3117295=y (Cortex-A510). These options are 'default y' in mainline and enabled by most distro kernels. Refer to the ARM Software Developers Errata Notice for your core for full details."
+    fi
+}
+
+check_CVE_0001_0002_bsd() {
+    local cve
+    cve='CVE-0001-0002'
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU is not affected by this erratum family"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
+}
+
+# >>>>>> vulns/CVE-0001-0003.sh <<<<<<
+
+# vim: set ts=4 sw=4 sts=4 et:
+###############################
+# CVE-0001-0003, ARM SSBS NOSYNC, ARM64 erratum 3194386, MSR SSBS not self-synchronizing
+
+check_CVE_0001_0003() {
+    check_cve 'CVE-0001-0003'
+}
+
+# On affected cores, the "MSR SSBS, #x" instruction is not self-synchronizing, so subsequent
+# speculative instructions may execute without observing the new SSBS state. This can permit
+# unintended speculative store bypass (Spectre V4 / CVE-2018-3639) even when software thinks
+# the mitigation is in effect. Kernel workaround (ARM64_WORKAROUND_SPECULATIVE_SSBS):
+#   - place a Speculation Barrier (SB) or ISB after every kernel-side SSBS change
+#   - hide SSBS from userspace hwcaps and EL0 reads of ID_AA64PFR1_EL1 so that userspace
+#     routes SSB mitigation changes through the prctl(PR_SET_SPECULATION_CTRL) path
+# Affected cores (via ARM64_ERRATUM_3194386, with individual sub-errata numbers):
+#   Cortex-A76/A77/A78/A78C/A710/A715/A720/A720AE/A725, X1/X1C/X2/X3/X4/X925,
+#   Neoverse-N1/N2/N3, Neoverse-V1/V2/V3/V3AE
+# References:
+#   arch/arm64/Kconfig (ARM64_ERRATUM_3194386)
+#   arch/arm64/kernel/cpu_errata.c (erratum_spec_ssbs_list, "SSBS not fully self-synchronizing")
+check_CVE_0001_0003_linux() {
+    local cve kernel_mitigated
+    cve='CVE-0001-0003'
+    kernel_mitigated=''
+
+    if [ "$opt_sysfs_only" != 1 ] && is_arm_kernel; then
+        if [ -n "$opt_config" ] && grep -q '^CONFIG_ARM64_ERRATUM_3194386=y' "$opt_config"; then
+            kernel_mitigated="found CONFIG_ARM64_ERRATUM_3194386=y in kernel config"
+        fi
+        if [ -z "$kernel_mitigated" ] && [ -n "$g_kernel" ]; then
+            if "${opt_arch_prefix}strings" "$g_kernel" 2>/dev/null | grep -qE 'SSBS not fully self-synchronizing'; then
+                kernel_mitigated="found erratum descriptor string in kernel image"
+            fi
+        fi
+        if [ -z "$kernel_mitigated" ] && [ "$g_mode" = live ]; then
+            if dmesg 2>/dev/null | grep -qE 'SSBS not fully self-synchronizing'; then
+                kernel_mitigated="erratum workaround reported as applied in dmesg"
+            fi
+        fi
+
+        pr_info_nol "* Kernel has the ARM64 SSBS self-sync workaround compiled in: "
+        if [ -n "$kernel_mitigated" ]; then
+            pstatus green YES "$kernel_mitigated"
+        else
+            pstatus yellow NO
+        fi
+    fi
+
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU is not affected by this erratum"
+    elif [ "$opt_sysfs_only" = 1 ]; then
+        pvulnstatus "$cve" UNK "no sysfs interface exists for this erratum, own checks have been skipped (--sysfs-only)"
+    elif [ -n "$kernel_mitigated" ]; then
+        pvulnstatus "$cve" OK "your kernel includes the erratum workaround"
+    else
+        pvulnstatus "$cve" VULN "your CPU is affected by this erratum and the kernel does not appear to include the workaround; Spectre V4 (CVE-2018-3639) mitigation may be unreliable on this system"
+        explain "Run a kernel built with CONFIG_ARM64_ERRATUM_3194386=y. This option is 'default y' in mainline and enabled by most distro kernels. Without it, the Spectre V4 / speculative-store-bypass mitigation advertised by SSBS is not reliably applied. Userspace should use prctl(PR_SET_SPECULATION_CTRL, PR_SPEC_STORE_BYPASS, ...) to request the mitigation rather than rely on the SSBS hwcap."
+    fi
+}
+
+check_CVE_0001_0003_bsd() {
+    local cve
+    cve='CVE-0001-0003'
+    if ! is_cpu_affected "$cve"; then
+        pvulnstatus "$cve" OK "your CPU is not affected by this erratum"
+    else
+        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+    fi
 }
 
 # >>>>>> vulns/CVE-2017-5715.sh <<<<<<
@@ -12281,10 +12701,19 @@ if [ "$g_mode" = hw-only ]; then
     pr_info "Hardware-only mode, skipping vulnerability checks"
 else
     for cve in $g_supported_cve_list; do
-        if [ "$opt_cve_all" = 1 ] || echo "$opt_cve_list" | grep -qw "$cve"; then
-            check_"$(echo "$cve" | tr - _)"
-            pr_info
+        # In a default "all CVEs" run, skip checks whose arch tag doesn't match
+        # the host CPU or the inspected kernel. Explicit --cve/--variant/--errata
+        # selection bypasses the gate.
+        if [ "$opt_cve_all" = 1 ]; then
+            if ! _is_cve_relevant_arch "$cve"; then
+                pr_debug "main: skipping $cve (arch tag not relevant)"
+                continue
+            fi
+        elif ! echo "$opt_cve_list" | grep -qw "$cve"; then
+            continue
         fi
+        check_"$(echo "$cve" | tr - _)"
+        pr_info
     done
 fi # g_mode != hw-only
 
