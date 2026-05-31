@@ -7,12 +7,15 @@ on:
 
 permissions:
   pull-requests: write
+  contents: write
 
 jobs:
   autoupdate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: source
       - name: Install prerequisites
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends iucode-tool sqlite3 unzip
       - name: Update microcode versions
