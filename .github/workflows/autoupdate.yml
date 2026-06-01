@@ -17,7 +17,7 @@ jobs:
         with:
           ref: source
       - name: Install prerequisites
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends iucode-tool sqlite3 unzip
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends iucode-tool sqlite3 unzip shfmt
       - name: Update microcode versions
         run: ./scripts/update_mcedb.sh
       - name: Update Intel models
