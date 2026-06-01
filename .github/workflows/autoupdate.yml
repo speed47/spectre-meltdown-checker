@@ -19,12 +19,14 @@ jobs:
       - name: Install prerequisites
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends iucode-tool sqlite3 unzip
       - name: Update microcode versions
-        run: ./spectre-meltdown-checker.sh --update-builtin-fwdb
+        run: ./scripts/update_mcedb.sh
+      - name: Update Intel models
+        run: ./scripts/update_intel_models.sh
       - name: Check git diff
         id: diff
         run: |
-          echo change="$(git diff spectre-meltdown-checker.sh | awk '/MCEDB/ { if(V) { print V" to "$4; exit } else { V=$4 } }')" >> "$GITHUB_OUTPUT"
-          echo nbdiff="$(git diff spectre-meltdown-checker.sh | grep -cE -- '^\+# [AI],')" >> "$GITHUB_OUTPUT"
+          echo change="$(git diff | awk '/MCEDB/ { if(V) { print V" to "$4; exit } else { V=$4 } }')" >> "$GITHUB_OUTPUT"
+          echo nbdiff="$(git diff | grep -cE -- '^\+# [AI],')" >> "$GITHUB_OUTPUT"
           git diff
           cat "$GITHUB_OUTPUT"
       - name: Create Pull Request if needed
