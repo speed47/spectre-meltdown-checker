@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0421288'
+VERSION='26.36.0601848'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -2686,7 +2686,8 @@ _build_json_system() {
         1) smt_val='false' ;;
         *) smt_val='null' ;;
     esac
-    g_json_system=$(printf '{"kernel_release":%s,"kernel_version":%s,"kernel_arch":%s,"kernel_image":%s,"kernel_config":%s,"kernel_version_string":%s,"kernel_cmdline":%s,"cpu_count":%s,"smt_enabled":%s,"hypervisor_host":%s,"hypervisor_host_reason":%s}' \
+    is_running_as_guest || true
+    g_json_system=$(printf '{"kernel_release":%s,"kernel_version":%s,"kernel_arch":%s,"kernel_image":%s,"kernel_config":%s,"kernel_version_string":%s,"kernel_cmdline":%s,"cpu_count":%s,"smt_enabled":%s,"hypervisor_host":%s,"hypervisor_host_reason":%s,"guest_vm":%s,"guest_vm_reason":%s}' \
         "$(_json_str "$kernel_release")" \
         "$(_json_str "$kernel_version")" \
         "$(_json_str "$kernel_arch")" \
@@ -2697,7 +2698,9 @@ _build_json_system() {
         "$(_json_num "${g_max_core_id:+$((g_max_core_id + 1))}")" \
         "$smt_val" \
         "$(_json_bool "${g_has_vmm:-}")" \
-        "$(_json_str "${g_has_vmm_reason:-}")")
+        "$(_json_str "${g_has_vmm_reason:-}")" \
+        "$(_json_bool "${g_is_guest_vm:-}")" \
+        "$(_json_str "${g_is_guest_vm_reason:-}")")
 }
 
 # Build the "cpu" section of the comprehensive JSON output
@@ -2838,14 +2841,15 @@ _build_json_cpu_microcode() {
         blacklisted='false'
     fi
     latest_hex="${ret_is_latest_known_ucode_version:-}"
-    g_json_cpu_microcode=$(printf '{"installed_version":%s,"latest_version":%s,"microcode_up_to_date":%s,"is_blacklisted":%s,"message":%s,"db_source":%s,"db_info":%s}' \
+    g_json_cpu_microcode=$(printf '{"installed_version":%s,"latest_version":%s,"microcode_up_to_date":%s,"is_blacklisted":%s,"message":%s,"db_source":%s,"db_info":%s,"unreliable_in_vm":%s}' \
         "$(_json_str "$ucode_hex")" \
         "$(_json_str "$latest_hex")" \
         "$ucode_uptodate" \
         "$blacklisted" \
         "$(_json_str "${ret_is_latest_known_ucode_latest:-}")" \
         "$(_json_str "${g_mcedb_source:-}")" \
-        "$(_json_str "${g_mcedb_info:-}")")
+        "$(_json_str "${g_mcedb_info:-}")" \
+        "$(_json_bool "${g_is_guest_vm:-}")")
 }
 
 # --- Format-specific batch emitters ---
@@ -4541,6 +4545,24 @@ is_xen_domU() {
     fi
 }
 
+# Check whether the system is running as a guest inside a virtual machine.
+# Uses the 'hypervisor' CPUID feature flag exposed in /proc/cpuinfo by KVM,
+# VMware, Hyper-V, VirtualBox, and most other type-1 and type-2 hypervisors.
+# Returns: 0 if running as a VM guest, 1 otherwise
+# Sets: g_is_guest_vm (1=guest, 0=not a guest), g_is_guest_vm_reason
+is_running_as_guest() {
+    if [ "${g_is_guest_vm_cached:-0}" != 1 ]; then
+        g_is_guest_vm=0
+        g_is_guest_vm_reason=''
+        if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
+            g_is_guest_vm=1
+            g_is_guest_vm_reason="'hypervisor' flag in $g_procfs/cpuinfo"
+        fi
+        g_is_guest_vm_cached=1
+    fi
+    [ "$g_is_guest_vm" = 1 ]
+}
+
 # >>>>>> libs/380_hw_microcode.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -5033,6 +5055,30 @@ check_kernel_info() {
 check_cpu() {
     local capabilities ret spec_ctrl_msr codename ucode_str
 
+    if is_arm_cpu; then
+        pr_info "* CPU details"
+        pr_info "  * Vendor: $cpu_vendor"
+        pr_info "  * Model name: $cpu_friendly_name"
+        if [ -n "${cpu_impl_list:-}" ]; then
+            pr_info "  * Implementer(s): $cpu_impl_list"
+        fi
+        if [ -n "${cpu_part_list:-}" ]; then
+            pr_info "  * Part(s): $cpu_part_list"
+        fi
+        if [ -n "${cpu_arch_list:-}" ]; then
+            pr_info "  * Architecture(s): $cpu_arch_list"
+        fi
+        if has_runtime; then
+            pr_info_nol "  * Running as VM guest: "
+            if is_running_as_guest; then
+                pstatus yellow YES "$g_is_guest_vm_reason"
+            else
+                pstatus green NO
+            fi
+        fi
+        return
+    fi
+
     if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
         return
     fi
@@ -5058,6 +5104,15 @@ check_cpu() {
         codename=$(get_intel_codename)
         if [ -n "$codename" ]; then
             pr_info "  * Codename: $codename"
+        fi
+    fi
+
+    if has_runtime; then
+        pr_info_nol "  * Running as VM guest: "
+        if is_running_as_guest; then
+            pstatus yellow YES "$g_is_guest_vm_reason"
+        else
+            pstatus green NO
         fi
     fi
 
@@ -6009,6 +6064,13 @@ check_cpu() {
         pstatus red NO "$ret_is_latest_known_ucode_latest"
     else
         pstatus blue UNKNOWN "$ret_is_latest_known_ucode_latest"
+    fi
+    if is_running_as_guest; then
+        pr_warn
+        pr_warn "Note: this system is running inside a VM ($g_is_guest_vm_reason)."
+        pr_warn "The hypervisor may be faking the CPU model and microcode version;"
+        pr_warn "verify the above microcode information on the hypervisor host for accuracy."
+        pr_warn
     fi
 }
 
@@ -13058,7 +13120,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v349+i20260227+1cce
+# %%% MCEDB v349+i20260512+1cce
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
@@ -13431,14 +13493,14 @@ exit 0                          # ok
 # I,0x000806F2,0xFF,0x8C0004E0,20211112
 # I,0x000806F3,0xFF,0x8D000520,20220812
 # I,0x000806F4,0x10,0x2C000421,20250825
-# I,0x000806F4,0x87,0x2B000661,20250825
+# I,0x000806F4,0x87,0x2B000670,20251217
 # I,0x000806F5,0x10,0x2C000421,20250825
-# I,0x000806F5,0x87,0x2B000661,20250825
+# I,0x000806F5,0x87,0x2B000670,20251217
 # I,0x000806F6,0x10,0x2C000421,20250825
-# I,0x000806F6,0x87,0x2B000661,20250825
-# I,0x000806F7,0x87,0x2B000661,20250825
+# I,0x000806F6,0x87,0x2B000670,20251217
+# I,0x000806F7,0x87,0x2B000670,20251217
 # I,0x000806F8,0x10,0x2C000421,20250825
-# I,0x000806F8,0x87,0x2B000661,20250825
+# I,0x000806F8,0x87,0x2B000670,20251217
 # I,0x00090660,0xFF,0x00000009,20200617
 # I,0x00090661,0x01,0x0000001A,20240405
 # I,0x00090670,0xFF,0x00000019,20201111
@@ -13475,11 +13537,11 @@ exit 0                          # ok
 # I,0x000A06C0,0xFF,0x00000013,20230901
 # I,0x000A06C1,0xFF,0x00000005,20231201
 # I,0x000A06D0,0xFF,0x10000680,20240818
-# I,0x000A06D1,0x20,0x0A000133,20251009
-# I,0x000A06D1,0x95,0x01000405,20251031
-# I,0x000A06E1,0x97,0x01000303,20251202
+# I,0x000A06D1,0x20,0x0A000142,20260129
+# I,0x000A06D1,0x95,0x01000423,20260129
+# I,0x000A06E1,0x97,0x01000307,20260226
 # I,0x000A06F0,0xFF,0x80000360,20240130
-# I,0x000A06F3,0x01,0x03000382,20250730
+# I,0x000A06F3,0x01,0x030003A3,20260130
 # I,0x000B0650,0x80,0x0000000D,20250925
 # I,0x000B0664,0xFF,0x00000030,20250529
 # I,0x000B0670,0xFF,0x0000000E,20220220
@@ -13489,23 +13551,23 @@ exit 0                          # ok
 # I,0x000B06A3,0xE0,0x00006134,20251008
 # I,0x000B06A8,0xE0,0x00006134,20251008
 # I,0x000B06D0,0xFF,0x0000001A,20240610
-# I,0x000B06D1,0x80,0x00000125,20250828
+# I,0x000B06D1,0x80,0x00000126,20251210
 # I,0x000B06E0,0x19,0x00000021,20250912
 # I,0x000B06F2,0x07,0x0000003E,20251012
 # I,0x000B06F5,0x07,0x0000003E,20251012
 # I,0x000B06F6,0x07,0x0000003E,20251012
 # I,0x000B06F7,0x07,0x0000003E,20251012
-# I,0x000C0652,0x82,0x0000011B,20250803
+# I,0x000C0652,0x82,0x00000121,20251215
 # I,0x000C0660,0xFF,0x00000018,20240516
-# I,0x000C0662,0x82,0x0000011B,20250803
-# I,0x000C0664,0x82,0x0000011B,20250803
-# I,0x000C06A2,0x82,0x0000011B,20250803
+# I,0x000C0662,0x82,0x00000121,20251215
+# I,0x000C0664,0x82,0x00000121,20251215
+# I,0x000C06A2,0x82,0x00000121,20251215
 # I,0x000C06C0,0xFF,0x00000012,20250325
-# I,0x000C06C1,0xFF,0x00000115,20251203
-# I,0x000C06C2,0xFF,0x00000115,20251203
-# I,0x000C06C3,0xFF,0x00000115,20251203
-# I,0x000C06F1,0x87,0x210002D3,20250825
-# I,0x000C06F2,0x87,0x210002D3,20250825
+# I,0x000C06C1,0x90,0x0000011B,20260324
+# I,0x000C06C2,0x90,0x0000011B,20260324
+# I,0x000C06C3,0x90,0x0000011B,20260324
+# I,0x000C06F1,0x87,0x210002E0,20251217
+# I,0x000C06F2,0x87,0x210002E0,20251217
 # I,0x000D0670,0xFF,0x00000003,20250825
 # I,0x000D06D0,0xFF,0x00000340,20250807
 # I,0x00FF0671,0xFF,0x0000010E,20220907
