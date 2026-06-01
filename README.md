@@ -40,6 +40,14 @@ CVE | Name | Aliases
 [CVE-2024-45332](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-45332) | Branch Privilege Injection | BPI
 [CVE-2025-54505](https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-54505) | AMD Zen1 Floating-Point Divider Stale Data Leak | FPDSS
 
+The following entries are ARM64 silicon errata that the kernel actively works around. They have no assigned CVE; they are tracked only by ARM's erratum numbers. Select them with `--errata <number>` or the associated `--variant` mnemonic.
+
+ID | Name | Affected cores
+-- | ---- | --------------
+CVE-0001-0001 | Speculative AT TLB corruption (errata 1165522, 1319367, 1319537, 1530923) | Cortex-A55/A57/A72/A76
+CVE-0001-0002 | Speculative unprivileged load (errata 2966298, 3117295) | Cortex-A510/A520
+CVE-0001-0003 | MSR SSBS not self-synchronizing (erratum 3194386 + siblings) | Cortex-A76/A77/A78/A78C/A710/A715/A720/A720AE/A725, X1/X1C/X2/X3/X4/X925, Neoverse-N1/N2/N3/V1/V2/V3/V3AE
+
 ## Am I at risk?
 
 Depending on your situation, the table below answers whether an attacker in a given position can extract data from a given target.
@@ -272,23 +280,23 @@ In **Hardware-only** mode, the script only reports CPU information and per-CVE h
 
 - Get the latest version of the script using `curl` *or* `wget`
 
-```bash
-curl -L https://meltdown.ovh -o spectre-meltdown-checker.sh
-wget https://meltdown.ovh -O spectre-meltdown-checker.sh
-```
+    ```bash
+    curl -L https://meltdown.ovh -o spectre-meltdown-checker.sh
+    wget https://meltdown.ovh -O spectre-meltdown-checker.sh
+    ```
 
 - Inspect the script. You never blindly run scripts you downloaded from the Internet, do you?
 
-```bash
-vim spectre-meltdown-checker.sh
-```
+    ```bash
+    vim spectre-meltdown-checker.sh
+    ```
 
 - When you're ready, run the script as root
 
-```bash
-chmod +x spectre-meltdown-checker.sh
-sudo ./spectre-meltdown-checker.sh
-```
+    ```bash
+    chmod +x spectre-meltdown-checker.sh
+    sudo ./spectre-meltdown-checker.sh
+    ```
 
 ### Using a docker container
 

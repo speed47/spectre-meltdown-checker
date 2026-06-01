@@ -307,3 +307,13 @@ A weakness in AMD's microcode signature verification (AES-CMAC hash) allows load
 Exploits a synchronization failure in the AMD stack engine via an undocumented MSR bit, targeting AMD SEV-SNP confidential VMs. Requires hypervisor-level (ring 0) access.
 
 **Why out of scope:** Not a transient/speculative execution side channel. This is an architectural attack on AMD SEV-SNP confidential computing that requires hypervisor access, which is outside the threat model of this tool.
+
+## No CVE — Jump Conditional Code (JCC) Erratum
+
+- **Issue:** [#329](https://github.com/speed47/spectre-meltdown-checker/issues/329)
+- **Intel whitepaper:** [Mitigations for Jump Conditional Code Erratum](https://www.intel.com/content/dam/support/us/en/documents/processors/mitigations-jump-conditional-code-erratum.pdf)
+- **Affected CPUs:** Intel 6th through 10th generation Core and Xeon processors (Skylake through Cascade Lake)
+
+A microarchitectural correctness erratum where a conditional jump instruction that straddles or ends at a 64-byte instruction fetch boundary can corrupt the branch predictor state, potentially causing incorrect execution. Intel addressed this in a November 2019 microcode update. Compilers and assemblers (GCC, LLVM, binutils) also introduced alignment options (`-mbranch-alignment`, `-x86-branches-within-32B-boundaries`) to pad jump instructions away from boundary conditions, preserving performance on CPUs with updated microcode.
+
+**Why out of scope:** The JCC erratum is a microarchitectural correctness bug, not a transient or speculative execution side-channel vulnerability. No CVE was ever assigned. Red Hat noted that privilege escalation "has not been ruled out" but made no definitive security finding, and no exploit has been demonstrated. There is no Linux sysfs entry, no CPUID bit, and no MSR flag exposing the mitigation status. The microcode fix introduces no detectable hardware indicator, so checking for it would require maintaining a per-CPU-stepping minimum microcode version table (the design principle 3 exception) — costly to maintain without a CVE anchor or confirmed exploitability to justify the ongoing work. The kernel compiler mitigation is a build-time-only change (instruction alignment) with no observable runtime state.
