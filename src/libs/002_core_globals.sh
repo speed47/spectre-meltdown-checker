@@ -24,6 +24,9 @@ show_usage() {
 					can be used multiple times (e.g. --variant 3a --variant l1tf). For a list use 'help'.
 		--cve CVE		specify which CVE you'd like to check, by default all supported CVEs are checked
 					can be used multiple times (e.g. --cve CVE-2017-5753 --cve CVE-2020-0543)
+		--errata NUMBER		specify a vendor-numbered erratum (e.g. ARM64 erratum 1530923) that has no CVE
+					assigned. Maps the erratum to the corresponding check. For a list use 'help'.
+					Can be used multiple times (e.g. --errata 1530923 --errata 3194386).
 
 	Check scope:
 		--no-sysfs		don't use the /sys interface even if present [Linux]
@@ -152,47 +155,61 @@ g_smc_system_info_line=''
 g_smc_cpu_info_line=''
 
 # CVE Registry: single source of truth for all CVE metadata.
-# Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases
+# Fields: cve_id|json_key_name|affected_var_suffix|complete_name_and_aliases|arch
 #
-# Two ranges of placeholder IDs are reserved when no real CVE applies:
+# The optional `arch` field gates whether the check is run at all, based on the
+# host CPU architecture and the inspected kernel architecture. Values:
+#   x86      - only relevant when host CPU or inspected kernel is x86/amd64
+#   arm      - only relevant when host CPU or inspected kernel is ARM/ARM64
+#   (empty)  - always relevant (shared logic across architectures, e.g. Spectre V1-V4)
+# The gate only applies to default "all CVEs" runs; explicit --cve/--variant/--errata
+# selection bypasses it (if the user asks for it, they get it regardless of arch).
+#
+# Three ranges of placeholder IDs are reserved when no real CVE applies:
 #   CVE-0000-NNNN: permanent placeholder for supplementary checks (--extra only)
 #                  that will never receive a real CVE (e.g. SLS, compile-time hardening).
+#   CVE-0001-NNNN: permanent placeholder for vendor-numbered errata that will never
+#                  receive a CVE (e.g. ARM64 silicon errata tracked only by erratum ID).
+#                  Selectable via --errata <number>.
 #   CVE-9999-NNNN: temporary placeholder for real vulnerabilities awaiting CVE
 #                  assignment. Rename across the codebase once the real CVE is issued.
 readonly CVE_REGISTRY='
-CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass
-CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection
-CVE-2017-5754|MELTDOWN|variant3|Variant 3, Meltdown, rogue data cache load
-CVE-2018-3640|VARIANT 3A|variant3a|Variant 3a, rogue system register read
-CVE-2018-3639|VARIANT 4|variant4|Variant 4, speculative store bypass
-CVE-2018-3615|L1TF SGX|variantl1tf_sgx|Foreshadow (SGX), L1 terminal fault
-CVE-2018-3620|L1TF OS|variantl1tf|Foreshadow-NG (OS), L1 terminal fault
-CVE-2018-3646|L1TF VMM|variantl1tf|Foreshadow-NG (VMM), L1 terminal fault
-CVE-2018-12126|MSBDS|msbds|Fallout, microarchitectural store buffer data sampling (MSBDS)
-CVE-2018-12130|MFBDS|mfbds|ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)
-CVE-2018-12127|MLPDS|mlpds|RIDL, microarchitectural load port data sampling (MLPDS)
-CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable memory (MDSUM)
-CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)
-CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)
-CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)
-CVE-2022-21123|SBDR|mmio|Shared Buffers Data Read (SBDR), MMIO Stale Data
-CVE-2022-21125|SBDS|mmio|Shared Buffers Data Sampling (SBDS), MMIO Stale Data
-CVE-2022-21166|DRPW|mmio|Device Register Partial Write (DRPW), MMIO Stale Data
-CVE-2023-20588|DIV0|div0|Division by Zero, AMD Zen1 speculative data leak
-CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak
-CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)
-CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)
-CVE-2022-29901|RETBLEED INTEL|retbleed|Retbleed, arbitrary speculative code execution with return instructions (Intel)
-CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)
-CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue
-CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)
-CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)
-CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)
-CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction
-CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)
-CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)
-CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)
-CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak
+CVE-2017-5753|SPECTRE VARIANT 1|variant1|Spectre Variant 1, bounds check bypass|
+CVE-2017-5715|SPECTRE VARIANT 2|variant2|Spectre Variant 2, branch target injection|
+CVE-2017-5754|MELTDOWN|variant3|Variant 3, Meltdown, rogue data cache load|
+CVE-2018-3640|VARIANT 3A|variant3a|Variant 3a, rogue system register read|
+CVE-2018-3639|VARIANT 4|variant4|Variant 4, speculative store bypass|
+CVE-2018-3615|L1TF SGX|variantl1tf_sgx|Foreshadow (SGX), L1 terminal fault|x86
+CVE-2018-3620|L1TF OS|variantl1tf|Foreshadow-NG (OS), L1 terminal fault|x86
+CVE-2018-3646|L1TF VMM|variantl1tf|Foreshadow-NG (VMM), L1 terminal fault|x86
+CVE-2018-12126|MSBDS|msbds|Fallout, microarchitectural store buffer data sampling (MSBDS)|x86
+CVE-2018-12130|MFBDS|mfbds|ZombieLoad, microarchitectural fill buffer data sampling (MFBDS)|x86
+CVE-2018-12127|MLPDS|mlpds|RIDL, microarchitectural load port data sampling (MLPDS)|x86
+CVE-2019-11091|MDSUM|mdsum|RIDL, microarchitectural data sampling uncacheable memory (MDSUM)|x86
+CVE-2019-11135|TAA|taa|ZombieLoad V2, TSX Asynchronous Abort (TAA)|x86
+CVE-2018-12207|ITLBMH|itlbmh|No eXcuses, iTLB Multihit, machine check exception on page size changes (MCEPSC)|x86
+CVE-2020-0543|SRBDS|srbds|Special Register Buffer Data Sampling (SRBDS)|x86
+CVE-2022-21123|SBDR|mmio|Shared Buffers Data Read (SBDR), MMIO Stale Data|x86
+CVE-2022-21125|SBDS|mmio|Shared Buffers Data Sampling (SBDS), MMIO Stale Data|x86
+CVE-2022-21166|DRPW|mmio|Device Register Partial Write (DRPW), MMIO Stale Data|x86
+CVE-2023-20588|DIV0|div0|Division by Zero, AMD Zen1 speculative data leak|x86
+CVE-2023-20593|ZENBLEED|zenbleed|Zenbleed, cross-process information leak|x86
+CVE-2022-40982|DOWNFALL|downfall|Downfall, gather data sampling (GDS)|x86
+CVE-2022-29900|RETBLEED AMD|retbleed|Retbleed, arbitrary speculative code execution with return instructions (AMD)|x86
+CVE-2022-29901|RETBLEED INTEL|retbleed|Retbleed, arbitrary speculative code execution with return instructions (Intel)|x86
+CVE-2023-20569|INCEPTION|inception|Inception, return address security (RAS)|x86
+CVE-2023-23583|REPTAR|reptar|Reptar, redundant prefix issue|x86
+CVE-2024-36350|TSA_SQ|tsa|Transient Scheduler Attack - Store Queue (TSA-SQ)|x86
+CVE-2024-36357|TSA_L1|tsa|Transient Scheduler Attack - L1 (TSA-L1)|x86
+CVE-2024-28956|ITS|its|Indirect Target Selection (ITS)|x86
+CVE-2025-40300|VMSCAPE|vmscape|VMScape, VM-exit stale branch prediction|x86
+CVE-2023-28746|RFDS|rfds|Register File Data Sampling (RFDS)|x86
+CVE-2024-45332|BPI|bpi|Branch Privilege Injection (BPI)|x86
+CVE-0000-0001|SLS|sls|Straight-Line Speculation (SLS)|
+CVE-2025-54505|FPDSS|fpdss|FPDSS, AMD Zen1 Floating-Point Divider Stale Data Leak|x86
+CVE-0001-0001|ARM SPEC AT|arm_spec_at|ARM64 errata 1165522/1319367/1319537/1530923, Speculative AT TLB corruption|arm
+CVE-0001-0002|ARM SPEC UNPRIV LOAD|arm_spec_unpriv_load|ARM64 errata 2966298/3117295, Speculative unprivileged load|arm
+CVE-0001-0003|ARM SSBS NOSYNC|arm_ssbs_nosync|ARM64 erratum 3194386, MSR SSBS not self-synchronizing|arm
 '
 
 # Derive the supported CVE list from the registry

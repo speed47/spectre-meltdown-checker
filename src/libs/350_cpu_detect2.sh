@@ -24,13 +24,22 @@ parse_cpu_details() {
         if grep -qw avx512 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx512=1; fi
         cpu_vendor=$(grep '^vendor_id' "$g_procfs/cpuinfo" | awk '{print $3}' | head -n1)
         cpu_friendly_name=$(grep '^model name' "$g_procfs/cpuinfo" | cut -d: -f2- | head -n1 | sed -e 's/^ *//')
-        # special case for ARM follows
-        if grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' "$g_procfs/cpuinfo"; then
-            cpu_vendor='ARM'
-            # some devices (phones or other) have several ARMs and as such different part numbers,
-            # an example is "bigLITTLE", so we need to store the whole list, this is needed for is_cpu_affected
+        # ARM-style cpuinfo: parse per-core implementer/part/arch/variant/revision lists
+        # (big.LITTLE / heterogeneous systems have different values per core).
+        # cpu_variant_list and cpu_revision_list are consumed by ARM64 errata affection checks
+        # that need to match a specific revision range.
+        if grep -q 'CPU implementer' "$g_procfs/cpuinfo"; then
+            cpu_impl_list=$(awk '/CPU implementer/ {print $4}' "$g_procfs/cpuinfo")
             cpu_part_list=$(awk '/CPU part/         {print $4}' "$g_procfs/cpuinfo")
             cpu_arch_list=$(awk '/CPU architecture/ {print $3}' "$g_procfs/cpuinfo")
+            cpu_variant_list=$(awk '/CPU variant/   {print $4}' "$g_procfs/cpuinfo")
+            cpu_revision_list=$(awk '/CPU revision/ {print $4}' "$g_procfs/cpuinfo")
+        fi
+        # Map first-seen implementer to cpu_vendor; note that heterogeneous systems
+        # (e.g. DynamIQ with ARM+Kryo cores) would all map to one vendor here, but
+        # per-core vendor decisions are made via cpu_impl_list where needed.
+        if grep -qi 'CPU implementer[[:space:]]*:[[:space:]]*0x41' "$g_procfs/cpuinfo"; then
+            cpu_vendor='ARM'
             # take the first one to fill the friendly name, do NOT quote the vars below
             # shellcheck disable=SC2086
             arch=$(echo $cpu_arch_list | awk '{ print $1 }')

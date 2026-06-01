@@ -388,6 +388,30 @@ check_kernel_info() {
 check_cpu() {
     local capabilities ret spec_ctrl_msr codename ucode_str
 
+    if is_arm_cpu; then
+        pr_info "* CPU details"
+        pr_info "  * Vendor: $cpu_vendor"
+        pr_info "  * Model name: $cpu_friendly_name"
+        if [ -n "${cpu_impl_list:-}" ]; then
+            pr_info "  * Implementer(s): $cpu_impl_list"
+        fi
+        if [ -n "${cpu_part_list:-}" ]; then
+            pr_info "  * Part(s): $cpu_part_list"
+        fi
+        if [ -n "${cpu_arch_list:-}" ]; then
+            pr_info "  * Architecture(s): $cpu_arch_list"
+        fi
+        if has_runtime; then
+            pr_info_nol "  * Running as VM guest: "
+            if is_running_as_guest; then
+                pstatus yellow YES "$g_is_guest_vm_reason"
+            else
+                pstatus green NO
+            fi
+        fi
+        return
+    fi
+
     if ! uname -m | grep -qwE 'x86_64|i[3-6]86|amd64'; then
         return
     fi
@@ -413,6 +437,15 @@ check_cpu() {
         codename=$(get_intel_codename)
         if [ -n "$codename" ]; then
             pr_info "  * Codename: $codename"
+        fi
+    fi
+
+    if has_runtime; then
+        pr_info_nol "  * Running as VM guest: "
+        if is_running_as_guest; then
+            pstatus yellow YES "$g_is_guest_vm_reason"
+        else
+            pstatus green NO
         fi
     fi
 
@@ -1093,7 +1126,7 @@ check_cpu() {
         pr_info_nol "  * CPU explicitly indicates not being affected by MMIO Stale Data (FBSDP_NO & PSDP_NO & SBDR_SSDP_NO): "
         if [ "$cap_sbdr_ssdp_no" = -1 ]; then
             pstatus yellow UNKNOWN "couldn't read MSR"
-        elif [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]; then
+        elif is_arch_cap_mmio_immune; then
             pstatus green YES
         else
             pstatus yellow NO
@@ -1365,13 +1398,28 @@ check_cpu() {
     else
         pstatus blue UNKNOWN "$ret_is_latest_known_ucode_latest"
     fi
+    if is_running_as_guest; then
+        pr_warn
+        pr_warn "Note: this system is running inside a VM ($g_is_guest_vm_reason)."
+        pr_warn "The hypervisor may be faking the CPU model and microcode version;"
+        pr_warn "verify the above microcode information on the hypervisor host for accuracy."
+        pr_warn
+    fi
 }
 
-# Display per-CVE CPU vulnerability status based on CPU model/family
+# Display per-CVE CPU vulnerability status based on CPU model/family.
+# Mirrors the main dispatch gate: under a default "all CVEs" run, skip CVEs
+# whose arch tag doesn't match this system. Explicit selection via
+# --cve/--variant/--errata bypasses the gate.
 check_cpu_vulnerabilities() {
     local cve
     pr_info "* CPU vulnerability to the speculative execution attack variants"
     for cve in $g_supported_cve_list; do
+        if [ "$opt_cve_all" = 1 ]; then
+            _is_cve_relevant_arch "$cve" || continue
+        elif ! echo "$opt_cve_list" | grep -qw "$cve"; then
+            continue
+        fi
         pr_info_nol "  * Affected by $cve ($(cve2name "$cve")): "
         if is_cpu_affected "$cve"; then
             pstatus yellow YES

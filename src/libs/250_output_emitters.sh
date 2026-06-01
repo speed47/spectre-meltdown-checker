@@ -110,7 +110,8 @@ _build_json_system() {
         1) smt_val='false' ;;
         *) smt_val='null' ;;
     esac
-    g_json_system=$(printf '{"kernel_release":%s,"kernel_version":%s,"kernel_arch":%s,"kernel_image":%s,"kernel_config":%s,"kernel_version_string":%s,"kernel_cmdline":%s,"cpu_count":%s,"smt_enabled":%s,"hypervisor_host":%s,"hypervisor_host_reason":%s}' \
+    is_running_as_guest || true
+    g_json_system=$(printf '{"kernel_release":%s,"kernel_version":%s,"kernel_arch":%s,"kernel_image":%s,"kernel_config":%s,"kernel_version_string":%s,"kernel_cmdline":%s,"cpu_count":%s,"smt_enabled":%s,"hypervisor_host":%s,"hypervisor_host_reason":%s,"guest_vm":%s,"guest_vm_reason":%s}' \
         "$(_json_str "$kernel_release")" \
         "$(_json_str "$kernel_version")" \
         "$(_json_str "$kernel_arch")" \
@@ -121,7 +122,9 @@ _build_json_system() {
         "$(_json_num "${g_max_core_id:+$((g_max_core_id + 1))}")" \
         "$smt_val" \
         "$(_json_bool "${g_has_vmm:-}")" \
-        "$(_json_str "${g_has_vmm_reason:-}")")
+        "$(_json_str "${g_has_vmm_reason:-}")" \
+        "$(_json_bool "${g_is_guest_vm:-}")" \
+        "$(_json_str "${g_is_guest_vm_reason:-}")")
 }
 
 # Build the "cpu" section of the comprehensive JSON output
@@ -262,14 +265,15 @@ _build_json_cpu_microcode() {
         blacklisted='false'
     fi
     latest_hex="${ret_is_latest_known_ucode_version:-}"
-    g_json_cpu_microcode=$(printf '{"installed_version":%s,"latest_version":%s,"microcode_up_to_date":%s,"is_blacklisted":%s,"message":%s,"db_source":%s,"db_info":%s}' \
+    g_json_cpu_microcode=$(printf '{"installed_version":%s,"latest_version":%s,"microcode_up_to_date":%s,"is_blacklisted":%s,"message":%s,"db_source":%s,"db_info":%s,"unreliable_in_vm":%s}' \
         "$(_json_str "$ucode_hex")" \
         "$(_json_str "$latest_hex")" \
         "$ucode_uptodate" \
         "$blacklisted" \
         "$(_json_str "${ret_is_latest_known_ucode_latest:-}")" \
         "$(_json_str "${g_mcedb_source:-}")" \
-        "$(_json_str "${g_mcedb_info:-}")")
+        "$(_json_str "${g_mcedb_info:-}")" \
+        "$(_json_bool "${g_is_guest_vm:-}")")
 }
 
 # --- Format-specific batch emitters ---

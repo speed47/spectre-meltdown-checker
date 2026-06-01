@@ -1,16 +1,30 @@
 # vim: set ts=4 sw=4 sts=4 et:
 # MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - BSD mitigation check
 check_mmio_bsd() {
+    # No BSD (FreeBSD, OpenBSD, NetBSD, DragonFlyBSD) has implemented an OS-level
+    # MMIO Stale Data mitigation. All four stopped at MDS/TAA. Microcode update is
+    # the only partial defense available, and without OS-level VERW invocation it
+    # cannot close the vulnerability.
+    local unk
+    unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif is_cpu_mmio_unknown; then
+        if [ "$opt_paranoid" = 1 ]; then
+            pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
+            explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+        else
+            pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+        fi
     else
-        pvulnstatus "$cve" UNK "your CPU is affected, but mitigation detection has not yet been implemented for BSD in this script"
+        pvulnstatus "$cve" VULN "your CPU is affected and no BSD has implemented an MMIO Stale Data mitigation"
+        explain "No BSD kernel currently implements an MMIO Stale Data mitigation (which would require invoking VERW at context switches and VM-entries). Updating CPU microcode alone does not mitigate this vulnerability without OS cooperation."
     fi
 }
 
 # MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - Linux mitigation check
 check_mmio_linux() {
-    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg
+    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
     status=UNK
     sys_interface_available=0
     msg=''
@@ -112,9 +126,33 @@ check_mmio_linux() {
         #
         # No models have been added to or removed from the MMIO blacklist since v5.19.
         #
+        # 7df548840c49 (v6.0, NO_MMIO whitelist added, Pawan Gupta 2022-08-03):
+        #   Intel Family 6:
+        #     TIGERLAKE (0x8D), TIGERLAKE_L (0x8C)
+        #     ALDERLAKE (0x97), ALDERLAKE_L (0x9A)
+        #     ATOM_GOLDMONT (0x5C), ATOM_GOLDMONT_D (0x5F), ATOM_GOLDMONT_PLUS (0x7A)
+        #   AMD: fam 0x0f-0x12 + X86_FAMILY_ANY (all families)
+        #   Hygon: all families
+        #   Centaur fam 7, Zhaoxin fam 7
+        #
+        # Kernel logic (v6.0+):
+        #   if (!arch_cap_mmio_immune(ia32_cap)) {
+        #       if (cpu_matches(cpu_vuln_blacklist, MMIO))
+        #           setup_force_cpu_bug(X86_BUG_MMIO_STALE_DATA);
+        #       else if (!cpu_matches(cpu_vuln_whitelist, NO_MMIO))
+        #           setup_force_cpu_bug(X86_BUG_MMIO_UNKNOWN);
+        #   }
+        #   => Intel CPUs that are neither blacklisted nor whitelisted (e.g. Ivy Bridge,
+        #      Haswell client, Broadwell client, Sandy Bridge, pre-Goldmont Atom, etc.) get
+        #      X86_BUG_MMIO_UNKNOWN and report "Unknown: No mitigations" in sysfs. Intel
+        #      never published an affected-processor evaluation for these models because
+        #      their servicing period had already ended.
+        #   => is_cpu_mmio_unknown() matches this set so the script can report UNK (or
+        #      VULN under --paranoid) rather than the misleading "not affected" that
+        #      a plain blacklist check would produce.
+        #
         # immunity: ARCH_CAP_SBDR_SSDP_NO (bit 13) AND ARCH_CAP_FBSDP_NO (bit 14) AND ARCH_CAP_PSDP_NO (bit 15)
         #   All three must be set. Checked via arch_cap_mmio_immune() in common.c.
-        #   Bug is set only when: cpu_matches(blacklist, MMIO) AND NOT arch_cap_mmio_immune().
         #
         # microcode mitigation: ARCH_CAP_FB_CLEAR (bit 17) -- VERW clears fill buffers.
         #   Alternative: MD_CLEAR CPUID + FLUSH_L1D CPUID when MDS_NO is not set (legacy path).
@@ -193,6 +231,17 @@ check_mmio_linux() {
     if ! is_cpu_affected "$cve"; then
         # override status & msg in case CPU is not vulnerable after all
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
+    elif [ "$opt_sysfs_only" != 1 ] && is_cpu_mmio_unknown; then
+        # Bypass the normal sysfs reconciliation: sysfs reports "Unknown: No mitigations"
+        # only on v6.0-v6.15. On earlier and on v6.16+ kernels it wrongly says "Not affected"
+        # for these CPUs (which predate FB_CLEAR microcode and Intel's affected-processor list).
+        unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+        if [ "$opt_paranoid" = 1 ]; then
+            pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
+            explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released. Consider replacing affected hardware."
+        else
+            pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+        fi
     else
         if [ "$opt_sysfs_only" != 1 ]; then
             # compute mystatus and mymsg from our own logic

@@ -170,7 +170,7 @@ while [ -n "${1:-}" ]; do
         case "$2" in
             help)
                 echo "The following parameters are supported for --variant (can be used multiple times):"
-                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, fpdss, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls"
+                echo "1, 2, 3, 3a, 4, msbds, mfbds, mlpds, mdsum, l1tf, taa, mcepsc, srbds, mmio, sbdr, sbds, drpw, div0, fpdss, zenbleed, downfall, retbleed, inception, reptar, rfds, tsa, tsa-sq, tsa-l1, its, vmscape, bpi, sls, arm-spec-at, arm-spec-unpriv-load, arm-ssbs-nosync"
                 exit 0
                 ;;
             1)
@@ -301,8 +301,56 @@ while [ -n "${1:-}" ]; do
                 opt_cve_list="$opt_cve_list CVE-0000-0001"
                 opt_cve_all=0
                 ;;
+            arm-spec-at)
+                opt_cve_list="$opt_cve_list CVE-0001-0001"
+                opt_cve_all=0
+                ;;
+            arm-spec-unpriv-load)
+                opt_cve_list="$opt_cve_list CVE-0001-0002"
+                opt_cve_all=0
+                ;;
+            arm-ssbs-nosync)
+                opt_cve_list="$opt_cve_list CVE-0001-0003"
+                opt_cve_all=0
+                ;;
             *)
                 echo "$0: error: invalid parameter '$2' for --variant, see --variant help for a list" >&2
+                exit 255
+                ;;
+        esac
+        shift 2
+    elif [ "$1" = "--errata" ]; then
+        # Vendor-numbered errata selector (currently ARM64). Maps an erratum number
+        # (e.g. 1530923) to the CVE-0001-NNNN check that covers it.
+        if [ -z "$2" ]; then
+            echo "$0: error: option --errata expects a parameter (an erratum number, e.g. 1530923, or 'help')" >&2
+            exit 255
+        fi
+        case "$2" in
+            help)
+                echo "The following erratum numbers are supported for --errata (can be used multiple times):"
+                echo "  Speculative AT TLB corruption:       1165522, 1319367, 1319537, 1530923"
+                echo "  Speculative unprivileged load:       2966298, 3117295"
+                echo "  MSR SSBS not self-synchronizing:     3194386 (and siblings: 3312417, 3324334, 3324335,"
+                echo "                                       3324336, 3324338, 3324339, 3324341, 3324344, 3324346,"
+                echo "                                       3324347, 3324348, 3324349, 3456084, 3456091, 3456106,"
+                echo "                                       3456111)"
+                exit 0
+                ;;
+            1165522 | 1319367 | 1319537 | 1530923)
+                opt_cve_list="$opt_cve_list CVE-0001-0001"
+                opt_cve_all=0
+                ;;
+            2966298 | 3117295)
+                opt_cve_list="$opt_cve_list CVE-0001-0002"
+                opt_cve_all=0
+                ;;
+            3194386 | 3312417 | 3324334 | 3324335 | 3324336 | 3324338 | 3324339 | 3324341 | 3324344 | 3324346 | 3324347 | 3324348 | 3324349 | 3456084 | 3456091 | 3456106 | 3456111)
+                opt_cve_list="$opt_cve_list CVE-0001-0003"
+                opt_cve_all=0
+                ;;
+            *)
+                echo "$0: error: unsupported erratum number '$2' for --errata, see --errata help for a list" >&2
                 exit 255
                 ;;
         esac
