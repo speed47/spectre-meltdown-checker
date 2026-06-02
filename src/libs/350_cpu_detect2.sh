@@ -29,11 +29,18 @@ parse_cpu_details() {
         # cpu_variant_list and cpu_revision_list are consumed by ARM64 errata affection checks
         # that need to match a specific revision range.
         if grep -q 'CPU implementer' "$g_procfs/cpuinfo"; then
-            cpu_impl_list=$(awk '/CPU implementer/ {print $4}' "$g_procfs/cpuinfo")
-            cpu_part_list=$(awk '/CPU part/         {print $4}' "$g_procfs/cpuinfo")
-            cpu_arch_list=$(awk '/CPU architecture/ {print $3}' "$g_procfs/cpuinfo")
-            cpu_variant_list=$(awk '/CPU variant/   {print $4}' "$g_procfs/cpuinfo")
-            cpu_revision_list=$(awk '/CPU revision/ {print $4}' "$g_procfs/cpuinfo")
+            # keep these single-line (space-separated) so consumers and outputs (JSON, prometheus)
+            # don't end up with embedded newlines; per-core order is preserved for the errata checks
+            cpu_impl_list=$(awk '/CPU implementer/ {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_impl_list=${cpu_impl_list% }
+            cpu_part_list=$(awk '/CPU part/         {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_part_list=${cpu_part_list% }
+            cpu_arch_list=$(awk '/CPU architecture/ {print $3}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_arch_list=${cpu_arch_list% }
+            cpu_variant_list=$(awk '/CPU variant/   {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_variant_list=${cpu_variant_list% }
+            cpu_revision_list=$(awk '/CPU revision/ {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_revision_list=${cpu_revision_list% }
         fi
         # Map first-seen implementer to cpu_vendor; note that heterogeneous systems
         # (e.g. DynamIQ with ARM+Kryo cores) would all map to one vendor here, but
