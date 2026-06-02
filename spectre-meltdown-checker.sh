@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0601873'
+VERSION='26.36.0602723'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -3936,11 +3936,18 @@ parse_cpu_details() {
         # cpu_variant_list and cpu_revision_list are consumed by ARM64 errata affection checks
         # that need to match a specific revision range.
         if grep -q 'CPU implementer' "$g_procfs/cpuinfo"; then
-            cpu_impl_list=$(awk '/CPU implementer/ {print $4}' "$g_procfs/cpuinfo")
-            cpu_part_list=$(awk '/CPU part/         {print $4}' "$g_procfs/cpuinfo")
-            cpu_arch_list=$(awk '/CPU architecture/ {print $3}' "$g_procfs/cpuinfo")
-            cpu_variant_list=$(awk '/CPU variant/   {print $4}' "$g_procfs/cpuinfo")
-            cpu_revision_list=$(awk '/CPU revision/ {print $4}' "$g_procfs/cpuinfo")
+            # keep these single-line (space-separated) so consumers and outputs (JSON, prometheus)
+            # don't end up with embedded newlines; per-core order is preserved for the errata checks
+            cpu_impl_list=$(awk '/CPU implementer/ {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_impl_list=${cpu_impl_list% }
+            cpu_part_list=$(awk '/CPU part/         {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_part_list=${cpu_part_list% }
+            cpu_arch_list=$(awk '/CPU architecture/ {print $3}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_arch_list=${cpu_arch_list% }
+            cpu_variant_list=$(awk '/CPU variant/   {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_variant_list=${cpu_variant_list% }
+            cpu_revision_list=$(awk '/CPU revision/ {print $4}' "$g_procfs/cpuinfo" | tr '\n' ' ')
+            cpu_revision_list=${cpu_revision_list% }
         fi
         # Map first-seen implementer to cpu_vendor; note that heterogeneous systems
         # (e.g. DynamIQ with ARM+Kryo cores) would all map to one vendor here, but
@@ -5051,6 +5058,12 @@ check_kernel_info() {
     fi
 }
 
+# Collapse a whitespace-separated list to its unique values, preserving first-seen order.
+# Used to prettify the per-core ARM lists for display (e.g. "0x41 0x41 0x41 0x41" -> "0x41").
+_uniq_list() {
+    echo "$1" | awk '{ for (i = 1; i <= NF; i++) if (!seen[$i]++) printf "%s%s", (n++ ? " " : ""), $i }'
+}
+
 # Display hardware-level CPU mitigation support (microcode features, ARCH_CAPABILITIES, etc.)
 check_cpu() {
     local capabilities ret spec_ctrl_msr codename ucode_str
@@ -5060,13 +5073,13 @@ check_cpu() {
         pr_info "  * Vendor: $cpu_vendor"
         pr_info "  * Model name: $cpu_friendly_name"
         if [ -n "${cpu_impl_list:-}" ]; then
-            pr_info "  * Implementer(s): $cpu_impl_list"
+            pr_info "  * Implementer(s): $(_uniq_list "$cpu_impl_list")"
         fi
         if [ -n "${cpu_part_list:-}" ]; then
-            pr_info "  * Part(s): $cpu_part_list"
+            pr_info "  * Part(s): $(_uniq_list "$cpu_part_list")"
         fi
         if [ -n "${cpu_arch_list:-}" ]; then
-            pr_info "  * Architecture(s): $cpu_arch_list"
+            pr_info "  * Architecture(s): $(_uniq_list "$cpu_arch_list")"
         fi
         if has_runtime; then
             pr_info_nol "  * Running as VM guest: "
