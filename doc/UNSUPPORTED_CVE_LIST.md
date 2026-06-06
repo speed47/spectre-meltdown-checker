@@ -331,6 +331,17 @@ Improper access control in an on-chip debug interface could allow a privileged a
 
 **Why out of scope:** Not a transient or speculative execution vulnerability — this is an access-control flaw in a hardware debug/test interface (CWE-1191), with no side-channel or speculative execution component, and it requires a privileged attacker. There is no Linux kernel sysfs entry, no CPUID flag, and no kernel-side mitigation: the fix is delivered as platform/PSP firmware and proven via remote attestation against AMD's Key Distribution Service (KDS), with several SKUs marked "no fix planned." None of this is detectable by this tool, which inspects OS-loadable microcode revisions, CPUID/MSR bits, kernel capabilities, and sysfs.
 
+## CVE-2026-46174 — AMD Zen 2 Op Cache Improper Resource Isolation
+
+- **Bulletin:** [AMD-SB-7052](https://www.amd.com/en/resources/product-security/bulletin/amd-sb-7052.html) (CPU OP Cache Corruption)
+- **Kernel fix:** [commit 1e23b30a80b1](https://github.com/torvalds/linux/commit/1e23b30a80b14e5764657401ee2cca030525ae8e) — `x86/CPU/AMD: Prevent improper isolation of shared resources in Zen2's op cache`
+- **Affected CPUs:** AMD Zen 2
+- **CVSS:** 8.8 (High)
+
+Resources in the Zen 2 micro-op (op) cache can be improperly shared, causing instruction corruption that may be leveraged to execute instructions at a higher privilege level (userspace-to-kernel escalation). The Linux fix sets a bug-fix bit (bit 33) in the AMD `BP_CFG` model-specific register (`0xc001102e`) via `msr_set_bit()` in `init_amd_zen2()`, and only on bare metal (skipped when `X86_FEATURE_HYPERVISOR` is set, as the mitigation is the host's responsibility for guests).
+
+**Why out of scope:** Not a transient or speculative execution vulnerability — this is an op-cache resource-isolation bug that causes *instruction corruption* (an integrity/correctness erratum), with no side-channel or speculative data-leak component, which places it outside the vulnerability class this tool detects. It is also undetectable by this tool's standard framework: the kernel deliberately adds no `/sys/devices/system/cpu/vulnerabilities/` entry, no `X86_BUG_*` flag (so nothing in `/proc/cpuinfo`), no dmesg message, and no kernel command-line parameter. The mitigation is an unconditional inline MSR bit-set with no greppable named symbol, so it leaves no handle for no-runtime (kernel image / `System.map`) detection. The only possible check would be a live read of `BP_CFG` bit 33, which requires root and the `msr` module, works on bare metal only (guests report `N/A`), and would be a bespoke one-off outside the established CVE-detection model — the same situation as the [JCC Erratum](#no-cve--jump-conditional-code-jcc-erratum) below, but for AMD.
+
 ## No CVE — Jump Conditional Code (JCC) Erratum
 
 - **Issue:** [#329](https://github.com/speed47/spectre-meltdown-checker/issues/329)
