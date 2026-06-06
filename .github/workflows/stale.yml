@@ -8,7 +8,7 @@ on:
       action:
         description: "dry-run"
         required: true
-        default: "dryrun"
+        default: "apply"
         type: choice
         options:
           - dryrun
@@ -30,4 +30,7 @@ jobs:
           days-before-close: 7
           stale-issue-label: stale
           remove-stale-when-updated: true
+          close-issue-reason: completed
+          stale-issue-message: "If there are no further comments or activity on this issue, it'll be closed automatically in 7 days."
+          close-issue-message: "Automatically closing this issue due to inactivity, don't hesitate to open a new issue if needed."
           debug-only: ${{ case(inputs.action == 'dryrun', true, false) }}
