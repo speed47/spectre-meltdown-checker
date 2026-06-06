@@ -415,6 +415,22 @@ check_cpu() {
                 pstatus green NO
             fi
         fi
+        # ARM exposes no userspace-readable CPUID/MSR to query SSBD support directly.
+        # The ARMv8.5 SSBS ("Speculative Store Bypass Safe") hardware bit, when present,
+        # surfaces as the 'ssbs' hwcap in /proc/cpuinfo. We use it *only* as a positive
+        # confirmation of SSB mitigation capability (Variant 4 / CVE-2018-3639): its
+        # absence proves nothing, because the kernel deliberately hides the hwcap on some
+        # cores (e.g. the erratum-3194386 SSBS self-sync workaround), so we must never
+        # infer immunity from a missing 'ssbs'.
+        if has_runtime; then
+            pr_info_nol "  * CPU indicates SSBS (Speculative Store Bypass Safe) capability: "
+            if grep '^Features' "$g_procfs/cpuinfo" | grep -qw ssbs; then
+                cap_ssbd='ARM SSBS (cpuinfo)'
+                pstatus green YES "$cap_ssbd"
+            else
+                pstatus blue UNKNOWN "not exposed (the kernel may hide it; cannot conclude)"
+            fi
+        fi
         return
     fi
 
