@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0606547'
+VERSION='26.36.0606593'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -4495,25 +4495,41 @@ check_kernel_cpu_arch_mismatch() {
 # >>>>>> libs/370_hw_vmm.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-# Check whether the system is running as a Xen paravirtualized guest
-# Returns: 0 if Xen PV, 1 otherwise
-is_xen() {
-    local ret
-    if [ ! -d "$g_procfs/xen" ]; then
-        return 1
+
+# Probe Xen presence and guest type using the most reliable sources available.
+# Prefer /sys/hypervisor when avalable, fallback to dmesg otherwise.
+# Caches results in g_xen (1/0) and g_xen_guest_type (PV|PVH|HVM|'').
+_detect_xen() {
+    [ "${g_xen_cached:-0}" = 1 ] && return
+    g_xen=0
+    g_xen_guest_type=''
+    g_xen_cached=1
+
+    # Most reliable: /sys/hypervisor/type is 'xen' on any Xen domain (dom0
+    # included), and /sys/hypervisor/guest_type reports PV, PVH or HVM.
+    if [ -r /sys/hypervisor/type ] && [ "$(cat /sys/hypervisor/type 2>/dev/null)" = xen ]; then
+        g_xen=1
+        if [ -r /sys/hypervisor/guest_type ]; then
+            g_xen_guest_type=$(cat /sys/hypervisor/guest_type 2>/dev/null)
+        fi
+        return
     fi
 
-    # XXX do we have a better way that relying on dmesg?
-    dmesg_grep 'Booting paravirtualized kernel on Xen$'
-    ret=$?
-    if [ "$ret" -eq 2 ]; then
-        pr_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
-        return 1
-    elif [ "$ret" -eq 0 ]; then
-        return 0
-    else
-        return 1
+    # Fallback for kernels without /sys/hypervisor: /proc/xen plus a dmesg probe.
+    if [ -d "$g_procfs/xen" ]; then
+        dmesg_grep 'Booting paravirtualized kernel on Xen$'
+        case $? in
+            0) g_xen=1 ;;
+            2) pr_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script" ;;
+        esac
     fi
+}
+
+# Check whether the system is running on Xen (any domain type, dom0 included).
+# Returns: 0 if Xen, 1 otherwise
+is_xen() {
+    _detect_xen
+    [ "$g_xen" = 1 ]
 }
 
 # Check whether the system is a Xen Dom0 (privileged domain)
@@ -4530,31 +4546,77 @@ is_xen_dom0() {
     fi
 }
 
-# Check whether the system is a Xen DomU (unprivileged PV guest)
-# Returns: 0 if DomU, 1 otherwise
+# Check whether the system is running as a Xen PV DomU (the only Xen guest type
+# affected by Meltdown, which needs Xen-level mitigation).
+# Returns: 0 if PV DomU, 1 otherwise
 is_xen_domU() {
     local ret
     if ! is_xen; then
         return 1
     fi
 
-    # PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
+    if is_xen_dom0; then
+        return 1
+    fi
+
+    # When the reliable guest type is known, only PV domains (which aren't
+    # dom0, checked above) are the PV DomU case. PVH and HVM guests are not.
+    if [ -n "$g_xen_guest_type" ]; then
+        [ "$g_xen_guest_type" = PV ] && return 0
+        return 1
+    fi
+
+    # Fallback (no /sys/hypervisor/guest_type): PVHVM guests also print the
+    # 'Booting paravirtualized kernel' line, so exclude them via dmesg.
     dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'
     ret=$?
     if [ "$ret" -eq 0 ]; then
         return 1
     fi
 
-    if ! is_xen_dom0; then
-        return 0
-    else
-        return 1
-    fi
+    return 0
 }
 
-# Check whether the system is running as a guest inside a virtual machine.
+# Check whether we're running inside an OS-level container (LXC, Docker,
+# systemd-nspawn, etc.). Containers share the host kernel, so host/hypervisor
+# introspection (e.g. telling a Xen dom0 from a domU) is unreliable from inside
+# one: /proc/xen is exposed but empty, dmesg is the host's, etc. (issue #173)
+# Returns: 0 if in a container, 1 otherwise
+# Sets: g_is_container (1/0), g_container_reason
+is_running_in_container() {
+    local ctype
+    if [ "${g_is_container_cached:-0}" != 1 ]; then
+        g_is_container=0
+        g_container_reason=''
+        # systemd and most runtimes export 'container=' to PID 1's environment
+        if [ -r "$g_procfs/1/environ" ]; then
+            ctype=$(tr '\0' '\n' <"$g_procfs/1/environ" 2>/dev/null | sed -n 's/^container=//p' | head -n1)
+            if [ -n "$ctype" ]; then
+                g_is_container=1
+                g_container_reason="container=$ctype in $g_procfs/1/environ"
+            fi
+        fi
+        # Docker (and some others) drop a marker file at the filesystem root
+        if [ "$g_is_container" = 0 ] && [ -e /.dockerenv ]; then
+            g_is_container=1
+            g_container_reason="/.dockerenv present"
+        fi
+        # cgroup membership often reveals the runtime (lxc, docker, kubepods, ...)
+        if [ "$g_is_container" = 0 ] && [ -r "$g_procfs/1/cgroup" ]; then
+            if grep -qE '(^|[:/])(lxc|docker|kubepods|libpod|containerd|machine\.slice)([/.]|$)' "$g_procfs/1/cgroup" 2>/dev/null; then
+                g_is_container=1
+                g_container_reason="container runtime found in $g_procfs/1/cgroup"
+            fi
+        fi
+        g_is_container_cached=1
+    fi
+    [ "$g_is_container" = 1 ]
+}
+
+# Check whether the system is running as a guest inside a VM.
 # Uses the 'hypervisor' CPUID feature flag exposed in /proc/cpuinfo by KVM,
 # VMware, Hyper-V, VirtualBox, and most other type-1 and type-2 hypervisors.
+# Xen PV/PVH DomUs don't set that flag, so they're detected separately.
 # Returns: 0 if running as a VM guest, 1 otherwise
 # Sets: g_is_guest_vm (1=guest, 0=not a guest), g_is_guest_vm_reason
 is_running_as_guest() {
@@ -4564,6 +4626,13 @@ is_running_as_guest() {
         if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
             g_is_guest_vm=1
             g_is_guest_vm_reason="'hypervisor' flag in $g_procfs/cpuinfo"
+        fi
+        # Xen PV/PVH DomUs don't expose the 'hypervisor' CPUID flag. Don't
+        # classify a container on a Xen host as a guest here: we can't tell
+        # dom0 from domU from inside a container (handled separately).
+        if [ "$g_is_guest_vm" = 0 ] && is_xen && ! is_xen_dom0 && ! is_running_in_container; then
+            g_is_guest_vm=1
+            g_is_guest_vm_reason="Xen ${g_xen_guest_type:-PV} DomU"
         fi
         g_is_guest_vm_cached=1
     fi
@@ -6433,6 +6502,12 @@ check_mds_linux() {
                 if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
                     mds_smt_mitigated=1
                     pstatus green YES
+                elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
+                    # The kernel appends "SMT Host state unknown" when running under
+                    # a hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
+                    # scheduling, so it can't be determined from inside the guest (#343).
+                    mds_smt_mitigated=2
+                    pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
                 else
                     mds_smt_mitigated=0
                     pstatus yellow NO
@@ -6459,6 +6534,9 @@ check_mds_linux() {
                             if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
                                 mystatus=OK
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            elif [ "$mds_smt_mitigated" = 2 ]; then
+                                mystatus=UNK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation and it's enabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
                             else
                                 mystatus=VULN
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
@@ -6726,6 +6804,12 @@ check_mmio_linux() {
                 if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
                     mmio_smt_mitigated=1
                     pstatus green YES
+                elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
+                    # The kernel appends "SMT Host state unknown" when running under
+                    # a hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
+                    # scheduling, so it can't be determined from inside the guest (#343).
+                    mmio_smt_mitigated=2
+                    pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
                 else
                     mmio_smt_mitigated=0
                     pstatus yellow NO
@@ -6763,6 +6847,9 @@ check_mmio_linux() {
                             if [ "$opt_paranoid" != 1 ] || [ "$mmio_smt_mitigated" = 1 ]; then
                                 mystatus=OK
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            elif [ "$mmio_smt_mitigated" = 2 ]; then
+                                mystatus=UNK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation and it's enabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
                             else
                                 mystatus=VULN
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
@@ -8953,7 +9040,7 @@ check_CVE_2017_5754() {
 }
 
 check_CVE_2017_5754_linux() {
-    local status sys_interface_available msg kpti_support kpti_can_tell kpti_enabled dmesg_grep pti_xen_pv_domU xen_pv_domo xen_pv_domu explain_text
+    local status sys_interface_available msg kpti_support kpti_can_tell kpti_enabled dmesg_grep pti_xen_pv_domU xen_pv_domo xen_pv_domu xen_unknown_container explain_text
     status=UNK
     sys_interface_available=0
     msg=''
@@ -9075,14 +9162,24 @@ check_CVE_2017_5754_linux() {
     # Test if the current host is a Xen PV Dom0 / DomU
     xen_pv_domo=0
     xen_pv_domu=0
-    is_xen_dom0 && xen_pv_domo=1
-    is_xen_domU && xen_pv_domu=1
+    xen_unknown_container=0
+    if is_xen && ! is_xen_dom0 && is_running_in_container; then
+        # We can see Xen, but we're inside a container so /proc/xen/capabilities
+        # isn't exposed and dmesg is the host's: we can't tell a safe Dom0 from
+        # a vulnerable PV DomU from in here (issue #173).
+        xen_unknown_container=1
+    else
+        is_xen_dom0 && xen_pv_domo=1
+        is_xen_domU && xen_pv_domu=1
+    fi
 
     if [ "$g_mode" = live ]; then
         # checking whether we're running under Xen PV 64 bits. If yes, we are affected by affected_variant3
         # (unless we are a Dom0)
         pr_info_nol "* Running as a Xen PV DomU: "
-        if [ "$xen_pv_domu" = 1 ]; then
+        if [ "$xen_unknown_container" = 1 ]; then
+            pstatus yellow UNKNOWN "running in a container, can't query Xen from here"
+        elif [ "$xen_pv_domu" = 1 ]; then
             pstatus yellow YES
         else
             pstatus blue NO
@@ -9095,7 +9192,10 @@ check_CVE_2017_5754_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$g_mode" = live ]; then
-            if [ "$kpti_enabled" = 1 ]; then
+            if [ "$xen_unknown_container" = 1 ]; then
+                pvulnstatus "$cve" UNK "running inside a container on a Xen host, can't determine if the underlying domain is a vulnerable PV DomU"
+                explain "This system looks like a container ($g_container_reason) running on a Xen host. Whether the underlying domain is a safe Dom0 or a vulnerable PV DomU can't be reliably determined from inside a container (/proc/xen is exposed but empty, and dmesg belongs to the host). Please re-run this script directly on the host, outside the container, to get an accurate result."
+            elif [ "$kpti_enabled" = 1 ]; then
                 pvulnstatus "$cve" OK "PTI mitigates the vulnerability"
             elif [ "$xen_pv_domo" = 1 ]; then
                 pvulnstatus "$cve" OK "Xen Dom0s are safe and do not require PTI"
@@ -10128,6 +10228,11 @@ check_CVE_2019_11135_linux() {
                 pvulnstatus "$cve" VULN "TSX must be disabled for full mitigation"
             elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT vulnerable'; then
                 pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
+            elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT Host state unknown'; then
+                # The kernel appends "SMT Host state unknown" when running under a
+                # hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
+                # scheduling, so it can't be determined from inside the guest (#343).
+                pvulnstatus "$cve" UNK "TAA is mitigated and TSX is disabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
             else
                 pvulnstatus "$cve" "$status" "$msg"
             fi
@@ -11553,13 +11658,23 @@ check_CVE_2023_20593_linux() {
             fi
         fi
         if [ "$zenbleed_print_vuln" = 1 ]; then
-            pvulnstatus "$cve" VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
-            explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
-                "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
-                "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
-                "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue.\n " \
-                "To manually mitigate the issue right now, you may use the following command: \`wrmsr -a 0xc0011029 \$((\$(rdmsr -c 0xc0011029) | (1<<9)))\`,\n " \
-                "however note that this manual mitigation will only be active until the next reboot."
+            if [ "$g_mode" = live ] && is_running_as_guest; then
+                # Both Zenbleed mitigations are applied at the host level: an
+                # up-to-date microcode, or the host kernel setting FP_BACKUP_FIX
+                # in DE_CFG. From inside a guest we can't read that MSR and can't
+                # trust the microcode version the hypervisor presents, so we can't
+                # confirm or deny the mitigation -- don't cry VULN (#488).
+                pvulnstatus "$cve" UNK "Zenbleed mitigation can't be verified from inside a VM guest ($g_is_guest_vm_reason): it may be applied by the hypervisor host, but that isn't observable from here"
+                explain "Zenbleed is mitigated either by an up-to-date CPU microcode or by the host kernel setting the FP_BACKUP_FIX bit (DE_CFG MSR 0xc0011029 bit 9). Both are host-level: a guest can neither read that MSR nor trust the microcode version the hypervisor presents (see the VM note in the hardware section above). Re-run this script on the hypervisor host to get an accurate result."
+            else
+                pvulnstatus "$cve" VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+                explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
+                    "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
+                    "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
+                    "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue.\n " \
+                    "To manually mitigate the issue right now, you may use the following command: \`wrmsr -a 0xc0011029 \$((\$(rdmsr -c 0xc0011029) | (1<<9)))\`,\n " \
+                    "however note that this manual mitigation will only be active until the next reboot."
+            fi
         fi
         unset zenbleed_print_vuln
     else
