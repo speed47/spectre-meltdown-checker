@@ -188,6 +188,18 @@ Observable timing discrepancy in some Intel processors allows an authenticated u
 
 **Why out of scope:** Like CVE-2020-24511, this is a microcode-only fix with no Linux kernel sysfs entry, no CPUID bit, no MSR, and no kernel configuration option. Detection would require a per-CPU-stepping microcode version lookup table. The vulnerability has low severity (CVSS 2.8) and practical exploitation is limited. Intel dropped microcode support for Sandy Bridge and Ivy Bridge, leaving those generations permanently vulnerable.
 
+## CVE-2021-26314 / CVE-2021-26313 — Floating-Point Value Injection (FPVI) and Speculative Code Store Bypass (SCSB)
+
+- **Bulletin:** [AMD-SB-1003](https://www.amd.com/en/resources/product-security/bulletin/amd-sb-1003.html) (FPVI and SCSB); [AMD-SB-7050](https://www.amd.com/en/resources/product-security/bulletin/amd-sb-7050.html) (FPVI variant, informational)
+- **Intel advisory:** [Floating Point Value Injection](https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/advisory-guidance/floating-point-value-injection.html)
+- **Research paper:** [Rage Against the Machine Clear (FPVI/SCSB) — VUSec, USENIX Security '21](https://www.vusec.net/projects/fpvi-scsb/)
+- **Affected CPUs:** All supported AMD CPU products; Intel CPUs (FPVI)
+- **CVSS:** 5.5 (Medium) for both
+
+FPVI (CVE-2021-26314) lets an attacker inject arbitrary floating-point values into the transient execution window opened by a floating-point machine clear, so that dependent operations transiently compute on attacker-influenced values that can then be inferred through a microarchitectural covert channel. SCSB (CVE-2021-26313) is the companion vulnerability where overwritten instructions may still be executed speculatively. AMD-SB-7050 documents an FPVI variant (from the "TREVEX" detection-framework paper) that can be triggered without denormal inputs; AMD considers it to fall within the existing scope of CVE-2021-26314 and assigned it no new CVE, classifying it as informational only.
+
+**Why out of scope:** The mitigation responsibility falls on individual software, not on the kernel or microcode. Both AMD and Intel recommend that software vendors analyze their code for vulnerable speculative floating-point sequences and insert an `LFENCE` to serialize execution. No microcode update, no CPUID flag, no MSR, and no kernel configuration option was issued, and there is no `/sys/devices/system/cpu/vulnerabilities/` entry for FPVI or SCSB — the kernel never added one, because the fix is not a kernel-level control. This is the same situation as [SLAM (CVE-2020-12965)](#cve-2020-12965--transient-execution-of-non-canonical-accesses-slam) and "Take A Way": the vendor's guidance is "software inserts LFENCE in its own code," leaving nothing for this tool to check. The AMD-SB-7050 variant adds nothing detectable, as it is informational and reuses the existing (software-only) FPVI guidance.
+
 ## CVE-2021-26318 — AMD Prefetch Attacks through Power and Time
 
 - **Issue:** [#412](https://github.com/speed47/spectre-meltdown-checker/issues/412)
@@ -307,6 +319,17 @@ A weakness in AMD's microcode signature verification (AES-CMAC hash) allows load
 Exploits a synchronization failure in the AMD stack engine via an undocumented MSR bit, targeting AMD SEV-SNP confidential VMs. Requires hypervisor-level (ring 0) access.
 
 **Why out of scope:** Not a transient/speculative execution side channel. This is an architectural attack on AMD SEV-SNP confidential computing that requires hypervisor access, which is outside the threat model of this tool.
+
+## CVE-2025-52533 — AMD On-Chip Debug Interface Improper Access Control
+
+- **Advisory:** [NVD CVE-2025-52533](https://nvd.nist.gov/vuln/detail/CVE-2025-52533)
+- **Affected CPUs:** AMD (various; on-chip debug/test interface)
+- **CVSS:** 8.7 (High)
+- **CWE:** [CWE-1191 (On-Chip Debug and Test Interface With Improper Access Control)](https://cwe.mitre.org/data/definitions/1191.html)
+
+Improper access control in an on-chip debug interface could allow a privileged attacker to enable a debug interface and potentially compromise data confidentiality or integrity.
+
+**Why out of scope:** Not a transient or speculative execution vulnerability — this is an access-control flaw in a hardware debug/test interface (CWE-1191), with no side-channel or speculative execution component, and it requires a privileged attacker. There is no Linux kernel sysfs entry, no CPUID flag, and no kernel-side mitigation: the fix is delivered as platform/PSP firmware and proven via remote attestation against AMD's Key Distribution Service (KDS), with several SKUs marked "no fix planned." None of this is detectable by this tool, which inspects OS-loadable microcode revisions, CPUID/MSR bits, kernel capabilities, and sysfs.
 
 ## No CVE — Jump Conditional Code (JCC) Erratum
 
