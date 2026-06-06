@@ -216,6 +216,12 @@ check_mmio_linux() {
                 if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
                     mmio_smt_mitigated=1
                     pstatus green YES
+                elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
+                    # The kernel appends "SMT Host state unknown" when running under
+                    # a hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
+                    # scheduling, so it can't be determined from inside the guest (#343).
+                    mmio_smt_mitigated=2
+                    pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
                 else
                     mmio_smt_mitigated=0
                     pstatus yellow NO
@@ -253,6 +259,9 @@ check_mmio_linux() {
                             if [ "$opt_paranoid" != 1 ] || [ "$mmio_smt_mitigated" = 1 ]; then
                                 mystatus=OK
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            elif [ "$mmio_smt_mitigated" = 2 ]; then
+                                mystatus=UNK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation and it's enabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
                             else
                                 mystatus=VULN
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
