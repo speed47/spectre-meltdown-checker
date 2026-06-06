@@ -45,14 +45,14 @@ jobs:
       # workflow file itself MUST stay on the default branch, as GitHub only
       # honors `schedule:` triggers on the default branch.
       - name: Checkout vuln-watch branch (scripts + prompt)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: vuln-watch
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -84,7 +84,7 @@ jobs:
 
       - name: Download previous state artifact
         if: steps.prev.outputs.run_id != ''
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         continue-on-error: true   # tolerate retention expiry
         with:
           name: vuln-watch-state
@@ -115,7 +115,7 @@ jobs:
       # implemented?". Only fetched on days with something to classify.
       - name: Checkout checker code (test branch) for coverage grep
         if: steps.diff.outputs.new_count != '0' || steps.diff.outputs.reconsider_count != '0'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: test
           path: checker
@@ -150,7 +150,7 @@ jobs:
 
       - name: Upload Claude execution log
         if: ${{ always() && steps.classify.outputs.execution_file != '' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: claude-execution-log-${{ github.run_id }}
           path: ${{ steps.classify.outputs.execution_file }}
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload new state artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: vuln-watch-state
           path: state/seen.json
@@ -177,7 +177,7 @@ jobs:
 
       - name: Upload daily report
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: vuln-watch-report-${{ github.run_id }}
           path: |
