@@ -9,7 +9,7 @@ dmesg_grep() {
         # dmesg truncated
         return 2
     fi
-    ret_dmesg_grep_grepped=$(dmesg 2>/dev/null | grep -E "$1" | head -n1)
+    ret_dmesg_grep_grepped=$(dmesg 2>/dev/null | grep -m 1 -E "$1")
     # not found:
     [ -z "$ret_dmesg_grep_grepped" ] && return 1
     # found, output is in $ret_dmesg_grep_grepped
