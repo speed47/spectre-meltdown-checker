@@ -195,6 +195,14 @@ is_arch_cap_mmio_immune() {
     [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]
 }
 
+# Whether the MMIO arch-cap immunity bits are undetermined because the
+# IA32_ARCH_CAPABILITIES MSR couldn't be read (msr module unavailable or kernel
+# lockdown).
+# Returns: 0 if undetermined, 1 otherwise
+is_arch_cap_mmio_undetermined() {
+    [ "$cap_sbdr_ssdp_no" = -1 ] || [ "$cap_fbsdp_no" = -1 ] || [ "$cap_psdp_no" = -1 ]
+}
+
 # Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
 # Matches the kernel's NO_MMIO whitelist plus arch_cap_mmio_immune().
 # Model inventory and kernel-commit history are documented in check_mmio_linux().

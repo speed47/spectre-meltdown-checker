@@ -987,8 +987,33 @@ check_cpu() {
                     pstatus yellow NO
                 fi
             elif [ $ret = $READ_MSR_RET_KO ]; then
+                # the MSR access faulted: the register is genuinely absent, so the
+                # pre-seeded 0 ("not advertised") values are correct.
                 pstatus yellow NO
             else
+                # RET_ERR (no msr module) or RET_LOCKDOWN (MSR reads restricted):
+                # CPUID told us the MSR exists but we couldn't read it, so its bits
+                # are undetermined, not 0. Leaving them at 0 would falsely claim the
+                # CPU "explicitly indicates not immune".
+                # Reset every arch-cap-derived value to -1 (UNKNOWN) instead.
+                cap_rdcl_no=-1
+                cap_taa_no=-1
+                cap_mds_no=-1
+                cap_ibrs_all=-1
+                cap_rsba=-1
+                cap_l1dflush_no=-1
+                cap_ssb_no=-1
+                cap_pschange_msc_no=-1
+                cap_tsx_ctrl_msr=-1
+                cap_gds_ctrl=-1
+                cap_gds_no=-1
+                cap_rfds_no=-1
+                cap_rfds_clear=-1
+                cap_its_no=-1
+                cap_sbdr_ssdp_no=-1
+                cap_fbsdp_no=-1
+                cap_psdp_no=-1
+                cap_fb_clear=-1
                 pstatus yellow UNKNOWN "$ret_read_msr_msg"
             fi
         fi
