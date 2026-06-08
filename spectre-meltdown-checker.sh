@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0608820'
+VERSION='26.36.0608872'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -1803,6 +1803,14 @@ is_cpu_srbds_free() {
 # Returns: 0 if immune, 1 otherwise
 is_arch_cap_mmio_immune() {
     [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]
+}
+
+# Whether the MMIO arch-cap immunity bits are undetermined because the
+# IA32_ARCH_CAPABILITIES MSR couldn't be read (msr module unavailable or kernel
+# lockdown).
+# Returns: 0 if undetermined, 1 otherwise
+is_arch_cap_mmio_undetermined() {
+    [ "$cap_sbdr_ssdp_no" = -1 ] || [ "$cap_fbsdp_no" = -1 ] || [ "$cap_psdp_no" = -1 ]
 }
 
 # Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
@@ -5730,8 +5738,33 @@ check_cpu() {
                     pstatus yellow NO
                 fi
             elif [ $ret = $READ_MSR_RET_KO ]; then
+                # the MSR access faulted: the register is genuinely absent, so the
+                # pre-seeded 0 ("not advertised") values are correct.
                 pstatus yellow NO
             else
+                # RET_ERR (no msr module) or RET_LOCKDOWN (MSR reads restricted):
+                # CPUID told us the MSR exists but we couldn't read it, so its bits
+                # are undetermined, not 0. Leaving them at 0 would falsely claim the
+                # CPU "explicitly indicates not immune".
+                # Reset every arch-cap-derived value to -1 (UNKNOWN) instead.
+                cap_rdcl_no=-1
+                cap_taa_no=-1
+                cap_mds_no=-1
+                cap_ibrs_all=-1
+                cap_rsba=-1
+                cap_l1dflush_no=-1
+                cap_ssb_no=-1
+                cap_pschange_msc_no=-1
+                cap_tsx_ctrl_msr=-1
+                cap_gds_ctrl=-1
+                cap_gds_no=-1
+                cap_rfds_no=-1
+                cap_rfds_clear=-1
+                cap_its_no=-1
+                cap_sbdr_ssdp_no=-1
+                cap_fbsdp_no=-1
+                cap_psdp_no=-1
+                cap_fb_clear=-1
                 pstatus yellow UNKNOWN "$ret_read_msr_msg"
             fi
         fi
@@ -6610,15 +6643,22 @@ check_mmio_bsd() {
     # the only partial defense available, and without OS-level VERW invocation it
     # cannot close the vulnerability.
     local unk
-    unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif is_cpu_mmio_unknown; then
-        if [ "$opt_paranoid" = 1 ]; then
-            pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
-            explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+        if is_arch_cap_mmio_undetermined; then
+            # We only landed in the "unknown" bucket because the IA32_ARCH_CAPABILITIES
+            # MSR couldn't be read: the CPU might actually advertise MMIO immunity.
+            unk="your CPU's MMIO Stale Data status could not be determined: the IA32_ARCH_CAPABILITIES MSR (0x10a) couldn't be read"
+            pvulnstatus "$cve" UNK "$unk; load the cpuctl module and/or re-run as root to get a definitive answer"
         else
-            pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+            unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+            if [ "$opt_paranoid" = 1 ]; then
+                pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
+                explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+            else
+                pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+            fi
         fi
     else
         pvulnstatus "$cve" VULN "your CPU is affected and no BSD has implemented an MMIO Stale Data mitigation"
@@ -6628,7 +6668,7 @@ check_mmio_bsd() {
 
 # MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - Linux mitigation check
 check_mmio_linux() {
-    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
+    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell kernel_mmio_unknown_aware mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
     status=UNK
     sys_interface_available=0
     msg=''
@@ -6770,6 +6810,11 @@ check_mmio_linux() {
         # MMIO Stale Data is Intel-only; skip x86-specific kernel/MSR checks on non-x86 kernels
         kernel_mmio=''
         kernel_mmio_can_tell=0
+        # Whether this kernel implements the X86_BUG_MMIO_UNKNOWN distinction, i.e. can
+        # report "Unknown: No mitigations" for CPUs Intel never assessed. Only such kernels
+        # emit a *trustworthy* "Not affected": they would have said "Unknown" instead if the
+        # CPU were in the unknown bucket. Detected by the presence of the literal sysfs string in the kernel image.
+        kernel_mmio_unknown_aware=0
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports MMIO Stale Data mitigation: "
             kernel_mmio_can_tell=1
@@ -6779,6 +6824,10 @@ check_mmio_linux() {
                 pr_debug "mmio: found 'mmio_stale_data' string in kernel image"
                 kernel_mmio='found MMIO Stale Data mitigation evidence in kernel image'
                 pstatus green YES "$kernel_mmio"
+            fi
+            if [ -z "$g_kernel_err" ] && grep -qF 'Unknown: No mitigations' "$g_kernel" 2>/dev/null; then
+                pr_debug "mmio: kernel image knows the 'Unknown: No mitigations' state (X86_BUG_MMIO_UNKNOWN-aware)"
+                kernel_mmio_unknown_aware=1
             fi
             if [ -z "$kernel_mmio" ] && [ -n "$opt_config" ] && grep -q '^CONFIG_MITIGATION_MMIO_STALE_DATA=y' "$opt_config"; then
                 kernel_mmio='found MMIO Stale Data mitigation config option enabled'
@@ -6845,12 +6894,32 @@ check_mmio_linux() {
         # Bypass the normal sysfs reconciliation: sysfs reports "Unknown: No mitigations"
         # only on v6.0-v6.15. On earlier and on v6.16+ kernels it wrongly says "Not affected"
         # for these CPUs (which predate FB_CLEAR microcode and Intel's affected-processor list).
-        unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
-        if [ "$opt_paranoid" = 1 ]; then
-            pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
-            explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released. Consider replacing affected hardware."
+        if is_arch_cap_mmio_undetermined; then
+            # We landed in the "unknown" bucket only because the IA32_ARCH_CAPABILITIES
+            # MSR couldn't be read from userspace (no msr module, or kernel lockdown under
+            # Secure Boot): the CPU might actually advertise MMIO immunity
+            # through FBSDP_NO/PSDP_NO/SBDR_SSDP_NO, but we can't read it, however the kernel can.
+            #
+            # We can trust a sysfs "Not affected" only if this kernel is X86_BUG_MMIO_UNKNOWN-aware:
+            # such a kernel would have reported "Unknown: No mitigations" instead if the CPU were in
+            # the unknown bucket, so "Not affected" genuinely means arch-cap immune.
+            # On kernels that lack that distinction, a "Not affected" is not trustworthy for these CPUs,
+            # so we keep UNK.
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ] &&
+                [ "$kernel_mmio_unknown_aware" = 1 ] && [ "$status" = OK ]; then
+                pvulnstatus "$cve" OK "your kernel reports your CPU as not affected, and this kernel distinguishes the MMIO 'unknown' state, so its verdict is trustworthy (we couldn't read the IA32_ARCH_CAPABILITIES MSR ourselves)"
+            else
+                unk="your CPU's MMIO Stale Data status could not be determined: the IA32_ARCH_CAPABILITIES MSR (0x10a) couldn't be read"
+                pvulnstatus "$cve" UNK "$unk; load the msr module and/or disable kernel lockdown, then re-run as root to get a definitive answer"
+            fi
         else
-            pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+            unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+            if [ "$opt_paranoid" = 1 ]; then
+                pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
+                explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released."
+            else
+                pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+            fi
         fi
     else
         if [ "$opt_sysfs_only" != 1 ]; then
