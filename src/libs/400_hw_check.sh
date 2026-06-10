@@ -513,7 +513,7 @@ check_cpu() {
     fi
     if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
+        if cpuinfo_has_flag ibrs; then
             cap_ibrs='IBRS (cpuinfo)'
             cap_spec_ctrl=1
             pstatus green YES "ibrs flag in $g_procfs/cpuinfo"
@@ -588,7 +588,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag ibpb; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_ibpb='IBPB (cpuinfo)'
             pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
@@ -661,7 +661,7 @@ check_cpu() {
     fi
     if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
+        if cpuinfo_has_flag stibp; then
             cap_stibp='STIBP (cpuinfo)'
             pstatus green YES "stibp flag in $g_procfs/cpuinfo"
             ret=$READ_CPUID_RET_OK
@@ -733,9 +733,9 @@ check_cpu() {
 
     if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+        if cpuinfo_has_flag ssbd; then
             cap_ssbd='SSBD (cpuinfo)'
-        elif grep ^flags "$g_procfs/cpuinfo" | grep -qw virt_ssbd; then
+        elif cpuinfo_has_flag virt_ssbd; then
             cap_ssbd='SSBD in VIRT_SPEC_CTRL (cpuinfo)'
         fi
     fi
@@ -795,7 +795,7 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
-    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag flush_l1d; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
         cap_l1df=1
@@ -815,7 +815,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag md_clear; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_md_clear=1
             pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
@@ -885,7 +885,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag arch_capabilities; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
             cap_arch_capabilities=1

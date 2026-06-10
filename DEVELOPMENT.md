@@ -188,7 +188,7 @@ if [ $ret = $READ_CPUID_RET_OK ]; then
     cap_ssbd='Intel SSBD'
 elif [ $ret = $READ_CPUID_RET_ERR ] && [ "$g_mode" = live ]; then
     # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-    if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+    if cpuinfo_has_flag ssbd; then
         cap_ssbd='Intel SSBD (cpuinfo)'
         ret=$READ_CPUID_RET_OK
     fi
