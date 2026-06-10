@@ -22,3 +22,9 @@ is_coreos() {
     command -v coreos-install >/dev/null 2>&1 && command -v toolbox >/dev/null 2>&1 && return 0
     return 1
 }
+
+# Check whether /proc/cpuinfo has $1 in the flags line
+# Returns: 0 if flag found, 1 otherwise
+cpuinfo_has_flag() {
+    grep -Eq '^flags\b.+\b'"$1"'\b' "$g_procfs/cpuinfo" 2>/dev/null
+}

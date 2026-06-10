@@ -20,8 +20,8 @@ parse_cpu_details() {
     cap_avx2=0
     cap_avx512=0
     if [ -e "$g_procfs/cpuinfo" ]; then
-        if grep -qw avx2 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx2=1; fi
-        if grep -qw avx512 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx512=1; fi
+        if cpuinfo_has_flag avx2; then cap_avx2=1; fi
+        if cpuinfo_has_flag avx512; then cap_avx512=1; fi
         cpu_vendor=$(grep '^vendor_id' "$g_procfs/cpuinfo" | awk '{print $3}' | head -n1)
         cpu_friendly_name=$(grep '^model name' "$g_procfs/cpuinfo" | cut -d: -f2- | head -n1 | sed -e 's/^ *//')
         # ARM-style cpuinfo: parse per-core implementer/part/arch/variant/revision lists
