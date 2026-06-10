@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0608872'
+VERSION='26.36.0610898'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -3557,6 +3557,12 @@ is_coreos() {
     return 1
 }
 
+# Check whether /proc/cpuinfo has $1 in the flags line
+# Returns: 0 if flag found, 1 otherwise
+cpuinfo_has_flag() {
+    grep -Eq '^flags\b.+\b'"$1"'\b' "$g_procfs/cpuinfo" 2>/dev/null
+}
+
 # >>>>>> libs/340_cpu_msr.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
@@ -3935,8 +3941,8 @@ parse_cpu_details() {
     cap_avx2=0
     cap_avx512=0
     if [ -e "$g_procfs/cpuinfo" ]; then
-        if grep -qw avx2 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx2=1; fi
-        if grep -qw avx512 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx512=1; fi
+        if cpuinfo_has_flag avx2; then cap_avx2=1; fi
+        if cpuinfo_has_flag avx512; then cap_avx512=1; fi
         cpu_vendor=$(grep '^vendor_id' "$g_procfs/cpuinfo" | awk '{print $3}' | head -n1)
         cpu_friendly_name=$(grep '^model name' "$g_procfs/cpuinfo" | cut -d: -f2- | head -n1 | sed -e 's/^ *//')
         # ARM-style cpuinfo: parse per-core implementer/part/arch/variant/revision lists
@@ -5264,7 +5270,7 @@ check_cpu() {
     fi
     if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
+        if cpuinfo_has_flag ibrs; then
             cap_ibrs='IBRS (cpuinfo)'
             cap_spec_ctrl=1
             pstatus green YES "ibrs flag in $g_procfs/cpuinfo"
@@ -5339,7 +5345,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag ibpb; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_ibpb='IBPB (cpuinfo)'
             pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
@@ -5412,7 +5418,7 @@ check_cpu() {
     fi
     if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
+        if cpuinfo_has_flag stibp; then
             cap_stibp='STIBP (cpuinfo)'
             pstatus green YES "stibp flag in $g_procfs/cpuinfo"
             ret=$READ_CPUID_RET_OK
@@ -5484,9 +5490,9 @@ check_cpu() {
 
     if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+        if cpuinfo_has_flag ssbd; then
             cap_ssbd='SSBD (cpuinfo)'
-        elif grep ^flags "$g_procfs/cpuinfo" | grep -qw virt_ssbd; then
+        elif cpuinfo_has_flag virt_ssbd; then
             cap_ssbd='SSBD in VIRT_SPEC_CTRL (cpuinfo)'
         fi
     fi
@@ -5546,7 +5552,7 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
-    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag flush_l1d; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
         cap_l1df=1
@@ -5566,7 +5572,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag md_clear; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_md_clear=1
             pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
@@ -5636,7 +5642,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag arch_capabilities; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
             cap_arch_capabilities=1
@@ -6515,7 +6521,7 @@ check_mds_linux() {
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
             kernel_md_clear_can_tell=1
-            if [ "$g_mode" = live ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            if [ "$g_mode" = live ] && cpuinfo_has_flag md_clear; then
                 kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
                 pstatus green YES "$kernel_md_clear"
             fi
@@ -7835,7 +7841,7 @@ check_CVE_2017_5715_linux() {
                 # which in that case means ibrs is supported *and* enabled for kernel & user
                 # as per the ibrs patch series v3
                 if [ -z "$g_ibrs_supported" ]; then
-                    if grep ^flags "$g_procfs/cpuinfo" | grep -qw spec_ctrl_ibrs; then
+                    if cpuinfo_has_flag spec_ctrl_ibrs; then
                         pr_debug "ibrs: found spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
                         g_ibrs_supported="spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
                         # enabled=2 -> kernel & user
@@ -9091,7 +9097,7 @@ check_CVE_2017_5753_bsd() {
 pti_performance_check() {
     local ret pcid invpcid
     pr_info_nol "  * Reduced performance impact of PTI: "
-    if [ -e "$g_procfs/cpuinfo" ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw pcid; then
+    if cpuinfo_has_flag pcid; then
         pcid=1
     else
         read_cpuid 0x1 0x0 "$ECX" 17 1 1
@@ -9101,7 +9107,7 @@ pti_performance_check() {
         fi
     fi
 
-    if [ -e "$g_procfs/cpuinfo" ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw invpcid; then
+    if cpuinfo_has_flag invpcid; then
         invpcid=1
     else
         read_cpuid 0x7 0x0 "$EBX" 10 1 1
@@ -9190,11 +9196,11 @@ check_CVE_2017_5754_linux() {
             dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
             # aarch64
             dmesg_grep="$dmesg_grep|CPU features: detected( feature)?: Kernel page table isolation \(KPTI\)"
-            if grep ^flags "$g_procfs/cpuinfo" | grep -qw pti; then
+            if cpuinfo_has_flag pti; then
                 # vanilla PTI patch sets the 'pti' flag in cpuinfo
                 pr_debug "kpti_enabled: found 'pti' flag in $g_procfs/cpuinfo"
                 kpti_enabled=1
-            elif grep ^flags "$g_procfs/cpuinfo" | grep -qw kaiser; then
+            elif cpuinfo_has_flag kaiser; then
                 # kernel line 4.9 sets the 'kaiser' flag in cpuinfo
                 pr_debug "kpti_enabled: found 'kaiser' flag in $g_procfs/cpuinfo"
                 kpti_enabled=1
@@ -10029,7 +10035,7 @@ check_CVE_2018_3646_linux() {
 
         pr_info "* Mitigation 2"
         pr_info_nol "  * L1D flush is supported by kernel: "
-        if [ "$g_mode" = live ] && grep -qw flush_l1d "$g_procfs/cpuinfo"; then
+        if [ "$g_mode" = live ] && cpuinfo_has_flag flush_l1d; then
             l1d_kernel="found flush_l1d in $g_procfs/cpuinfo"
         fi
         if [ -z "$l1d_kernel" ]; then
@@ -10102,7 +10108,7 @@ check_CVE_2018_3646_linux() {
 
         pr_info_nol "  * Hardware-backed L1D flush supported: "
         if [ "$g_mode" = live ]; then
-            if grep -qw flush_l1d "$g_procfs/cpuinfo" || [ -n "$l1d_xen_hardware" ]; then
+            if cpuinfo_has_flag flush_l1d || [ -n "$l1d_xen_hardware" ]; then
                 pstatus green YES "performance impact of the mitigation will be greatly reduced"
             else
                 pstatus blue NO "flush will be done in software, this is slower"
@@ -13333,7 +13339,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v350+i20260512+1cce
+# %%% MCEDB v351+i20260512+1cce
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
@@ -13782,10 +13788,11 @@ exit 0                          # ok
 # I,0x000C06C3,0x90,0x0000011B,20260324
 # I,0x000C06F1,0x87,0x210002E0,20251217
 # I,0x000C06F2,0x87,0x210002E0,20251217
-# I,0x000D0650,0xFF,0x00000008,20260208
-# I,0x000D0651,0xFF,0x00000008,20260208
+# I,0x000D0650,0xFF,0x00000009,20260309
+# I,0x000D0651,0xFF,0x00000009,20260309
 # I,0x000D0670,0xFF,0x00000137,20260218
 # I,0x000D06D0,0xFF,0x80000370,20250917
+# I,0x000D06D1,0xFF,0x01000120,20260325
 # I,0x00FF0671,0xFF,0x0000010E,20220907
 # I,0x00FF0672,0xFF,0x0000000D,20210816
 # I,0x00FF0675,0xFF,0x0000000D,20210816
@@ -13887,8 +13894,8 @@ exit 0                          # ok
 # A,0x008A0F00,0xFF,0x08A0000B,20241125
 # A,0x00A00F00,0xFF,0x0A000033,20200413
 # A,0x00A00F10,0xFF,0x0A00107A,20240226
-# A,0x00A00F11,0xFF,0x0A0011DE,20250418
-# A,0x00A00F12,0xFF,0x0A001247,20250327
+# A,0x00A00F11,0xFF,0x0A0011DF,20260312
+# A,0x00A00F12,0xFF,0x0A00124B,20260305
 # A,0x00A00F80,0xFF,0x0A008005,20230707
 # A,0x00A00F82,0xFF,0x0A00820F,20241111
 # A,0x00A10F00,0xFF,0x0A10004B,20220309
@@ -13934,8 +13941,8 @@ exit 0                          # ok
 # A,0x00B10F10,0xFF,0x0B101059,20251105
 # A,0x00B20F40,0xFF,0x0B204037,20251019
 # A,0x00B40F00,0xFF,0x0B400034,20240318
-# A,0x00B40F40,0xFF,0x0B404035,20251020
-# A,0x00B40F41,0xFF,0x0B404108,20251020
-# A,0x00B60F00,0xFF,0x0B600037,20251019
-# A,0x00B60F80,0xFF,0x0B608038,20251019
+# A,0x00B40F40,0xFF,0x0B404038,20260408
+# A,0x00B40F41,0xFF,0x0B40410B,20260408
+# A,0x00B60F00,0xFF,0x0B60003C,20260401
+# A,0x00B60F80,0xFF,0x0B60803C,20260401
 # A,0x00B70F00,0xFF,0x0B700037,20251019
