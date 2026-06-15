@@ -72,6 +72,7 @@
     readonly INTEL_FAM6_ARROWLAKE_U=$((0xB5))
     readonly INTEL_FAM6_LUNARLAKE_M=$((0xBD))   # /* Lion Cove / Skymont */
     readonly INTEL_FAM6_PANTHERLAKE_L=$((0xCC)) # /* Cougar Cove / Darkmont */
+    readonly INTEL_FAM6_PANTHERLAKE_R=$((0xE5)) # /* Cougar Cove / Darkmont */
     readonly INTEL_FAM6_WILDCATLAKE_L=$((0xD5))
     readonly INTEL_FAM18_NOVALAKE=$((0x01))            # /* Coyote Cove / Arctic Wolf */
     readonly INTEL_FAM18_NOVALAKE_L=$((0x03))          # /* Coyote Cove / Arctic Wolf */
