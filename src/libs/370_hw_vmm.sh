@@ -127,7 +127,14 @@ is_running_as_guest() {
     if [ "${g_is_guest_vm_cached:-0}" != 1 ]; then
         g_is_guest_vm=0
         g_is_guest_vm_reason=''
-        if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
+        # A Xen dom0 runs on top of the hypervisor and therefore also has the
+        # 'hypervisor' CPUID flag set, but it's the privileged control domain:
+        # it has direct hardware access and a truthful view of the host CPU
+        # topology, so it must not be classified as a guest (#343). Check it
+        # before the cpuinfo probe below, which would otherwise match.
+        if is_xen_dom0; then
+            g_is_guest_vm=0
+        elif [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
             g_is_guest_vm=1
             g_is_guest_vm_reason="'hypervisor' flag in $g_procfs/cpuinfo"
         fi

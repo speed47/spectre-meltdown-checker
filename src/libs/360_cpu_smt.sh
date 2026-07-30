@@ -46,8 +46,18 @@ is_arm_cpu() {
 # Check whether SMT (HyperThreading) is enabled on the system
 # Returns: 0 if SMT enabled, 1 otherwise
 is_cpu_smt_enabled() {
-    local siblings cpucores
-    # SMT / HyperThreading is enabled if siblings != cpucores
+    local siblings cpucores smt_active
+    # Most reliable: /sys/devices/system/cpu/smt/active mirrors the kernel's
+    # sched_smt_active() (1=SMT active, 0=not), which is exactly what the kernel
+    # itself uses to derive the "SMT (disabled|vulnerable)" vulnerability strings.
+    if [ -r /sys/devices/system/cpu/smt/active ]; then
+        smt_active=$(cat /sys/devices/system/cpu/smt/active 2>/dev/null)
+        case "$smt_active" in
+            1) return 0 ;;
+            0) return 1 ;;
+        esac
+    fi
+    # Fallback: SMT / HyperThreading is enabled if siblings != cpucores
     if [ -e "$g_procfs/cpuinfo" ]; then
         siblings=$(awk '/^siblings/  {print $3;exit}' "$g_procfs/cpuinfo")
         cpucores=$(awk '/^cpu cores/ {print $4;exit}' "$g_procfs/cpuinfo")
