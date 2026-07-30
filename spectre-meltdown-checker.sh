@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0602723'
+VERSION='26.36.0730501'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -381,6 +381,7 @@ fi
     readonly INTEL_FAM6_ARROWLAKE_U=$((0xB5))
     readonly INTEL_FAM6_LUNARLAKE_M=$((0xBD))   # /* Lion Cove / Skymont */
     readonly INTEL_FAM6_PANTHERLAKE_L=$((0xCC)) # /* Cougar Cove / Darkmont */
+    readonly INTEL_FAM6_PANTHERLAKE_R=$((0xE5)) # /* Cougar Cove / Darkmont */
     readonly INTEL_FAM6_WILDCATLAKE_L=$((0xD5))
     readonly INTEL_FAM18_NOVALAKE=$((0x01))            # /* Coyote Cove / Arctic Wolf */
     readonly INTEL_FAM18_NOVALAKE_L=$((0x03))          # /* Coyote Cove / Arctic Wolf */
@@ -1218,6 +1219,7 @@ is_cpu_affected() {
 06-c5-02/82,0000011b
 06-c6-02/82,0000011b
 06-bd-01/80,00000125
+06-55-07/bf,05003901
 06-55-0b/bf,07002b01
 06-8f-07/87,2b000661
 06-8f-08/87,2b000661
@@ -1380,9 +1382,9 @@ is_cpu_affected() {
             if [ -n "$cpupart" ] && [ -n "$cpuarch" ]; then
                 # Cortex-R7 and Cortex-R8 are real-time and only used in medical devices or such
                 # I can't find their CPU part number, but it's probably not that useful anyway
-                # model R7 R8 A8  A9  A12 A15 A17 A57 A72 A73 A75 A76 A77 Neoverse-N1 Neoverse-V1 Neoverse-N1 Neoverse-V2
-                # part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b d0d d0c         d40	  d49	      d4f
-                # arch  7? 7? 7   7   7   7   7   8   8   8   8   8   8   8           8		  8	      8
+                # model R7 R8 A8  A9  A12 A15 A17 A57 A72 A73 A75 A76 A77 Neoverse-N1 Neoverse-V1 Neoverse-N1 Neoverse-V2 Neoverse-V3 Neoverse-V3AE
+                # part   ?  ? c08 c09 c0d c0f c0e d07 d08 d09 d0a d0b d0d d0c         d40	  d49	      d4f	  d84	      d83
+                # arch  7? 7? 7   7   7   7   7   8   8   8   8   8   8   8           8		  8	      8		  8	      8
                 #
                 # Whitelist identified non-affected processors, use vulnerability information from
                 # https://developer.arm.com/support/arm-security-updates/speculative-processor-vulnerability
@@ -1433,13 +1435,13 @@ is_cpu_affected() {
                     _infer_immune variant3a
                     _set_vuln variant4
                     pr_debug "checking cpu$i: armv8 A76/A77/NeoverseN1 non affected to variant 2, 3 & 3a"
-                elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd40 -e 0xd49 -e 0xd4f; then
+                elif [ "$cpuarch" = 8 ] && echo "$cpupart" | grep -q -w -e 0xd40 -e 0xd49 -e 0xd4f -e 0xd84 -e 0xd83; then
                     _set_vuln variant1
                     _infer_immune variant2
                     _infer_immune variant3
                     _infer_immune variant3a
                     _infer_immune variant4
-                    pr_debug "checking cpu$i: armv8 NeoverseN2/V1/V2 non affected to variant 2, 3, 3a & 4"
+                    pr_debug "checking cpu$i: armv8 NeoverseN2/V1/V2/V3/V3AE non affected to variant 2, 3, 3a & 4"
                 elif [ "$cpuarch" -le 7 ] || { [ "$cpuarch" = 8 ] && [ $((cpupart)) -lt $((0xd07)) ]; }; then
                     _infer_immune variant1
                     _infer_immune variant2
@@ -1500,14 +1502,14 @@ is_cpu_affected() {
     # - arm64 (CVE-2020-13844): Cortex-A32/A34/A35/A53/A57/A72/A73 confirmed affected,
     #   and broadly all speculative Armv8-A cores. No kernel mitigation merged.
     #   Part numbers: A32=0xd01 A34=0xd02 A53=0xd03 A35=0xd04 A57=0xd07 A72=0xd08 A73=0xd09
-    #   Plus later speculative cores: A75=0xd0a A76=0xd0b A77=0xd0d N1=0xd0c V1=0xd40 N2=0xd49 V2=0xd4f
+    #   Plus later speculative cores: A75=0xd0a A76=0xd0b A77=0xd0d N1=0xd0c V1=0xd40 N2=0xd49 V2=0xd4f V3=0xd84 V3AE=0xd83
     if is_intel || is_amd; then
         _infer_vuln sls
     elif [ "$cpu_vendor" = ARM ]; then
         for cpupart in $cpu_part_list; do
             if echo "$cpupart" | grep -q -w -e 0xd01 -e 0xd02 -e 0xd03 -e 0xd04 \
                 -e 0xd07 -e 0xd08 -e 0xd09 -e 0xd0a -e 0xd0b -e 0xd0c -e 0xd0d \
-                -e 0xd40 -e 0xd49 -e 0xd4f; then
+                -e 0xd40 -e 0xd49 -e 0xd4f -e 0xd84 -e 0xd83; then
                 _set_vuln sls
             fi
         done
@@ -13133,7 +13135,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v349+i20260512+1cce
+# %%% MCEDB v351+i20260512+16e5
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
@@ -13552,6 +13554,7 @@ exit 0                          # ok
 # I,0x000A06D0,0xFF,0x10000680,20240818
 # I,0x000A06D1,0x20,0x0A000142,20260129
 # I,0x000A06D1,0x95,0x01000423,20260129
+# I,0x000A06E0,0xFF,0x80000953,20240902
 # I,0x000A06E1,0x97,0x01000307,20260226
 # I,0x000A06F0,0xFF,0x80000360,20240130
 # I,0x000A06F3,0x01,0x030003A3,20260130
@@ -13581,8 +13584,11 @@ exit 0                          # ok
 # I,0x000C06C3,0x90,0x0000011B,20260324
 # I,0x000C06F1,0x87,0x210002E0,20251217
 # I,0x000C06F2,0x87,0x210002E0,20251217
-# I,0x000D0670,0xFF,0x00000003,20250825
-# I,0x000D06D0,0xFF,0x00000340,20250807
+# I,0x000D0650,0xFF,0x00000009,20260309
+# I,0x000D0651,0xFF,0x00000009,20260309
+# I,0x000D0670,0xFF,0x00000137,20260218
+# I,0x000D06D0,0xFF,0x80000370,20250917
+# I,0x000D06D1,0xFF,0x01000120,20260325
 # I,0x00FF0671,0xFF,0x0000010E,20220907
 # I,0x00FF0672,0xFF,0x0000000D,20210816
 # I,0x00FF0675,0xFF,0x0000000D,20210816
@@ -13679,13 +13685,13 @@ exit 0                          # ok
 # A,0x00880F40,0xFF,0x08804005,20210312
 # A,0x00890F00,0xFF,0x08900007,20200921
 # A,0x00890F01,0xFF,0x08900103,20201105
-# A,0x00890F02,0xFF,0x08900203,20230915
+# A,0x00890F02,0xFF,0x08900208,20241219
 # A,0x00890F10,0xFF,0x08901003,20230919
 # A,0x008A0F00,0xFF,0x08A0000B,20241125
 # A,0x00A00F00,0xFF,0x0A000033,20200413
 # A,0x00A00F10,0xFF,0x0A00107A,20240226
-# A,0x00A00F11,0xFF,0x0A0011DE,20250418
-# A,0x00A00F12,0xFF,0x0A001247,20250327
+# A,0x00A00F11,0xFF,0x0A0011DF,20260312
+# A,0x00A00F12,0xFF,0x0A00124B,20260305
 # A,0x00A00F80,0xFF,0x0A008005,20230707
 # A,0x00A00F82,0xFF,0x0A00820F,20241111
 # A,0x00A10F00,0xFF,0x0A10004B,20220309
@@ -13724,15 +13730,15 @@ exit 0                          # ok
 # A,0x00B00F00,0xFF,0x0B00004D,20240318
 # A,0x00B00F10,0xFF,0x0B001016,20240318
 # A,0x00B00F20,0xFF,0x0B002032,20241003
-# A,0x00B00F21,0xFF,0x0B002161,20251105
+# A,0x00B00F21,0xFF,0x0B002162,20251105
 # A,0x00B00F80,0xFF,0x0B008011,20241211
 # A,0x00B00F81,0xFF,0x0B008121,20251020
 # A,0x00B10F00,0xFF,0x0B10000F,20240320
-# A,0x00B10F10,0xFF,0x0B101058,20251105
+# A,0x00B10F10,0xFF,0x0B101059,20251105
 # A,0x00B20F40,0xFF,0x0B204037,20251019
 # A,0x00B40F00,0xFF,0x0B400034,20240318
-# A,0x00B40F40,0xFF,0x0B404035,20251020
-# A,0x00B40F41,0xFF,0x0B404108,20251020
-# A,0x00B60F00,0xFF,0x0B600037,20251019
-# A,0x00B60F80,0xFF,0x0B608038,20251019
+# A,0x00B40F40,0xFF,0x0B404038,20260408
+# A,0x00B40F41,0xFF,0x0B40410B,20260408
+# A,0x00B60F00,0xFF,0x0B60003C,20260401
+# A,0x00B60F80,0xFF,0x0B60803C,20260401
 # A,0x00B70F00,0xFF,0x0B700037,20251019
