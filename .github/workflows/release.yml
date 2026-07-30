@@ -13,8 +13,10 @@ name: release
 #
 # Two independent manual actions to run against the `master` branch:
 #
-#   1. sync-from-source-build : commit the assembled files (everything on
-#                               source-build EXCEPT .github/) onto master.
+#   1. sync-from-source-build : open a PR against master carrying the assembled
+#                               files (everything on source-build EXCEPT
+#                               .github/). Nothing lands on master until the PR
+#                               is reviewed and merged.
 #   2. draft-github-release   : create a DRAFT GitHub release from the script
 #                               currently on master, with an auto-drafted
 #                               changelog.
@@ -33,6 +35,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: release-master
@@ -40,7 +43,8 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Copy assembled files from source-build onto master (no .github/).
+  # 1. Copy assembled files from source-build onto master (no .github/),
+  #    as a pull request.
   # ---------------------------------------------------------------------------
   sync-from-source-build:
     if: inputs.action == 'sync-from-source-build'
@@ -53,6 +57,7 @@ jobs:
           persist-credentials: true
 
       - name: sync assembled files from source-build
+        id: sync
         run: |
           set -eu
           git fetch --no-tags origin source-build
@@ -71,18 +76,44 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "master already up to date with source-build; nothing to sync."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          ver=$(grep -m1 "^VERSION=" spectre-meltdown-checker.sh | cut -d"'" -f2)
-          sb=$(git rev-parse origin/source-build)
-          sbdate=$(git log -1 --format=%ai origin/source-build)
+          {
+            echo "changed=true"
+            echo "version=$(grep -m1 "^VERSION=" spectre-meltdown-checker.sh | cut -d"'" -f2)"
+            echo "sb=$(git rev-parse origin/source-build)"
+            echo "sbdate=$(git log -1 --format=%ai origin/source-build)"
+          } >> "$GITHUB_OUTPUT"
 
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          printf 'release: sync v%s from source-build\n\n built from source-build commit %s\n dated %s\n' \
-            "$ver" "$sb" "$sbdate" | git commit -F -
-          git push origin HEAD:master
+      # Note: the repo must have "Allow GitHub Actions to create and approve
+      # pull requests" enabled for this to work.
+      - name: open the sync pull request
+        if: steps.sync.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: master
+          branch: release/sync-from-source-build
+          delete-branch: true
+          committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          title: "release: sync v${{ steps.sync.outputs.version }} from source-build"
+          commit-message: |
+            release: sync v${{ steps.sync.outputs.version }} from source-build
+
+             built from source-build commit ${{ steps.sync.outputs.sb }}
+             dated ${{ steps.sync.outputs.sbdate }}
+          body: |
+            Assembled files copied from `source-build` onto `master` (everything
+            except `.github/`, which stays master-only).
+
+            - version: `${{ steps.sync.outputs.version }}`
+            - built from source-build commit: ${{ steps.sync.outputs.sb }}
+            - dated: ${{ steps.sync.outputs.sbdate }}
+
+            Once merged, run this workflow again with the `draft-github-release`
+            action to cut the release, if required.
 
   # ---------------------------------------------------------------------------
   # 2. Draft a GitHub release from the script currently on master.
