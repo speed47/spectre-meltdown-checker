@@ -233,11 +233,21 @@ check_mmio_linux() {
                     mmio_smt_mitigated=1
                     pstatus green YES
                 elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
-                    # The kernel appends "SMT Host state unknown" when running under
-                    # a hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
-                    # scheduling, so it can't be determined from inside the guest (#343).
-                    mmio_smt_mitigated=2
-                    pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    # The kernel appends "SMT Host state unknown" whenever the
+                    # HYPERVISOR CPUID bit is set. That's true both inside a guest
+                    # AND on a Xen dom0 (#343). In a guest we genuinely can't see
+                    # the host's SMT scheduling; on dom0/bare metal the local SMT
+                    # state is authoritative, so trust it there.
+                    if is_running_as_guest; then
+                        mmio_smt_mitigated=2
+                        pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    elif is_cpu_smt_enabled; then
+                        mmio_smt_mitigated=0
+                        pstatus yellow NO
+                    else
+                        mmio_smt_mitigated=1
+                        pstatus green YES
+                    fi
                 else
                     mmio_smt_mitigated=0
                     pstatus yellow NO
