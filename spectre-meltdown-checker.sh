@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0610898'
+VERSION='26.36.0730588'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -381,6 +381,7 @@ fi
     readonly INTEL_FAM6_ARROWLAKE_U=$((0xB5))
     readonly INTEL_FAM6_LUNARLAKE_M=$((0xBD))   # /* Lion Cove / Skymont */
     readonly INTEL_FAM6_PANTHERLAKE_L=$((0xCC)) # /* Cougar Cove / Darkmont */
+    readonly INTEL_FAM6_PANTHERLAKE_R=$((0xE5)) # /* Cougar Cove / Darkmont */
     readonly INTEL_FAM6_WILDCATLAKE_L=$((0xD5))
     readonly INTEL_FAM18_NOVALAKE=$((0x01))            # /* Coyote Cove / Arctic Wolf */
     readonly INTEL_FAM18_NOVALAKE_L=$((0x03))          # /* Coyote Cove / Arctic Wolf */
@@ -4184,8 +4185,18 @@ is_arm_cpu() {
 # Check whether SMT (HyperThreading) is enabled on the system
 # Returns: 0 if SMT enabled, 1 otherwise
 is_cpu_smt_enabled() {
-    local siblings cpucores
-    # SMT / HyperThreading is enabled if siblings != cpucores
+    local siblings cpucores smt_active
+    # Most reliable: /sys/devices/system/cpu/smt/active mirrors the kernel's
+    # sched_smt_active() (1=SMT active, 0=not), which is exactly what the kernel
+    # itself uses to derive the "SMT (disabled|vulnerable)" vulnerability strings.
+    if [ -r /sys/devices/system/cpu/smt/active ]; then
+        smt_active=$(cat /sys/devices/system/cpu/smt/active 2>/dev/null)
+        case "$smt_active" in
+            1) return 0 ;;
+            0) return 1 ;;
+        esac
+    fi
+    # Fallback: SMT / HyperThreading is enabled if siblings != cpucores
     if [ -e "$g_procfs/cpuinfo" ]; then
         siblings=$(awk '/^siblings/  {print $3;exit}' "$g_procfs/cpuinfo")
         cpucores=$(awk '/^cpu cores/ {print $4;exit}' "$g_procfs/cpuinfo")
@@ -4637,7 +4648,14 @@ is_running_as_guest() {
     if [ "${g_is_guest_vm_cached:-0}" != 1 ]; then
         g_is_guest_vm=0
         g_is_guest_vm_reason=''
-        if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
+        # A Xen dom0 runs on top of the hypervisor and therefore also has the
+        # 'hypervisor' CPUID flag set, but it's the privileged control domain:
+        # it has direct hardware access and a truthful view of the host CPU
+        # topology, so it must not be classified as a guest (#343). Check it
+        # before the cpuinfo probe below, which would otherwise match.
+        if is_xen_dom0; then
+            g_is_guest_vm=0
+        elif [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
             g_is_guest_vm=1
             g_is_guest_vm_reason="'hypervisor' flag in $g_procfs/cpuinfo"
         fi
@@ -6558,11 +6576,21 @@ check_mds_linux() {
                     mds_smt_mitigated=1
                     pstatus green YES
                 elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
-                    # The kernel appends "SMT Host state unknown" when running under
-                    # a hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
-                    # scheduling, so it can't be determined from inside the guest (#343).
-                    mds_smt_mitigated=2
-                    pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    # The kernel appends "SMT Host state unknown" whenever the
+                    # HYPERVISOR CPUID bit is set. That's true both inside a guest
+                    # AND on a Xen dom0 (#343). In a guest we genuinely can't see
+                    # the host's SMT scheduling; on dom0/bare metal the local SMT
+                    # state is authoritative, so trust it there.
+                    if is_running_as_guest; then
+                        mds_smt_mitigated=2
+                        pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    elif is_cpu_smt_enabled; then
+                        mds_smt_mitigated=0
+                        pstatus yellow NO
+                    else
+                        mds_smt_mitigated=1
+                        pstatus green YES
+                    fi
                 else
                     mds_smt_mitigated=0
                     pstatus yellow NO
@@ -6876,11 +6904,21 @@ check_mmio_linux() {
                     mmio_smt_mitigated=1
                     pstatus green YES
                 elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
-                    # The kernel appends "SMT Host state unknown" when running under
-                    # a hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
-                    # scheduling, so it can't be determined from inside the guest (#343).
-                    mmio_smt_mitigated=2
-                    pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    # The kernel appends "SMT Host state unknown" whenever the
+                    # HYPERVISOR CPUID bit is set. That's true both inside a guest
+                    # AND on a Xen dom0 (#343). In a guest we genuinely can't see
+                    # the host's SMT scheduling; on dom0/bare metal the local SMT
+                    # state is authoritative, so trust it there.
+                    if is_running_as_guest; then
+                        mmio_smt_mitigated=2
+                        pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    elif is_cpu_smt_enabled; then
+                        mmio_smt_mitigated=0
+                        pstatus yellow NO
+                    else
+                        mmio_smt_mitigated=1
+                        pstatus green YES
+                    fi
                 else
                     mmio_smt_mitigated=0
                     pstatus yellow NO
@@ -10320,10 +10358,18 @@ check_CVE_2019_11135_linux() {
             elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT vulnerable'; then
                 pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
             elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT Host state unknown'; then
-                # The kernel appends "SMT Host state unknown" when running under a
-                # hypervisor (X86_FEATURE_HYPERVISOR): the host controls SMT
-                # scheduling, so it can't be determined from inside the guest (#343).
-                pvulnstatus "$cve" UNK "TAA is mitigated and TSX is disabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
+                # "SMT Host state unknown" is emitted whenever the HYPERVISOR
+                # CPUID bit is set -- true both inside a guest AND on a Xen dom0
+                # (#343). In a guest we can't see the host's SMT scheduling; on
+                # dom0/bare metal the local SMT state is authoritative, so trust
+                # it there.
+                if is_running_as_guest; then
+                    pvulnstatus "$cve" UNK "TAA is mitigated and TSX is disabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
+                elif is_cpu_smt_enabled; then
+                    pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
+                else
+                    pvulnstatus "$cve" "$status" "$msg"
+                fi
             else
                 pvulnstatus "$cve" "$status" "$msg"
             fi
@@ -13339,7 +13385,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v351+i20260512+1cce
+# %%% MCEDB v351+i20260512+16e5
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
