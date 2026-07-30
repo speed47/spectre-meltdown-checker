@@ -1,0 +1,152 @@
+name: release
+
+# Manual, path-scoped release helper for master.
+#
+# `master` is BOTH the distribution branch (users download the script here)
+# AND the default branch that hosts the scheduled CI workflows
+# (autoupdate / stale / vuln-watch). `source-build` is a build-OUTPUT branch.
+#
+# We therefore never merge source-build into master: that would drag source-build's
+# whole tree, including the *absence* of the master-only workflows.
+# Instead we copy only the assembled artifact files across, and cut GitHub
+# releases from master directly.
+#
+# Two independent manual actions to run against the `master` branch:
+#
+#   1. sync-from-source-build : commit the assembled files (everything on
+#                               source-build EXCEPT .github/) onto master.
+#   2. draft-github-release   : create a DRAFT GitHub release from the script
+#                               currently on master, with an auto-drafted
+#                               changelog.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        required: true
+        default: sync-from-source-build
+        options:
+          - sync-from-source-build
+          - draft-github-release
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Copy assembled files from source-build onto master (no .github/).
+  # ---------------------------------------------------------------------------
+  sync-from-source-build:
+    if: inputs.action == 'sync-from-source-build'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: sync assembled files from source-build
+        run: |
+          set -eu
+          git fetch --no-tags origin source-build
+
+          # Every top-level entry on source-build EXCEPT .github/ (master keeps
+          # its own CI). Computed dynamically so any new top-level artifact is
+          # picked up automatically.
+          readarray -t paths < <(git ls-tree --name-only origin/source-build | grep -vxF '.github')
+          echo "Syncing: ${paths[*]}"
+
+          # Mirror source-build exactly for those paths, removing first so that
+          # deletions/renames inside doc/ etc. propagate too.
+          for p in "${paths[@]}"; do rm -rf -- "$p"; done
+          git checkout origin/source-build -- "${paths[@]}"
+          git add --all -- "${paths[@]}"
+
+          if git diff --cached --quiet; then
+            echo "master already up to date with source-build; nothing to sync."
+            exit 0
+          fi
+
+          ver=$(grep -m1 "^VERSION=" spectre-meltdown-checker.sh | cut -d"'" -f2)
+          sb=$(git rev-parse origin/source-build)
+          sbdate=$(git log -1 --format=%ai origin/source-build)
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "release: sync v${ver} from source-build
+
+ built from source-build commit ${sb}
+ dated ${sbdate}"
+          git push origin HEAD:master
+
+  # ---------------------------------------------------------------------------
+  # 2. Draft a GitHub release from the script currently on master.
+  # ---------------------------------------------------------------------------
+  draft-github-release:
+    if: inputs.action == 'draft-github-release'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: draft a release from the current master script
+        run: |
+          set -eu
+          ver=$(grep -m1 "^VERSION=" spectre-meltdown-checker.sh | cut -d"'" -f2)
+          tag="v${ver}"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "A release for $tag already exists; refusing to recreate." >&2
+            echo "Delete it first if needed." >&2
+            exit 1
+          fi
+
+          # Draft the changelog from the source-build commits assembled since the
+          # previous published release. We locate the source-build commit whose
+          # built VERSION equals the last release tag, then list what came after.
+          git fetch --no-tags origin source-build
+          last_tag=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')
+          old_ver="${last_tag#v}"
+
+          base=""
+          if [ -n "$old_ver" ]; then
+            while read -r h; do
+              v=$(git show "$h:spectre-meltdown-checker.sh" 2>/dev/null | grep -m1 "^VERSION=" | cut -d"'" -f2 || true)
+              if [ "$v" = "$old_ver" ]; then base="$h"; break; fi
+            done < <(git rev-list --max-count=500 origin/source-build)
+          fi
+
+          {
+            echo "## ${tag}"
+            echo
+            if [ -n "$base" ]; then
+              git log --no-merges --format='- %s' "${base}..origin/source-build"
+            else
+              echo "_Could not determine the previous release point automatically — please fill in the changelog. Last 30 assembled commits below as a starting point:_"
+              echo
+              git log --no-merges --format='- %s' --max-count=30 origin/source-build
+            fi
+          } > notes.md
+
+          echo "----- draft notes -----"; cat notes.md; echo "-----------------------"
+
+          gh release create "$tag" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes-file notes.md \
+            spectre-meltdown-checker.sh
+
+          echo "Draft release $tag created."
