@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0730501'
+VERSION='26.36.0808753'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -1807,6 +1807,14 @@ is_arch_cap_mmio_immune() {
     [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]
 }
 
+# Whether the MMIO arch-cap immunity bits are undetermined because the
+# IA32_ARCH_CAPABILITIES MSR couldn't be read (msr module unavailable or kernel
+# lockdown).
+# Returns: 0 if undetermined, 1 otherwise
+is_arch_cap_mmio_undetermined() {
+    [ "$cap_sbdr_ssdp_no" = -1 ] || [ "$cap_fbsdp_no" = -1 ] || [ "$cap_psdp_no" = -1 ]
+}
+
 # Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
 # Matches the kernel's NO_MMIO whitelist plus arch_cap_mmio_immune().
 # Model inventory and kernel-commit history are documented in check_mmio_linux().
@@ -3537,7 +3545,7 @@ dmesg_grep() {
         # dmesg truncated
         return 2
     fi
-    ret_dmesg_grep_grepped=$(dmesg 2>/dev/null | grep -E "$1" | head -n1)
+    ret_dmesg_grep_grepped=$(dmesg 2>/dev/null | grep -m 1 -E "$1")
     # not found:
     [ -z "$ret_dmesg_grep_grepped" ] && return 1
     # found, output is in $ret_dmesg_grep_grepped
@@ -3549,6 +3557,12 @@ dmesg_grep() {
 is_coreos() {
     command -v coreos-install >/dev/null 2>&1 && command -v toolbox >/dev/null 2>&1 && return 0
     return 1
+}
+
+# Check whether /proc/cpuinfo has $1 in the flags line
+# Returns: 0 if flag found, 1 otherwise
+cpuinfo_has_flag() {
+    grep -Eq '^flags\b.+\b'"$1"'\b' "$g_procfs/cpuinfo" 2>/dev/null
 }
 
 # >>>>>> libs/340_cpu_msr.sh <<<<<<
@@ -3929,8 +3943,8 @@ parse_cpu_details() {
     cap_avx2=0
     cap_avx512=0
     if [ -e "$g_procfs/cpuinfo" ]; then
-        if grep -qw avx2 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx2=1; fi
-        if grep -qw avx512 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx512=1; fi
+        if cpuinfo_has_flag avx2; then cap_avx2=1; fi
+        if cpuinfo_has_flag avx512; then cap_avx512=1; fi
         cpu_vendor=$(grep '^vendor_id' "$g_procfs/cpuinfo" | awk '{print $3}' | head -n1)
         cpu_friendly_name=$(grep '^model name' "$g_procfs/cpuinfo" | cut -d: -f2- | head -n1 | sed -e 's/^ *//')
         # ARM-style cpuinfo: parse per-core implementer/part/arch/variant/revision lists
@@ -4172,8 +4186,18 @@ is_arm_cpu() {
 # Check whether SMT (HyperThreading) is enabled on the system
 # Returns: 0 if SMT enabled, 1 otherwise
 is_cpu_smt_enabled() {
-    local siblings cpucores
-    # SMT / HyperThreading is enabled if siblings != cpucores
+    local siblings cpucores smt_active
+    # Most reliable: /sys/devices/system/cpu/smt/active mirrors the kernel's
+    # sched_smt_active() (1=SMT active, 0=not), which is exactly what the kernel
+    # itself uses to derive the "SMT (disabled|vulnerable)" vulnerability strings.
+    if [ -r /sys/devices/system/cpu/smt/active ]; then
+        smt_active=$(cat /sys/devices/system/cpu/smt/active 2>/dev/null)
+        case "$smt_active" in
+            1) return 0 ;;
+            0) return 1 ;;
+        esac
+    fi
+    # Fallback: SMT / HyperThreading is enabled if siblings != cpucores
     if [ -e "$g_procfs/cpuinfo" ]; then
         siblings=$(awk '/^siblings/  {print $3;exit}' "$g_procfs/cpuinfo")
         cpucores=$(awk '/^cpu cores/ {print $4;exit}' "$g_procfs/cpuinfo")
@@ -4497,25 +4521,41 @@ check_kernel_cpu_arch_mismatch() {
 # >>>>>> libs/370_hw_vmm.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-# Check whether the system is running as a Xen paravirtualized guest
-# Returns: 0 if Xen PV, 1 otherwise
-is_xen() {
-    local ret
-    if [ ! -d "$g_procfs/xen" ]; then
-        return 1
+
+# Probe Xen presence and guest type using the most reliable sources available.
+# Prefer /sys/hypervisor when avalable, fallback to dmesg otherwise.
+# Caches results in g_xen (1/0) and g_xen_guest_type (PV|PVH|HVM|'').
+_detect_xen() {
+    [ "${g_xen_cached:-0}" = 1 ] && return
+    g_xen=0
+    g_xen_guest_type=''
+    g_xen_cached=1
+
+    # Most reliable: /sys/hypervisor/type is 'xen' on any Xen domain (dom0
+    # included), and /sys/hypervisor/guest_type reports PV, PVH or HVM.
+    if [ -r /sys/hypervisor/type ] && [ "$(cat /sys/hypervisor/type 2>/dev/null)" = xen ]; then
+        g_xen=1
+        if [ -r /sys/hypervisor/guest_type ]; then
+            g_xen_guest_type=$(cat /sys/hypervisor/guest_type 2>/dev/null)
+        fi
+        return
     fi
 
-    # XXX do we have a better way that relying on dmesg?
-    dmesg_grep 'Booting paravirtualized kernel on Xen$'
-    ret=$?
-    if [ "$ret" -eq 2 ]; then
-        pr_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
-        return 1
-    elif [ "$ret" -eq 0 ]; then
-        return 0
-    else
-        return 1
+    # Fallback for kernels without /sys/hypervisor: /proc/xen plus a dmesg probe.
+    if [ -d "$g_procfs/xen" ]; then
+        dmesg_grep 'Booting paravirtualized kernel on Xen$'
+        case $? in
+            0) g_xen=1 ;;
+            2) pr_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script" ;;
+        esac
     fi
+}
+
+# Check whether the system is running on Xen (any domain type, dom0 included).
+# Returns: 0 if Xen, 1 otherwise
+is_xen() {
+    _detect_xen
+    [ "$g_xen" = 1 ]
 }
 
 # Check whether the system is a Xen Dom0 (privileged domain)
@@ -4532,40 +4572,100 @@ is_xen_dom0() {
     fi
 }
 
-# Check whether the system is a Xen DomU (unprivileged PV guest)
-# Returns: 0 if DomU, 1 otherwise
+# Check whether the system is running as a Xen PV DomU (the only Xen guest type
+# affected by Meltdown, which needs Xen-level mitigation).
+# Returns: 0 if PV DomU, 1 otherwise
 is_xen_domU() {
     local ret
     if ! is_xen; then
         return 1
     fi
 
-    # PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
+    if is_xen_dom0; then
+        return 1
+    fi
+
+    # When the reliable guest type is known, only PV domains (which aren't
+    # dom0, checked above) are the PV DomU case. PVH and HVM guests are not.
+    if [ -n "$g_xen_guest_type" ]; then
+        [ "$g_xen_guest_type" = PV ] && return 0
+        return 1
+    fi
+
+    # Fallback (no /sys/hypervisor/guest_type): PVHVM guests also print the
+    # 'Booting paravirtualized kernel' line, so exclude them via dmesg.
     dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'
     ret=$?
     if [ "$ret" -eq 0 ]; then
         return 1
     fi
 
-    if ! is_xen_dom0; then
-        return 0
-    else
-        return 1
-    fi
+    return 0
 }
 
-# Check whether the system is running as a guest inside a virtual machine.
+# Check whether we're running inside an OS-level container (LXC, Docker,
+# systemd-nspawn, etc.). Containers share the host kernel, so host/hypervisor
+# introspection (e.g. telling a Xen dom0 from a domU) is unreliable from inside
+# one: /proc/xen is exposed but empty, dmesg is the host's, etc. (issue #173)
+# Returns: 0 if in a container, 1 otherwise
+# Sets: g_is_container (1/0), g_container_reason
+is_running_in_container() {
+    local ctype
+    if [ "${g_is_container_cached:-0}" != 1 ]; then
+        g_is_container=0
+        g_container_reason=''
+        # systemd and most runtimes export 'container=' to PID 1's environment
+        if [ -r "$g_procfs/1/environ" ]; then
+            ctype=$(tr '\0' '\n' <"$g_procfs/1/environ" 2>/dev/null | sed -n 's/^container=//p' | head -n1)
+            if [ -n "$ctype" ]; then
+                g_is_container=1
+                g_container_reason="container=$ctype in $g_procfs/1/environ"
+            fi
+        fi
+        # Docker (and some others) drop a marker file at the filesystem root
+        if [ "$g_is_container" = 0 ] && [ -e /.dockerenv ]; then
+            g_is_container=1
+            g_container_reason="/.dockerenv present"
+        fi
+        # cgroup membership often reveals the runtime (lxc, docker, kubepods, ...)
+        if [ "$g_is_container" = 0 ] && [ -r "$g_procfs/1/cgroup" ]; then
+            if grep -qE '(^|[:/])(lxc|docker|kubepods|libpod|containerd|machine\.slice)([/.]|$)' "$g_procfs/1/cgroup" 2>/dev/null; then
+                g_is_container=1
+                g_container_reason="container runtime found in $g_procfs/1/cgroup"
+            fi
+        fi
+        g_is_container_cached=1
+    fi
+    [ "$g_is_container" = 1 ]
+}
+
+# Check whether the system is running as a guest inside a VM.
 # Uses the 'hypervisor' CPUID feature flag exposed in /proc/cpuinfo by KVM,
 # VMware, Hyper-V, VirtualBox, and most other type-1 and type-2 hypervisors.
+# Xen PV/PVH DomUs don't set that flag, so they're detected separately.
 # Returns: 0 if running as a VM guest, 1 otherwise
 # Sets: g_is_guest_vm (1=guest, 0=not a guest), g_is_guest_vm_reason
 is_running_as_guest() {
     if [ "${g_is_guest_vm_cached:-0}" != 1 ]; then
         g_is_guest_vm=0
         g_is_guest_vm_reason=''
-        if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
+        # A Xen dom0 runs on top of the hypervisor and therefore also has the
+        # 'hypervisor' CPUID flag set, but it's the privileged control domain:
+        # it has direct hardware access and a truthful view of the host CPU
+        # topology, so it must not be classified as a guest (#343). Check it
+        # before the cpuinfo probe below, which would otherwise match.
+        if is_xen_dom0; then
+            g_is_guest_vm=0
+        elif [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
             g_is_guest_vm=1
             g_is_guest_vm_reason="'hypervisor' flag in $g_procfs/cpuinfo"
+        fi
+        # Xen PV/PVH DomUs don't expose the 'hypervisor' CPUID flag. Don't
+        # classify a container on a Xen host as a guest here: we can't tell
+        # dom0 from domU from inside a container (handled separately).
+        if [ "$g_is_guest_vm" = 0 ] && is_xen && ! is_xen_dom0 && ! is_running_in_container; then
+            g_is_guest_vm=1
+            g_is_guest_vm_reason="Xen ${g_xen_guest_type:-PV} DomU"
         fi
         g_is_guest_vm_cached=1
     fi
@@ -5091,6 +5191,22 @@ check_cpu() {
                 pstatus green NO
             fi
         fi
+        # ARM exposes no userspace-readable CPUID/MSR to query SSBD support directly.
+        # The ARMv8.5 SSBS ("Speculative Store Bypass Safe") hardware bit, when present,
+        # surfaces as the 'ssbs' hwcap in /proc/cpuinfo. We use it *only* as a positive
+        # confirmation of SSB mitigation capability (Variant 4 / CVE-2018-3639): its
+        # absence proves nothing, because the kernel deliberately hides the hwcap on some
+        # cores (e.g. the erratum-3194386 SSBS self-sync workaround), so we must never
+        # infer immunity from a missing 'ssbs'.
+        if has_runtime; then
+            pr_info_nol "  * CPU indicates SSBS (Speculative Store Bypass Safe) capability: "
+            if grep '^Features' "$g_procfs/cpuinfo" | grep -qw ssbs; then
+                cap_ssbd='ARM SSBS (cpuinfo)'
+                pstatus green YES "$cap_ssbd"
+            else
+                pstatus blue UNKNOWN "not exposed (the kernel may hide it; cannot conclude)"
+            fi
+        fi
         return
     fi
 
@@ -5173,7 +5289,7 @@ check_cpu() {
     fi
     if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
+        if cpuinfo_has_flag ibrs; then
             cap_ibrs='IBRS (cpuinfo)'
             cap_spec_ctrl=1
             pstatus green YES "ibrs flag in $g_procfs/cpuinfo"
@@ -5248,7 +5364,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag ibpb; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_ibpb='IBPB (cpuinfo)'
             pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
@@ -5321,7 +5437,7 @@ check_cpu() {
     fi
     if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
+        if cpuinfo_has_flag stibp; then
             cap_stibp='STIBP (cpuinfo)'
             pstatus green YES "stibp flag in $g_procfs/cpuinfo"
             ret=$READ_CPUID_RET_OK
@@ -5393,9 +5509,9 @@ check_cpu() {
 
     if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+        if cpuinfo_has_flag ssbd; then
             cap_ssbd='SSBD (cpuinfo)'
-        elif grep ^flags "$g_procfs/cpuinfo" | grep -qw virt_ssbd; then
+        elif cpuinfo_has_flag virt_ssbd; then
             cap_ssbd='SSBD in VIRT_SPEC_CTRL (cpuinfo)'
         fi
     fi
@@ -5455,7 +5571,7 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
-    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag flush_l1d; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
         cap_l1df=1
@@ -5475,7 +5591,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag md_clear; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_md_clear=1
             pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
@@ -5545,7 +5661,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag arch_capabilities; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
             cap_arch_capabilities=1
@@ -5647,8 +5763,33 @@ check_cpu() {
                     pstatus yellow NO
                 fi
             elif [ $ret = $READ_MSR_RET_KO ]; then
+                # the MSR access faulted: the register is genuinely absent, so the
+                # pre-seeded 0 ("not advertised") values are correct.
                 pstatus yellow NO
             else
+                # RET_ERR (no msr module) or RET_LOCKDOWN (MSR reads restricted):
+                # CPUID told us the MSR exists but we couldn't read it, so its bits
+                # are undetermined, not 0. Leaving them at 0 would falsely claim the
+                # CPU "explicitly indicates not immune".
+                # Reset every arch-cap-derived value to -1 (UNKNOWN) instead.
+                cap_rdcl_no=-1
+                cap_taa_no=-1
+                cap_mds_no=-1
+                cap_ibrs_all=-1
+                cap_rsba=-1
+                cap_l1dflush_no=-1
+                cap_ssb_no=-1
+                cap_pschange_msc_no=-1
+                cap_tsx_ctrl_msr=-1
+                cap_gds_ctrl=-1
+                cap_gds_no=-1
+                cap_rfds_no=-1
+                cap_rfds_clear=-1
+                cap_its_no=-1
+                cap_sbdr_ssdp_no=-1
+                cap_fbsdp_no=-1
+                cap_psdp_no=-1
+                cap_fb_clear=-1
                 pstatus yellow UNKNOWN "$ret_read_msr_msg"
             fi
         fi
@@ -6399,7 +6540,7 @@ check_mds_linux() {
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
             kernel_md_clear_can_tell=1
-            if [ "$g_mode" = live ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            if [ "$g_mode" = live ] && cpuinfo_has_flag md_clear; then
                 kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
                 pstatus green YES "$kernel_md_clear"
             fi
@@ -6435,6 +6576,22 @@ check_mds_linux() {
                 if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
                     mds_smt_mitigated=1
                     pstatus green YES
+                elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
+                    # The kernel appends "SMT Host state unknown" whenever the
+                    # HYPERVISOR CPUID bit is set. That's true both inside a guest
+                    # AND on a Xen dom0 (#343). In a guest we genuinely can't see
+                    # the host's SMT scheduling; on dom0/bare metal the local SMT
+                    # state is authoritative, so trust it there.
+                    if is_running_as_guest; then
+                        mds_smt_mitigated=2
+                        pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    elif is_cpu_smt_enabled; then
+                        mds_smt_mitigated=0
+                        pstatus yellow NO
+                    else
+                        mds_smt_mitigated=1
+                        pstatus green YES
+                    fi
                 else
                     mds_smt_mitigated=0
                     pstatus yellow NO
@@ -6461,6 +6618,9 @@ check_mds_linux() {
                             if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
                                 mystatus=OK
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            elif [ "$mds_smt_mitigated" = 2 ]; then
+                                mystatus=UNK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation and it's enabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
                             else
                                 mystatus=VULN
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
@@ -6518,15 +6678,22 @@ check_mmio_bsd() {
     # the only partial defense available, and without OS-level VERW invocation it
     # cannot close the vulnerability.
     local unk
-    unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif is_cpu_mmio_unknown; then
-        if [ "$opt_paranoid" = 1 ]; then
-            pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
-            explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+        if is_arch_cap_mmio_undetermined; then
+            # We only landed in the "unknown" bucket because the IA32_ARCH_CAPABILITIES
+            # MSR couldn't be read: the CPU might actually advertise MMIO immunity.
+            unk="your CPU's MMIO Stale Data status could not be determined: the IA32_ARCH_CAPABILITIES MSR (0x10a) couldn't be read"
+            pvulnstatus "$cve" UNK "$unk; load the cpuctl module and/or re-run as root to get a definitive answer"
         else
-            pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+            unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+            if [ "$opt_paranoid" = 1 ]; then
+                pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
+                explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+            else
+                pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+            fi
         fi
     else
         pvulnstatus "$cve" VULN "your CPU is affected and no BSD has implemented an MMIO Stale Data mitigation"
@@ -6536,7 +6703,7 @@ check_mmio_bsd() {
 
 # MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - Linux mitigation check
 check_mmio_linux() {
-    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
+    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell kernel_mmio_unknown_aware mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
     status=UNK
     sys_interface_available=0
     msg=''
@@ -6678,6 +6845,11 @@ check_mmio_linux() {
         # MMIO Stale Data is Intel-only; skip x86-specific kernel/MSR checks on non-x86 kernels
         kernel_mmio=''
         kernel_mmio_can_tell=0
+        # Whether this kernel implements the X86_BUG_MMIO_UNKNOWN distinction, i.e. can
+        # report "Unknown: No mitigations" for CPUs Intel never assessed. Only such kernels
+        # emit a *trustworthy* "Not affected": they would have said "Unknown" instead if the
+        # CPU were in the unknown bucket. Detected by the presence of the literal sysfs string in the kernel image.
+        kernel_mmio_unknown_aware=0
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports MMIO Stale Data mitigation: "
             kernel_mmio_can_tell=1
@@ -6687,6 +6859,10 @@ check_mmio_linux() {
                 pr_debug "mmio: found 'mmio_stale_data' string in kernel image"
                 kernel_mmio='found MMIO Stale Data mitigation evidence in kernel image'
                 pstatus green YES "$kernel_mmio"
+            fi
+            if [ -z "$g_kernel_err" ] && grep -qF 'Unknown: No mitigations' "$g_kernel" 2>/dev/null; then
+                pr_debug "mmio: kernel image knows the 'Unknown: No mitigations' state (X86_BUG_MMIO_UNKNOWN-aware)"
+                kernel_mmio_unknown_aware=1
             fi
             if [ -z "$kernel_mmio" ] && [ -n "$opt_config" ] && grep -q '^CONFIG_MITIGATION_MMIO_STALE_DATA=y' "$opt_config"; then
                 kernel_mmio='found MMIO Stale Data mitigation config option enabled'
@@ -6728,6 +6904,22 @@ check_mmio_linux() {
                 if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
                     mmio_smt_mitigated=1
                     pstatus green YES
+                elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
+                    # The kernel appends "SMT Host state unknown" whenever the
+                    # HYPERVISOR CPUID bit is set. That's true both inside a guest
+                    # AND on a Xen dom0 (#343). In a guest we genuinely can't see
+                    # the host's SMT scheduling; on dom0/bare metal the local SMT
+                    # state is authoritative, so trust it there.
+                    if is_running_as_guest; then
+                        mmio_smt_mitigated=2
+                        pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    elif is_cpu_smt_enabled; then
+                        mmio_smt_mitigated=0
+                        pstatus yellow NO
+                    else
+                        mmio_smt_mitigated=1
+                        pstatus green YES
+                    fi
                 else
                     mmio_smt_mitigated=0
                     pstatus yellow NO
@@ -6747,12 +6939,32 @@ check_mmio_linux() {
         # Bypass the normal sysfs reconciliation: sysfs reports "Unknown: No mitigations"
         # only on v6.0-v6.15. On earlier and on v6.16+ kernels it wrongly says "Not affected"
         # for these CPUs (which predate FB_CLEAR microcode and Intel's affected-processor list).
-        unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
-        if [ "$opt_paranoid" = 1 ]; then
-            pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
-            explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released. Consider replacing affected hardware."
+        if is_arch_cap_mmio_undetermined; then
+            # We landed in the "unknown" bucket only because the IA32_ARCH_CAPABILITIES
+            # MSR couldn't be read from userspace (no msr module, or kernel lockdown under
+            # Secure Boot): the CPU might actually advertise MMIO immunity
+            # through FBSDP_NO/PSDP_NO/SBDR_SSDP_NO, but we can't read it, however the kernel can.
+            #
+            # We can trust a sysfs "Not affected" only if this kernel is X86_BUG_MMIO_UNKNOWN-aware:
+            # such a kernel would have reported "Unknown: No mitigations" instead if the CPU were in
+            # the unknown bucket, so "Not affected" genuinely means arch-cap immune.
+            # On kernels that lack that distinction, a "Not affected" is not trustworthy for these CPUs,
+            # so we keep UNK.
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ] &&
+                [ "$kernel_mmio_unknown_aware" = 1 ] && [ "$status" = OK ]; then
+                pvulnstatus "$cve" OK "your kernel reports your CPU as not affected, and this kernel distinguishes the MMIO 'unknown' state, so its verdict is trustworthy (we couldn't read the IA32_ARCH_CAPABILITIES MSR ourselves)"
+            else
+                unk="your CPU's MMIO Stale Data status could not be determined: the IA32_ARCH_CAPABILITIES MSR (0x10a) couldn't be read"
+                pvulnstatus "$cve" UNK "$unk; load the msr module and/or disable kernel lockdown, then re-run as root to get a definitive answer"
+            fi
         else
-            pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+            unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+            if [ "$opt_paranoid" = 1 ]; then
+                pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
+                explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released."
+            else
+                pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+            fi
         fi
     else
         if [ "$opt_sysfs_only" != 1 ]; then
@@ -6765,6 +6977,9 @@ check_mmio_linux() {
                             if [ "$opt_paranoid" != 1 ] || [ "$mmio_smt_mitigated" = 1 ]; then
                                 mystatus=OK
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            elif [ "$mmio_smt_mitigated" = 2 ]; then
+                                mystatus=UNK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation and it's enabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
                             else
                                 mystatus=VULN
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
@@ -7665,7 +7880,7 @@ check_CVE_2017_5715_linux() {
                 # which in that case means ibrs is supported *and* enabled for kernel & user
                 # as per the ibrs patch series v3
                 if [ -z "$g_ibrs_supported" ]; then
-                    if grep ^flags "$g_procfs/cpuinfo" | grep -qw spec_ctrl_ibrs; then
+                    if cpuinfo_has_flag spec_ctrl_ibrs; then
                         pr_debug "ibrs: found spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
                         g_ibrs_supported="spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
                         # enabled=2 -> kernel & user
@@ -8921,7 +9136,7 @@ check_CVE_2017_5753_bsd() {
 pti_performance_check() {
     local ret pcid invpcid
     pr_info_nol "  * Reduced performance impact of PTI: "
-    if [ -e "$g_procfs/cpuinfo" ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw pcid; then
+    if cpuinfo_has_flag pcid; then
         pcid=1
     else
         read_cpuid 0x1 0x0 "$ECX" 17 1 1
@@ -8931,7 +9146,7 @@ pti_performance_check() {
         fi
     fi
 
-    if [ -e "$g_procfs/cpuinfo" ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw invpcid; then
+    if cpuinfo_has_flag invpcid; then
         invpcid=1
     else
         read_cpuid 0x7 0x0 "$EBX" 10 1 1
@@ -8955,7 +9170,7 @@ check_CVE_2017_5754() {
 }
 
 check_CVE_2017_5754_linux() {
-    local status sys_interface_available msg kpti_support kpti_can_tell kpti_enabled dmesg_grep pti_xen_pv_domU xen_pv_domo xen_pv_domu explain_text
+    local status sys_interface_available msg kpti_support kpti_can_tell kpti_enabled dmesg_grep pti_xen_pv_domU xen_pv_domo xen_pv_domu xen_unknown_container explain_text
     status=UNK
     sys_interface_available=0
     msg=''
@@ -9020,11 +9235,11 @@ check_CVE_2017_5754_linux() {
             dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
             # aarch64
             dmesg_grep="$dmesg_grep|CPU features: detected( feature)?: Kernel page table isolation \(KPTI\)"
-            if grep ^flags "$g_procfs/cpuinfo" | grep -qw pti; then
+            if cpuinfo_has_flag pti; then
                 # vanilla PTI patch sets the 'pti' flag in cpuinfo
                 pr_debug "kpti_enabled: found 'pti' flag in $g_procfs/cpuinfo"
                 kpti_enabled=1
-            elif grep ^flags "$g_procfs/cpuinfo" | grep -qw kaiser; then
+            elif cpuinfo_has_flag kaiser; then
                 # kernel line 4.9 sets the 'kaiser' flag in cpuinfo
                 pr_debug "kpti_enabled: found 'kaiser' flag in $g_procfs/cpuinfo"
                 kpti_enabled=1
@@ -9077,14 +9292,24 @@ check_CVE_2017_5754_linux() {
     # Test if the current host is a Xen PV Dom0 / DomU
     xen_pv_domo=0
     xen_pv_domu=0
-    is_xen_dom0 && xen_pv_domo=1
-    is_xen_domU && xen_pv_domu=1
+    xen_unknown_container=0
+    if is_xen && ! is_xen_dom0 && is_running_in_container; then
+        # We can see Xen, but we're inside a container so /proc/xen/capabilities
+        # isn't exposed and dmesg is the host's: we can't tell a safe Dom0 from
+        # a vulnerable PV DomU from in here (issue #173).
+        xen_unknown_container=1
+    else
+        is_xen_dom0 && xen_pv_domo=1
+        is_xen_domU && xen_pv_domu=1
+    fi
 
     if [ "$g_mode" = live ]; then
         # checking whether we're running under Xen PV 64 bits. If yes, we are affected by affected_variant3
         # (unless we are a Dom0)
         pr_info_nol "* Running as a Xen PV DomU: "
-        if [ "$xen_pv_domu" = 1 ]; then
+        if [ "$xen_unknown_container" = 1 ]; then
+            pstatus yellow UNKNOWN "running in a container, can't query Xen from here"
+        elif [ "$xen_pv_domu" = 1 ]; then
             pstatus yellow YES
         else
             pstatus blue NO
@@ -9097,7 +9322,10 @@ check_CVE_2017_5754_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$g_mode" = live ]; then
-            if [ "$kpti_enabled" = 1 ]; then
+            if [ "$xen_unknown_container" = 1 ]; then
+                pvulnstatus "$cve" UNK "running inside a container on a Xen host, can't determine if the underlying domain is a vulnerable PV DomU"
+                explain "This system looks like a container ($g_container_reason) running on a Xen host. Whether the underlying domain is a safe Dom0 or a vulnerable PV DomU can't be reliably determined from inside a container (/proc/xen is exposed but empty, and dmesg belongs to the host). Please re-run this script directly on the host, outside the container, to get an accurate result."
+            elif [ "$kpti_enabled" = 1 ]; then
                 pvulnstatus "$cve" OK "PTI mitigates the vulnerability"
             elif [ "$xen_pv_domo" = 1 ]; then
                 pvulnstatus "$cve" OK "Xen Dom0s are safe and do not require PTI"
@@ -9846,7 +10074,7 @@ check_CVE_2018_3646_linux() {
 
         pr_info "* Mitigation 2"
         pr_info_nol "  * L1D flush is supported by kernel: "
-        if [ "$g_mode" = live ] && grep -qw flush_l1d "$g_procfs/cpuinfo"; then
+        if [ "$g_mode" = live ] && cpuinfo_has_flag flush_l1d; then
             l1d_kernel="found flush_l1d in $g_procfs/cpuinfo"
         fi
         if [ -z "$l1d_kernel" ]; then
@@ -9919,7 +10147,7 @@ check_CVE_2018_3646_linux() {
 
         pr_info_nol "  * Hardware-backed L1D flush supported: "
         if [ "$g_mode" = live ]; then
-            if grep -qw flush_l1d "$g_procfs/cpuinfo" || [ -n "$l1d_xen_hardware" ]; then
+            if cpuinfo_has_flag flush_l1d || [ -n "$l1d_xen_hardware" ]; then
                 pstatus green YES "performance impact of the mitigation will be greatly reduced"
             else
                 pstatus blue NO "flush will be done in software, this is slower"
@@ -10130,6 +10358,19 @@ check_CVE_2019_11135_linux() {
                 pvulnstatus "$cve" VULN "TSX must be disabled for full mitigation"
             elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT vulnerable'; then
                 pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
+            elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT Host state unknown'; then
+                # "SMT Host state unknown" is emitted whenever the HYPERVISOR
+                # CPUID bit is set -- true both inside a guest AND on a Xen dom0
+                # (#343). In a guest we can't see the host's SMT scheduling; on
+                # dom0/bare metal the local SMT state is authoritative, so trust
+                # it there.
+                if is_running_as_guest; then
+                    pvulnstatus "$cve" UNK "TAA is mitigated and TSX is disabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
+                elif is_cpu_smt_enabled; then
+                    pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
+                else
+                    pvulnstatus "$cve" "$status" "$msg"
+                fi
             else
                 pvulnstatus "$cve" "$status" "$msg"
             fi
@@ -11555,13 +11796,23 @@ check_CVE_2023_20593_linux() {
             fi
         fi
         if [ "$zenbleed_print_vuln" = 1 ]; then
-            pvulnstatus "$cve" VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
-            explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
-                "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
-                "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
-                "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue.\n " \
-                "To manually mitigate the issue right now, you may use the following command: \`wrmsr -a 0xc0011029 \$((\$(rdmsr -c 0xc0011029) | (1<<9)))\`,\n " \
-                "however note that this manual mitigation will only be active until the next reboot."
+            if [ "$g_mode" = live ] && is_running_as_guest; then
+                # Both Zenbleed mitigations are applied at the host level: an
+                # up-to-date microcode, or the host kernel setting FP_BACKUP_FIX
+                # in DE_CFG. From inside a guest we can't read that MSR and can't
+                # trust the microcode version the hypervisor presents, so we can't
+                # confirm or deny the mitigation -- don't cry VULN (#488).
+                pvulnstatus "$cve" UNK "Zenbleed mitigation can't be verified from inside a VM guest ($g_is_guest_vm_reason): it may be applied by the hypervisor host, but that isn't observable from here"
+                explain "Zenbleed is mitigated either by an up-to-date CPU microcode or by the host kernel setting the FP_BACKUP_FIX bit (DE_CFG MSR 0xc0011029 bit 9). Both are host-level: a guest can neither read that MSR nor trust the microcode version the hypervisor presents (see the VM note in the hardware section above). Re-run this script on the hypervisor host to get an accurate result."
+            else
+                pvulnstatus "$cve" VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+                explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
+                    "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
+                    "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
+                    "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue.\n " \
+                    "To manually mitigate the issue right now, you may use the following command: \`wrmsr -a 0xc0011029 \$((\$(rdmsr -c 0xc0011029) | (1<<9)))\`,\n " \
+                    "however note that this manual mitigation will only be active until the next reboot."
+            fi
         fi
         unset zenbleed_print_vuln
     else
