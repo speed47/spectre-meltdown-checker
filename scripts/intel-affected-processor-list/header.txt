@@ -1,0 +1,18 @@
+# vim: set ts=4 sw=4 sts=4 et:
+#
+# N: Not affected
+# S: Affected, software fix
+# H: Affected, hardware fix
+# M: Affected, MCU update needed
+# B: Affected, BIOS update needed
+# X: Affected, no planned mitigation
+# Y: Affected (no details available)
+# MS: Affected, MCU + software fix
+# HS: Affected, hardware + software fix
+# HM: Affected, hardware + MCU fix
+#
+# Entries may have an optional hybrid qualifier after the CPUID:
+#   0xCPUID,H=1,...   matches only hybrid CPUs (CPUID.0x7.EDX[15]=1)
+#   0xCPUID,H=0,...   matches only non-hybrid CPUs (CPUID.0x7.EDX[15]=0)
+#   0xCPUID,...        matches any CPU (no qualifier = fallback)
+#
