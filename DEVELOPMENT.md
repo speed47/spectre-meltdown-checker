@@ -33,30 +33,30 @@ These terms have precise meanings throughout the codebase and output:
 
 ## Branch Model
 
-The project uses 4 branches organized in two pipelines (production and dev/test). Developers work on the source branches; CI builds the monolithic script and pushes it to the corresponding output branch.
+The project uses five branches, with separate experimental and production pipelines. Developers work on `test` and `source`; CI builds the monolithic script and pushes it to the corresponding build output branch. The production script is then promoted from `source-build` to `master`.
 
 | Branch | Contents | Pushed by |
 |--------|----------|-----------|
-| **`test`** | Dev/test source (split files + Makefile) | Developers |
+| **`test`** | Experimental patches and/or test patches for reported issues (split files + Makefile) | Developers |
 | **`test-build`** | Monolithic test script (built artifact) | CI from `test` |
-| **`source`** | Production source (split files + Makefile) | Developers |
-| **`source-build`** | Monolithic test script (built artifact) | CI from `source` |
-| **`master`** | Monolithic production script (built artifact) | `release` workflow, synced from `source-build` |
+| **`source`** | Source code destined for `master` (split files + Makefile) | Developers |
+| **`source-build`** | Monolithic pre-production script (built artifact) | CI from `source` |
+| **`master`** | Latest script believed to be production-grade, plus master-only artifacts | Script promoted by the `release` workflow from `source-build` |
 
 - **`source`** and **`test`** contain the split source files and the Makefile. These are the branches developers commit to.
-- **`master`**, **`source-build`** and **`test-build`** contain only the monolithic `spectre-meltdown-checker.sh` built by CI. Nobody commits to these directly.
-- **`master`** is the preexisting production branch that users pull from. It cannot be renamed.
-- **`test-build`** is a testing branch that users can pull from to test pre-release versions.
-- **`source-build`** is a preprod branch to prepare the artifact before releasing it to **`master`**. It is a build *output* branch and is never merged into `master`; instead the assembled files are copied across by the manual `release` workflow (see [RELEASE.md](RELEASE.md)), which keeps `master`'s own CI workflows untouched.
+- **`test`** is used for experimental patches and/or test patches related to reported issues. Its history is not guaranteed to be linear, and it is usually not merged into `source`.
+- **`source`** has a linear history and contains code that will make it to `master`. Accepted changes from experiments or issue testing are applied selectively, preserving that linear history.
+- **`test-build`** and **`source-build`** are CI-managed build output branches. Users can pull `test-build` to try experimental or issue-specific patches; `source-build` holds the assembled script from `source` before promotion to production.
+- **`master`** contains the latest version of `spectre-meltdown-checker.sh` believed to be production-grade. It is the preexisting production branch that users pull from and cannot be renamed. It also contains master-only artifacts, such as workflows.
+- **`source-build`** is never merged directly into `master`. The manual `release` workflow copies every top-level entry present on `source-build` except `.github/` into a pull request against `master`. This includes the assembled `spectre-meltdown-checker.sh`, documentation and container files, while preserving `master`'s own workflows. The changes reach `master` when that pull request is merged. See [RELEASE.md](RELEASE.md) for the release procedure.
 
 Typical workflow:
-1. Feature/fix branches are created from `test` and merged back into `test`.
-2. CI builds the script and pushes it to `test-build` for testing.
-3. When ready for release, `test` is merged into `source`.
-4. CI builds the script and pushes it to `source-build` for production.
-5. Developer runs the manual `release` workflow to sync `source-build`'s
-   assembled files onto `master` and draft a GitHub release. See
-   [RELEASE.md](RELEASE.md) for the full procedure.
+1. Develop production-bound changes on `source`, keeping its history linear.
+2. When experimentation or testing a reported issue is needed, use `test`. CI builds the script and pushes it to `test-build` for testing.
+3. Apply accepted experimental fixes selectively to `source`, preserving its linear history. Usually, `test` itself is not merged into `source`.
+4. CI builds the script from `source` and pushes it to `source-build` for pre-production validation.
+5. Once the script is believed to be production-grade, run the manual `release` workflow on `master` with `action = sync-from-source-build`, then review and merge the resulting artifact-sync pull request.
+6. To publish a formal GitHub release, separately run the workflow on `master` with `action = draft-github-release`, then review and publish the draft. Updating `master` does not require publishing a GitHub release. See [RELEASE.md](RELEASE.md) for the full procedure.
 
 ## Versioning
 
