@@ -17,25 +17,107 @@ jobs:
         with:
           ref: source
       - name: Install prerequisites
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends iucode-tool sqlite3 unzip shfmt
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends iucode-tool sqlite3 unzip shfmt python3
       - name: Update microcode versions
         run: ./scripts/update_mcedb.sh
       - name: Update Intel models
         run: ./scripts/update_intel_models.sh
+      - name: Update Intel affected processors
+        run: |
+          git clone https://github.com/intel/Intel-affected-processor-list.git \
+            "$RUNNER_TEMP/Intel-affected-processor-list"
+          python3 scripts/intel-affected-processor-list/build_inteldb.py \
+            "$RUNNER_TEMP/Intel-affected-processor-list" src/db/100_inteldb.sh \
+            --base-db scripts/intel-affected-processor-list/historical_records.db
       - name: Check git diff
         id: diff
         run: |
-          echo change="$(git diff | awk '/MCEDB/ { if(V) { print V" to "$4; exit } else { V=$4 } }')" >> "$GITHUB_OUTPUT"
-          echo nbdiff="$(git diff | grep -cE -- '^\+# [AI],')" >> "$GITHUB_OUTPUT"
+          if git diff --quiet -- src/db/200_mcedb.sh src/libs/003_intel_models.sh src/db/100_inteldb.sh; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          def previous(path):
+              return subprocess.check_output(['git', 'show', f'HEAD:{path}'], text=True)
+
+          def records(text, kind):
+              result = {}
+              for line in text.splitlines():
+                  if kind == 'microcode' and re.match(r'^# [AI],', line):
+                      fields = line[2:].split(',')
+                      result[tuple(fields[:3])] = tuple(fields[3:])
+                  elif kind == 'models':
+                      match = re.match(r'\s*readonly (INTEL_\w+)=(.*)', line)
+                      if match:
+                          result[match[1]] = match[2]
+                  elif kind == 'processors' and line.startswith('# 0x'):
+                      fields = line[2:].rstrip(',').split(',')
+                      qualifier = fields[1] if fields[1].startswith('H=') else ''
+                      result[(fields[0], qualifier)] = tuple(fields[2:] if qualifier else fields[1:])
+              return result
+
+          outputs = {}
+          for kind, path in (
+              ('microcode', 'src/db/200_mcedb.sh'),
+              ('models', 'src/libs/003_intel_models.sh'),
+              ('processors', 'src/db/100_inteldb.sh'),
+          ):
+              old_text = previous(path)
+              new_text = Path(path).read_text(encoding='utf-8')
+              old = records(old_text, kind)
+              new = records(new_text, kind)
+              added = len(new.keys() - old.keys())
+              removed = len(old.keys() - new.keys())
+              updated = sum(old[key] != new[key] for key in old.keys() & new.keys())
+              outputs[kind] = f'{added} added, {updated} updated, {removed} removed ({len(new)} total)'
+              if kind == 'microcode':
+                  def version(text):
+                      match = re.search(r'^# %%% MCEDB (\S+)', text, re.MULTILINE)
+                      if not match:
+                          raise ValueError('Missing MCEDB version marker')
+                      return match[1]
+                  before, after = version(old_text), version(new_text)
+                  outputs['mcedb'] = f'{before} -> {after}' if before != after else f'{after} (unchanged)'
+                  outputs['microcode_changes'] = added + updated + removed
+          outputs['intel_revision'] = subprocess.check_output(
+              ['git', '-C', os.path.join(os.environ['RUNNER_TEMP'], 'Intel-affected-processor-list'),
+               'rev-parse', 'HEAD'], text=True,
+          ).strip()
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
+              for key, value in outputs.items():
+                  print(f'{key}={value}', file=stream)
+          PY
           git diff
           cat "$GITHUB_OUTPUT"
       - name: Create Pull Request if needed
-        if: steps.diff.outputs.nbdiff != '0'
+        if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          base: source
           branch: autoupdate-fwdb
-          commit-message: "update: fwdb from ${{ steps.diff.outputs.change }}, ${{ steps.diff.outputs.nbdiff }} microcode changes"
-          title: "[Auto] Update fwdb from ${{ steps.diff.outputs.change }}"
+          add-paths: |
+            src/db/200_mcedb.sh
+            src/libs/003_intel_models.sh
+            src/db/100_inteldb.sh
+          commit-message: |
+            update: CPU databases, ${{ steps.diff.outputs.microcode_changes }} microcode changes
+
+            MCEDB: ${{ steps.diff.outputs.mcedb }}
+            Microcode records: ${{ steps.diff.outputs.microcode }}
+            Intel models: ${{ steps.diff.outputs.models }}
+            Intel affected-processor profiles: ${{ steps.diff.outputs.processors }}
+            Intel CSV revision: ${{ steps.diff.outputs.intel_revision }}
+          title: "[Auto] Update CPU databases: MCEDB ${{ steps.diff.outputs.mcedb }}, ${{ steps.diff.outputs.microcode_changes }} microcode changes"
           body: |
-            Automated PR to update fwdb from ${{ steps.diff.outputs.change }}
-            Detected ${{ steps.diff.outputs.nbdiff }} microcode changes
+            Automated PR to refresh the CPU/microcode databases:
+
+            - **MCEDB version:** ${{ steps.diff.outputs.mcedb }}
+            - **Microcode records:** ${{ steps.diff.outputs.microcode }}
+            - **Intel CPU models:** ${{ steps.diff.outputs.models }}
+            - **Intel affected-processor profiles:** ${{ steps.diff.outputs.processors }}
