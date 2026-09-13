@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0730501'
+VERSION='26.36.0913490'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -1807,6 +1807,14 @@ is_arch_cap_mmio_immune() {
     [ "$cap_sbdr_ssdp_no" = 1 ] && [ "$cap_fbsdp_no" = 1 ] && [ "$cap_psdp_no" = 1 ]
 }
 
+# Whether the MMIO arch-cap immunity bits are undetermined because the
+# IA32_ARCH_CAPABILITIES MSR couldn't be read (msr module unavailable or kernel
+# lockdown).
+# Returns: 0 if undetermined, 1 otherwise
+is_arch_cap_mmio_undetermined() {
+    [ "$cap_sbdr_ssdp_no" = -1 ] || [ "$cap_fbsdp_no" = -1 ] || [ "$cap_psdp_no" = -1 ]
+}
+
 # Check whether the CPU is known to be unaffected by MMIO Stale Data (CVE-2022-21123/21125/21166)
 # Matches the kernel's NO_MMIO whitelist plus arch_cap_mmio_immune().
 # Model inventory and kernel-commit history are documented in check_mmio_linux().
@@ -3537,7 +3545,7 @@ dmesg_grep() {
         # dmesg truncated
         return 2
     fi
-    ret_dmesg_grep_grepped=$(dmesg 2>/dev/null | grep -E "$1" | head -n1)
+    ret_dmesg_grep_grepped=$(dmesg 2>/dev/null | grep -m 1 -E "$1")
     # not found:
     [ -z "$ret_dmesg_grep_grepped" ] && return 1
     # found, output is in $ret_dmesg_grep_grepped
@@ -3549,6 +3557,12 @@ dmesg_grep() {
 is_coreos() {
     command -v coreos-install >/dev/null 2>&1 && command -v toolbox >/dev/null 2>&1 && return 0
     return 1
+}
+
+# Check whether /proc/cpuinfo has $1 in the flags line
+# Returns: 0 if flag found, 1 otherwise
+cpuinfo_has_flag() {
+    grep -Eq '^flags\b.+\b'"$1"'\b' "$g_procfs/cpuinfo" 2>/dev/null
 }
 
 # >>>>>> libs/340_cpu_msr.sh <<<<<<
@@ -3929,8 +3943,8 @@ parse_cpu_details() {
     cap_avx2=0
     cap_avx512=0
     if [ -e "$g_procfs/cpuinfo" ]; then
-        if grep -qw avx2 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx2=1; fi
-        if grep -qw avx512 "$g_procfs/cpuinfo" 2>/dev/null; then cap_avx512=1; fi
+        if cpuinfo_has_flag avx2; then cap_avx2=1; fi
+        if cpuinfo_has_flag avx512; then cap_avx512=1; fi
         cpu_vendor=$(grep '^vendor_id' "$g_procfs/cpuinfo" | awk '{print $3}' | head -n1)
         cpu_friendly_name=$(grep '^model name' "$g_procfs/cpuinfo" | cut -d: -f2- | head -n1 | sed -e 's/^ *//')
         # ARM-style cpuinfo: parse per-core implementer/part/arch/variant/revision lists
@@ -4172,8 +4186,18 @@ is_arm_cpu() {
 # Check whether SMT (HyperThreading) is enabled on the system
 # Returns: 0 if SMT enabled, 1 otherwise
 is_cpu_smt_enabled() {
-    local siblings cpucores
-    # SMT / HyperThreading is enabled if siblings != cpucores
+    local siblings cpucores smt_active
+    # Most reliable: /sys/devices/system/cpu/smt/active mirrors the kernel's
+    # sched_smt_active() (1=SMT active, 0=not), which is exactly what the kernel
+    # itself uses to derive the "SMT (disabled|vulnerable)" vulnerability strings.
+    if [ -r /sys/devices/system/cpu/smt/active ]; then
+        smt_active=$(cat /sys/devices/system/cpu/smt/active 2>/dev/null)
+        case "$smt_active" in
+            1) return 0 ;;
+            0) return 1 ;;
+        esac
+    fi
+    # Fallback: SMT / HyperThreading is enabled if siblings != cpucores
     if [ -e "$g_procfs/cpuinfo" ]; then
         siblings=$(awk '/^siblings/  {print $3;exit}' "$g_procfs/cpuinfo")
         cpucores=$(awk '/^cpu cores/ {print $4;exit}' "$g_procfs/cpuinfo")
@@ -4497,25 +4521,41 @@ check_kernel_cpu_arch_mismatch() {
 # >>>>>> libs/370_hw_vmm.sh <<<<<<
 
 # vim: set ts=4 sw=4 sts=4 et:
-# Check whether the system is running as a Xen paravirtualized guest
-# Returns: 0 if Xen PV, 1 otherwise
-is_xen() {
-    local ret
-    if [ ! -d "$g_procfs/xen" ]; then
-        return 1
+
+# Probe Xen presence and guest type using the most reliable sources available.
+# Prefer /sys/hypervisor when avalable, fallback to dmesg otherwise.
+# Caches results in g_xen (1/0) and g_xen_guest_type (PV|PVH|HVM|'').
+_detect_xen() {
+    [ "${g_xen_cached:-0}" = 1 ] && return
+    g_xen=0
+    g_xen_guest_type=''
+    g_xen_cached=1
+
+    # Most reliable: /sys/hypervisor/type is 'xen' on any Xen domain (dom0
+    # included), and /sys/hypervisor/guest_type reports PV, PVH or HVM.
+    if [ -r /sys/hypervisor/type ] && [ "$(cat /sys/hypervisor/type 2>/dev/null)" = xen ]; then
+        g_xen=1
+        if [ -r /sys/hypervisor/guest_type ]; then
+            g_xen_guest_type=$(cat /sys/hypervisor/guest_type 2>/dev/null)
+        fi
+        return
     fi
 
-    # XXX do we have a better way that relying on dmesg?
-    dmesg_grep 'Booting paravirtualized kernel on Xen$'
-    ret=$?
-    if [ "$ret" -eq 2 ]; then
-        pr_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script"
-        return 1
-    elif [ "$ret" -eq 0 ]; then
-        return 0
-    else
-        return 1
+    # Fallback for kernels without /sys/hypervisor: /proc/xen plus a dmesg probe.
+    if [ -d "$g_procfs/xen" ]; then
+        dmesg_grep 'Booting paravirtualized kernel on Xen$'
+        case $? in
+            0) g_xen=1 ;;
+            2) pr_warn "dmesg truncated, Xen detection will be unreliable. Please reboot and relaunch this script" ;;
+        esac
     fi
+}
+
+# Check whether the system is running on Xen (any domain type, dom0 included).
+# Returns: 0 if Xen, 1 otherwise
+is_xen() {
+    _detect_xen
+    [ "$g_xen" = 1 ]
 }
 
 # Check whether the system is a Xen Dom0 (privileged domain)
@@ -4532,40 +4572,100 @@ is_xen_dom0() {
     fi
 }
 
-# Check whether the system is a Xen DomU (unprivileged PV guest)
-# Returns: 0 if DomU, 1 otherwise
+# Check whether the system is running as a Xen PV DomU (the only Xen guest type
+# affected by Meltdown, which needs Xen-level mitigation).
+# Returns: 0 if PV DomU, 1 otherwise
 is_xen_domU() {
     local ret
     if ! is_xen; then
         return 1
     fi
 
-    # PVHVM guests also print 'Booting paravirtualized kernel', so we need this check.
+    if is_xen_dom0; then
+        return 1
+    fi
+
+    # When the reliable guest type is known, only PV domains (which aren't
+    # dom0, checked above) are the PV DomU case. PVH and HVM guests are not.
+    if [ -n "$g_xen_guest_type" ]; then
+        [ "$g_xen_guest_type" = PV ] && return 0
+        return 1
+    fi
+
+    # Fallback (no /sys/hypervisor/guest_type): PVHVM guests also print the
+    # 'Booting paravirtualized kernel' line, so exclude them via dmesg.
     dmesg_grep 'Xen HVM callback vector for event delivery is enabled$'
     ret=$?
     if [ "$ret" -eq 0 ]; then
         return 1
     fi
 
-    if ! is_xen_dom0; then
-        return 0
-    else
-        return 1
-    fi
+    return 0
 }
 
-# Check whether the system is running as a guest inside a virtual machine.
+# Check whether we're running inside an OS-level container (LXC, Docker,
+# systemd-nspawn, etc.). Containers share the host kernel, so host/hypervisor
+# introspection (e.g. telling a Xen dom0 from a domU) is unreliable from inside
+# one: /proc/xen is exposed but empty, dmesg is the host's, etc. (issue #173)
+# Returns: 0 if in a container, 1 otherwise
+# Sets: g_is_container (1/0), g_container_reason
+is_running_in_container() {
+    local ctype
+    if [ "${g_is_container_cached:-0}" != 1 ]; then
+        g_is_container=0
+        g_container_reason=''
+        # systemd and most runtimes export 'container=' to PID 1's environment
+        if [ -r "$g_procfs/1/environ" ]; then
+            ctype=$(tr '\0' '\n' <"$g_procfs/1/environ" 2>/dev/null | sed -n 's/^container=//p' | head -n1)
+            if [ -n "$ctype" ]; then
+                g_is_container=1
+                g_container_reason="container=$ctype in $g_procfs/1/environ"
+            fi
+        fi
+        # Docker (and some others) drop a marker file at the filesystem root
+        if [ "$g_is_container" = 0 ] && [ -e /.dockerenv ]; then
+            g_is_container=1
+            g_container_reason="/.dockerenv present"
+        fi
+        # cgroup membership often reveals the runtime (lxc, docker, kubepods, ...)
+        if [ "$g_is_container" = 0 ] && [ -r "$g_procfs/1/cgroup" ]; then
+            if grep -qE '(^|[:/])(lxc|docker|kubepods|libpod|containerd|machine\.slice)([/.]|$)' "$g_procfs/1/cgroup" 2>/dev/null; then
+                g_is_container=1
+                g_container_reason="container runtime found in $g_procfs/1/cgroup"
+            fi
+        fi
+        g_is_container_cached=1
+    fi
+    [ "$g_is_container" = 1 ]
+}
+
+# Check whether the system is running as a guest inside a VM.
 # Uses the 'hypervisor' CPUID feature flag exposed in /proc/cpuinfo by KVM,
 # VMware, Hyper-V, VirtualBox, and most other type-1 and type-2 hypervisors.
+# Xen PV/PVH DomUs don't set that flag, so they're detected separately.
 # Returns: 0 if running as a VM guest, 1 otherwise
 # Sets: g_is_guest_vm (1=guest, 0=not a guest), g_is_guest_vm_reason
 is_running_as_guest() {
     if [ "${g_is_guest_vm_cached:-0}" != 1 ]; then
         g_is_guest_vm=0
         g_is_guest_vm_reason=''
-        if [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
+        # A Xen dom0 runs on top of the hypervisor and therefore also has the
+        # 'hypervisor' CPUID flag set, but it's the privileged control domain:
+        # it has direct hardware access and a truthful view of the host CPU
+        # topology, so it must not be classified as a guest (#343). Check it
+        # before the cpuinfo probe below, which would otherwise match.
+        if is_xen_dom0; then
+            g_is_guest_vm=0
+        elif [ -e "$g_procfs/cpuinfo" ] && grep -qw 'hypervisor' "$g_procfs/cpuinfo" 2>/dev/null; then
             g_is_guest_vm=1
             g_is_guest_vm_reason="'hypervisor' flag in $g_procfs/cpuinfo"
+        fi
+        # Xen PV/PVH DomUs don't expose the 'hypervisor' CPUID flag. Don't
+        # classify a container on a Xen host as a guest here: we can't tell
+        # dom0 from domU from inside a container (handled separately).
+        if [ "$g_is_guest_vm" = 0 ] && is_xen && ! is_xen_dom0 && ! is_running_in_container; then
+            g_is_guest_vm=1
+            g_is_guest_vm_reason="Xen ${g_xen_guest_type:-PV} DomU"
         fi
         g_is_guest_vm_cached=1
     fi
@@ -5091,6 +5191,22 @@ check_cpu() {
                 pstatus green NO
             fi
         fi
+        # ARM exposes no userspace-readable CPUID/MSR to query SSBD support directly.
+        # The ARMv8.5 SSBS ("Speculative Store Bypass Safe") hardware bit, when present,
+        # surfaces as the 'ssbs' hwcap in /proc/cpuinfo. We use it *only* as a positive
+        # confirmation of SSB mitigation capability (Variant 4 / CVE-2018-3639): its
+        # absence proves nothing, because the kernel deliberately hides the hwcap on some
+        # cores (e.g. the erratum-3194386 SSBS self-sync workaround), so we must never
+        # infer immunity from a missing 'ssbs'.
+        if has_runtime; then
+            pr_info_nol "  * CPU indicates SSBS (Speculative Store Bypass Safe) capability: "
+            if grep '^Features' "$g_procfs/cpuinfo" | grep -qw ssbs; then
+                cap_ssbd='ARM SSBS (cpuinfo)'
+                pstatus green YES "$cap_ssbd"
+            else
+                pstatus blue UNKNOWN "not exposed (the kernel may hide it; cannot conclude)"
+            fi
+        fi
         return
     fi
 
@@ -5173,7 +5289,7 @@ check_cpu() {
     fi
     if [ -z "$cap_ibrs" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ibrs; then
+        if cpuinfo_has_flag ibrs; then
             cap_ibrs='IBRS (cpuinfo)'
             cap_spec_ctrl=1
             pstatus green YES "ibrs flag in $g_procfs/cpuinfo"
@@ -5248,7 +5364,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_ibpb='IBPB_SUPPORT'
             pstatus green YES "IBPB_SUPPORT feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw ibpb; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag ibpb; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_ibpb='IBPB (cpuinfo)'
             pstatus green YES "ibpb flag in $g_procfs/cpuinfo"
@@ -5321,7 +5437,7 @@ check_cpu() {
     fi
     if [ -z "$cap_stibp" ] && [ $ret = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw stibp; then
+        if cpuinfo_has_flag stibp; then
             cap_stibp='STIBP (cpuinfo)'
             pstatus green YES "stibp flag in $g_procfs/cpuinfo"
             ret=$READ_CPUID_RET_OK
@@ -5393,9 +5509,9 @@ check_cpu() {
 
     if [ -z "$cap_ssbd" ] && [ "$ret24" = $READ_CPUID_RET_ERR ] && [ "$ret25" = $READ_CPUID_RET_ERR ] && has_runtime; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
-        if grep ^flags "$g_procfs/cpuinfo" | grep -qw ssbd; then
+        if cpuinfo_has_flag ssbd; then
             cap_ssbd='SSBD (cpuinfo)'
-        elif grep ^flags "$g_procfs/cpuinfo" | grep -qw virt_ssbd; then
+        elif cpuinfo_has_flag virt_ssbd; then
             cap_ssbd='SSBD in VIRT_SPEC_CTRL (cpuinfo)'
         fi
     fi
@@ -5455,7 +5571,7 @@ check_cpu() {
     if [ $ret = $READ_CPUID_RET_OK ]; then
         pstatus green YES "L1D flush feature bit"
         cap_l1df=1
-    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw flush_l1d; then
+    elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag flush_l1d; then
         # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
         pstatus green YES "flush_l1d flag in $g_procfs/cpuinfo"
         cap_l1df=1
@@ -5475,7 +5591,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             cap_md_clear=1
             pstatus green YES "MD_CLEAR feature bit"
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag md_clear; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             cap_md_clear=1
             pstatus green YES "md_clear flag in $g_procfs/cpuinfo"
@@ -5545,7 +5661,7 @@ check_cpu() {
         if [ $ret = $READ_CPUID_RET_OK ]; then
             pstatus green YES
             cap_arch_capabilities=1
-        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && grep ^flags "$g_procfs/cpuinfo" | grep -qw arch_capabilities; then
+        elif [ $ret = $READ_CPUID_RET_ERR ] && has_runtime && cpuinfo_has_flag arch_capabilities; then
             # CPUID device unavailable (e.g. in a VM): fall back to /proc/cpuinfo
             pstatus green YES "arch_capabilities flag in $g_procfs/cpuinfo"
             cap_arch_capabilities=1
@@ -5647,8 +5763,33 @@ check_cpu() {
                     pstatus yellow NO
                 fi
             elif [ $ret = $READ_MSR_RET_KO ]; then
+                # the MSR access faulted: the register is genuinely absent, so the
+                # pre-seeded 0 ("not advertised") values are correct.
                 pstatus yellow NO
             else
+                # RET_ERR (no msr module) or RET_LOCKDOWN (MSR reads restricted):
+                # CPUID told us the MSR exists but we couldn't read it, so its bits
+                # are undetermined, not 0. Leaving them at 0 would falsely claim the
+                # CPU "explicitly indicates not immune".
+                # Reset every arch-cap-derived value to -1 (UNKNOWN) instead.
+                cap_rdcl_no=-1
+                cap_taa_no=-1
+                cap_mds_no=-1
+                cap_ibrs_all=-1
+                cap_rsba=-1
+                cap_l1dflush_no=-1
+                cap_ssb_no=-1
+                cap_pschange_msc_no=-1
+                cap_tsx_ctrl_msr=-1
+                cap_gds_ctrl=-1
+                cap_gds_no=-1
+                cap_rfds_no=-1
+                cap_rfds_clear=-1
+                cap_its_no=-1
+                cap_sbdr_ssdp_no=-1
+                cap_fbsdp_no=-1
+                cap_psdp_no=-1
+                cap_fb_clear=-1
                 pstatus yellow UNKNOWN "$ret_read_msr_msg"
             fi
         fi
@@ -6399,7 +6540,7 @@ check_mds_linux() {
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports using MD_CLEAR mitigation: "
             kernel_md_clear_can_tell=1
-            if [ "$g_mode" = live ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw md_clear; then
+            if [ "$g_mode" = live ] && cpuinfo_has_flag md_clear; then
                 kernel_md_clear="md_clear found in $g_procfs/cpuinfo"
                 pstatus green YES "$kernel_md_clear"
             fi
@@ -6435,6 +6576,22 @@ check_mds_linux() {
                 if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
                     mds_smt_mitigated=1
                     pstatus green YES
+                elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
+                    # The kernel appends "SMT Host state unknown" whenever the
+                    # HYPERVISOR CPUID bit is set. That's true both inside a guest
+                    # AND on a Xen dom0 (#343). In a guest we genuinely can't see
+                    # the host's SMT scheduling; on dom0/bare metal the local SMT
+                    # state is authoritative, so trust it there.
+                    if is_running_as_guest; then
+                        mds_smt_mitigated=2
+                        pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    elif is_cpu_smt_enabled; then
+                        mds_smt_mitigated=0
+                        pstatus yellow NO
+                    else
+                        mds_smt_mitigated=1
+                        pstatus green YES
+                    fi
                 else
                     mds_smt_mitigated=0
                     pstatus yellow NO
@@ -6461,6 +6618,9 @@ check_mds_linux() {
                             if [ "$opt_paranoid" != 1 ] || [ "$mds_smt_mitigated" = 1 ]; then
                                 mystatus=OK
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            elif [ "$mds_smt_mitigated" = 2 ]; then
+                                mystatus=UNK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation and it's enabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
                             else
                                 mystatus=VULN
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
@@ -6518,15 +6678,22 @@ check_mmio_bsd() {
     # the only partial defense available, and without OS-level VERW invocation it
     # cannot close the vulnerability.
     local unk
-    unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
     if ! is_cpu_affected "$cve"; then
         pvulnstatus "$cve" OK "your CPU vendor reported your CPU model as not affected"
     elif is_cpu_mmio_unknown; then
-        if [ "$opt_paranoid" = 1 ]; then
-            pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
-            explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+        if is_arch_cap_mmio_undetermined; then
+            # We only landed in the "unknown" bucket because the IA32_ARCH_CAPABILITIES
+            # MSR couldn't be read: the CPU might actually advertise MMIO immunity.
+            unk="your CPU's MMIO Stale Data status could not be determined: the IA32_ARCH_CAPABILITIES MSR (0x10a) couldn't be read"
+            pvulnstatus "$cve" UNK "$unk; load the cpuctl module and/or re-run as root to get a definitive answer"
         else
-            pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+            unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+            if [ "$opt_paranoid" = 1 ]; then
+                pvulnstatus "$cve" VULN "$unk, and no BSD mitigation exists"
+                explain "There is no known mitigation for this CPU model. Even with up-to-date microcode, BSD kernels do not invoke VERW for MMIO Stale Data clearing. Only a hardware replacement can fully address this."
+            else
+                pvulnstatus "$cve" UNK "$unk; no BSD mitigation exists in any case"
+            fi
         fi
     else
         pvulnstatus "$cve" VULN "your CPU is affected and no BSD has implemented an MMIO Stale Data mitigation"
@@ -6536,7 +6703,7 @@ check_mmio_bsd() {
 
 # MMIO Stale Data (Processor MMIO Stale Data Vulnerabilities) - Linux mitigation check
 check_mmio_linux() {
-    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
+    local status sys_interface_available msg kernel_mmio kernel_mmio_can_tell kernel_mmio_unknown_aware mmio_mitigated mmio_smt_mitigated mystatus mymsg unk
     status=UNK
     sys_interface_available=0
     msg=''
@@ -6678,6 +6845,11 @@ check_mmio_linux() {
         # MMIO Stale Data is Intel-only; skip x86-specific kernel/MSR checks on non-x86 kernels
         kernel_mmio=''
         kernel_mmio_can_tell=0
+        # Whether this kernel implements the X86_BUG_MMIO_UNKNOWN distinction, i.e. can
+        # report "Unknown: No mitigations" for CPUs Intel never assessed. Only such kernels
+        # emit a *trustworthy* "Not affected": they would have said "Unknown" instead if the
+        # CPU were in the unknown bucket. Detected by the presence of the literal sysfs string in the kernel image.
+        kernel_mmio_unknown_aware=0
         if is_x86_kernel; then
             pr_info_nol "* Kernel supports MMIO Stale Data mitigation: "
             kernel_mmio_can_tell=1
@@ -6687,6 +6859,10 @@ check_mmio_linux() {
                 pr_debug "mmio: found 'mmio_stale_data' string in kernel image"
                 kernel_mmio='found MMIO Stale Data mitigation evidence in kernel image'
                 pstatus green YES "$kernel_mmio"
+            fi
+            if [ -z "$g_kernel_err" ] && grep -qF 'Unknown: No mitigations' "$g_kernel" 2>/dev/null; then
+                pr_debug "mmio: kernel image knows the 'Unknown: No mitigations' state (X86_BUG_MMIO_UNKNOWN-aware)"
+                kernel_mmio_unknown_aware=1
             fi
             if [ -z "$kernel_mmio" ] && [ -n "$opt_config" ] && grep -q '^CONFIG_MITIGATION_MMIO_STALE_DATA=y' "$opt_config"; then
                 kernel_mmio='found MMIO Stale Data mitigation config option enabled'
@@ -6728,6 +6904,22 @@ check_mmio_linux() {
                 if echo "$ret_sys_interface_check_fullmsg" | grep -Eq 'SMT (disabled|mitigated)'; then
                     mmio_smt_mitigated=1
                     pstatus green YES
+                elif echo "$ret_sys_interface_check_fullmsg" | grep -q 'SMT Host state unknown'; then
+                    # The kernel appends "SMT Host state unknown" whenever the
+                    # HYPERVISOR CPUID bit is set. That's true both inside a guest
+                    # AND on a Xen dom0 (#343). In a guest we genuinely can't see
+                    # the host's SMT scheduling; on dom0/bare metal the local SMT
+                    # state is authoritative, so trust it there.
+                    if is_running_as_guest; then
+                        mmio_smt_mitigated=2
+                        pstatus yellow UNKNOWN "running in a VM guest, the hypervisor host controls SMT"
+                    elif is_cpu_smt_enabled; then
+                        mmio_smt_mitigated=0
+                        pstatus yellow NO
+                    else
+                        mmio_smt_mitigated=1
+                        pstatus green YES
+                    fi
                 else
                     mmio_smt_mitigated=0
                     pstatus yellow NO
@@ -6747,12 +6939,32 @@ check_mmio_linux() {
         # Bypass the normal sysfs reconciliation: sysfs reports "Unknown: No mitigations"
         # only on v6.0-v6.15. On earlier and on v6.16+ kernels it wrongly says "Not affected"
         # for these CPUs (which predate FB_CLEAR microcode and Intel's affected-processor list).
-        unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
-        if [ "$opt_paranoid" = 1 ]; then
-            pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
-            explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released. Consider replacing affected hardware."
+        if is_arch_cap_mmio_undetermined; then
+            # We landed in the "unknown" bucket only because the IA32_ARCH_CAPABILITIES
+            # MSR couldn't be read from userspace (no msr module, or kernel lockdown under
+            # Secure Boot): the CPU might actually advertise MMIO immunity
+            # through FBSDP_NO/PSDP_NO/SBDR_SSDP_NO, but we can't read it, however the kernel can.
+            #
+            # We can trust a sysfs "Not affected" only if this kernel is X86_BUG_MMIO_UNKNOWN-aware:
+            # such a kernel would have reported "Unknown: No mitigations" instead if the CPU were in
+            # the unknown bucket, so "Not affected" genuinely means arch-cap immune.
+            # On kernels that lack that distinction, a "Not affected" is not trustworthy for these CPUs,
+            # so we keep UNK.
+            if [ "$g_mode" = live ] && [ "$sys_interface_available" = 1 ] &&
+                [ "$kernel_mmio_unknown_aware" = 1 ] && [ "$status" = OK ]; then
+                pvulnstatus "$cve" OK "your kernel reports your CPU as not affected, and this kernel distinguishes the MMIO 'unknown' state, so its verdict is trustworthy (we couldn't read the IA32_ARCH_CAPABILITIES MSR ourselves)"
+            else
+                unk="your CPU's MMIO Stale Data status could not be determined: the IA32_ARCH_CAPABILITIES MSR (0x10a) couldn't be read"
+                pvulnstatus "$cve" UNK "$unk; load the msr module and/or disable kernel lockdown, then re-run as root to get a definitive answer"
+            fi
         else
-            pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+            unk="your CPU's MMIO Stale Data status is unknown (Intel never officially assessed this CPU, its servicing period has ended)"
+            if [ "$opt_paranoid" = 1 ]; then
+                pvulnstatus "$cve" VULN "$unk, and no mitigation is available"
+                explain "There is no known mitigation for this CPU model. Intel ended its servicing period without evaluating whether it is affected by MMIO Stale Data vulnerabilities, so no FB_CLEAR-capable microcode was released."
+            else
+                pvulnstatus "$cve" UNK "$unk; no mitigation is available in any case"
+            fi
         fi
     else
         if [ "$opt_sysfs_only" != 1 ]; then
@@ -6765,6 +6977,9 @@ check_mmio_linux() {
                             if [ "$opt_paranoid" != 1 ] || [ "$mmio_smt_mitigated" = 1 ]; then
                                 mystatus=OK
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, and mitigation is enabled"
+                            elif [ "$mmio_smt_mitigated" = 2 ]; then
+                                mystatus=UNK
+                                mymsg="Your microcode and kernel are both up to date for this mitigation and it's enabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
                             else
                                 mystatus=VULN
                                 mymsg="Your microcode and kernel are both up to date for this mitigation, but you must disable SMT (Hyper-Threading) for a complete mitigation"
@@ -7665,7 +7880,7 @@ check_CVE_2017_5715_linux() {
                 # which in that case means ibrs is supported *and* enabled for kernel & user
                 # as per the ibrs patch series v3
                 if [ -z "$g_ibrs_supported" ]; then
-                    if grep ^flags "$g_procfs/cpuinfo" | grep -qw spec_ctrl_ibrs; then
+                    if cpuinfo_has_flag spec_ctrl_ibrs; then
                         pr_debug "ibrs: found spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
                         g_ibrs_supported="spec_ctrl_ibrs flag in $g_procfs/cpuinfo"
                         # enabled=2 -> kernel & user
@@ -8921,7 +9136,7 @@ check_CVE_2017_5753_bsd() {
 pti_performance_check() {
     local ret pcid invpcid
     pr_info_nol "  * Reduced performance impact of PTI: "
-    if [ -e "$g_procfs/cpuinfo" ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw pcid; then
+    if cpuinfo_has_flag pcid; then
         pcid=1
     else
         read_cpuid 0x1 0x0 "$ECX" 17 1 1
@@ -8931,7 +9146,7 @@ pti_performance_check() {
         fi
     fi
 
-    if [ -e "$g_procfs/cpuinfo" ] && grep ^flags "$g_procfs/cpuinfo" | grep -qw invpcid; then
+    if cpuinfo_has_flag invpcid; then
         invpcid=1
     else
         read_cpuid 0x7 0x0 "$EBX" 10 1 1
@@ -8955,7 +9170,7 @@ check_CVE_2017_5754() {
 }
 
 check_CVE_2017_5754_linux() {
-    local status sys_interface_available msg kpti_support kpti_can_tell kpti_enabled dmesg_grep pti_xen_pv_domU xen_pv_domo xen_pv_domu explain_text
+    local status sys_interface_available msg kpti_support kpti_can_tell kpti_enabled dmesg_grep pti_xen_pv_domU xen_pv_domo xen_pv_domu xen_unknown_container explain_text
     status=UNK
     sys_interface_available=0
     msg=''
@@ -9020,11 +9235,11 @@ check_CVE_2017_5754_linux() {
             dmesg_grep="$dmesg_grep|x86/pti: Unmapping kernel while in userspace"
             # aarch64
             dmesg_grep="$dmesg_grep|CPU features: detected( feature)?: Kernel page table isolation \(KPTI\)"
-            if grep ^flags "$g_procfs/cpuinfo" | grep -qw pti; then
+            if cpuinfo_has_flag pti; then
                 # vanilla PTI patch sets the 'pti' flag in cpuinfo
                 pr_debug "kpti_enabled: found 'pti' flag in $g_procfs/cpuinfo"
                 kpti_enabled=1
-            elif grep ^flags "$g_procfs/cpuinfo" | grep -qw kaiser; then
+            elif cpuinfo_has_flag kaiser; then
                 # kernel line 4.9 sets the 'kaiser' flag in cpuinfo
                 pr_debug "kpti_enabled: found 'kaiser' flag in $g_procfs/cpuinfo"
                 kpti_enabled=1
@@ -9077,14 +9292,24 @@ check_CVE_2017_5754_linux() {
     # Test if the current host is a Xen PV Dom0 / DomU
     xen_pv_domo=0
     xen_pv_domu=0
-    is_xen_dom0 && xen_pv_domo=1
-    is_xen_domU && xen_pv_domu=1
+    xen_unknown_container=0
+    if is_xen && ! is_xen_dom0 && is_running_in_container; then
+        # We can see Xen, but we're inside a container so /proc/xen/capabilities
+        # isn't exposed and dmesg is the host's: we can't tell a safe Dom0 from
+        # a vulnerable PV DomU from in here (issue #173).
+        xen_unknown_container=1
+    else
+        is_xen_dom0 && xen_pv_domo=1
+        is_xen_domU && xen_pv_domu=1
+    fi
 
     if [ "$g_mode" = live ]; then
         # checking whether we're running under Xen PV 64 bits. If yes, we are affected by affected_variant3
         # (unless we are a Dom0)
         pr_info_nol "* Running as a Xen PV DomU: "
-        if [ "$xen_pv_domu" = 1 ]; then
+        if [ "$xen_unknown_container" = 1 ]; then
+            pstatus yellow UNKNOWN "running in a container, can't query Xen from here"
+        elif [ "$xen_pv_domu" = 1 ]; then
             pstatus yellow YES
         else
             pstatus blue NO
@@ -9097,7 +9322,10 @@ check_CVE_2017_5754_linux() {
     elif [ -z "$msg" ]; then
         # if msg is empty, sysfs check didn't fill it, rely on our own test
         if [ "$g_mode" = live ]; then
-            if [ "$kpti_enabled" = 1 ]; then
+            if [ "$xen_unknown_container" = 1 ]; then
+                pvulnstatus "$cve" UNK "running inside a container on a Xen host, can't determine if the underlying domain is a vulnerable PV DomU"
+                explain "This system looks like a container ($g_container_reason) running on a Xen host. Whether the underlying domain is a safe Dom0 or a vulnerable PV DomU can't be reliably determined from inside a container (/proc/xen is exposed but empty, and dmesg belongs to the host). Please re-run this script directly on the host, outside the container, to get an accurate result."
+            elif [ "$kpti_enabled" = 1 ]; then
                 pvulnstatus "$cve" OK "PTI mitigates the vulnerability"
             elif [ "$xen_pv_domo" = 1 ]; then
                 pvulnstatus "$cve" OK "Xen Dom0s are safe and do not require PTI"
@@ -9846,7 +10074,7 @@ check_CVE_2018_3646_linux() {
 
         pr_info "* Mitigation 2"
         pr_info_nol "  * L1D flush is supported by kernel: "
-        if [ "$g_mode" = live ] && grep -qw flush_l1d "$g_procfs/cpuinfo"; then
+        if [ "$g_mode" = live ] && cpuinfo_has_flag flush_l1d; then
             l1d_kernel="found flush_l1d in $g_procfs/cpuinfo"
         fi
         if [ -z "$l1d_kernel" ]; then
@@ -9919,7 +10147,7 @@ check_CVE_2018_3646_linux() {
 
         pr_info_nol "  * Hardware-backed L1D flush supported: "
         if [ "$g_mode" = live ]; then
-            if grep -qw flush_l1d "$g_procfs/cpuinfo" || [ -n "$l1d_xen_hardware" ]; then
+            if cpuinfo_has_flag flush_l1d || [ -n "$l1d_xen_hardware" ]; then
                 pstatus green YES "performance impact of the mitigation will be greatly reduced"
             else
                 pstatus blue NO "flush will be done in software, this is slower"
@@ -10130,6 +10358,19 @@ check_CVE_2019_11135_linux() {
                 pvulnstatus "$cve" VULN "TSX must be disabled for full mitigation"
             elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT vulnerable'; then
                 pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
+            elif echo "$ret_sys_interface_check_fullmsg" | grep -qF 'SMT Host state unknown'; then
+                # "SMT Host state unknown" is emitted whenever the HYPERVISOR
+                # CPUID bit is set -- true both inside a guest AND on a Xen dom0
+                # (#343). In a guest we can't see the host's SMT scheduling; on
+                # dom0/bare metal the local SMT state is authoritative, so trust
+                # it there.
+                if is_running_as_guest; then
+                    pvulnstatus "$cve" UNK "TAA is mitigated and TSX is disabled, but SMT (Hyper-Threading) cross-thread protection can't be verified from inside a VM guest: it depends on the hypervisor host's SMT/core-scheduling configuration"
+                elif is_cpu_smt_enabled; then
+                    pvulnstatus "$cve" VULN "SMT (HyperThreading) must be disabled for full mitigation"
+                else
+                    pvulnstatus "$cve" "$status" "$msg"
+                fi
             else
                 pvulnstatus "$cve" "$status" "$msg"
             fi
@@ -11555,13 +11796,23 @@ check_CVE_2023_20593_linux() {
             fi
         fi
         if [ "$zenbleed_print_vuln" = 1 ]; then
-            pvulnstatus "$cve" VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
-            explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
-                "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
-                "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
-                "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue.\n " \
-                "To manually mitigate the issue right now, you may use the following command: \`wrmsr -a 0xc0011029 \$((\$(rdmsr -c 0xc0011029) | (1<<9)))\`,\n " \
-                "however note that this manual mitigation will only be active until the next reboot."
+            if [ "$g_mode" = live ] && is_running_as_guest; then
+                # Both Zenbleed mitigations are applied at the host level: an
+                # up-to-date microcode, or the host kernel setting FP_BACKUP_FIX
+                # in DE_CFG. From inside a guest we can't read that MSR and can't
+                # trust the microcode version the hypervisor presents, so we can't
+                # confirm or deny the mitigation -- don't cry VULN (#488).
+                pvulnstatus "$cve" UNK "Zenbleed mitigation can't be verified from inside a VM guest ($g_is_guest_vm_reason): it may be applied by the hypervisor host, but that isn't observable from here"
+                explain "Zenbleed is mitigated either by an up-to-date CPU microcode or by the host kernel setting the FP_BACKUP_FIX bit (DE_CFG MSR 0xc0011029 bit 9). Both are host-level: a guest can neither read that MSR nor trust the microcode version the hypervisor presents (see the VM note in the hardware section above). Re-run this script on the hypervisor host to get an accurate result."
+            else
+                pvulnstatus "$cve" VULN "Your kernel is too old to mitigate Zenbleed and your CPU microcode doesn't mitigate it either"
+                explain "Your CPU vendor may have a new microcode for your CPU model that mitigates this issue (refer to the hardware section above).\n " \
+                    "Otherwise, the Linux kernel is able to mitigate this issue regardless of the microcode version you have, but in this case\n " \
+                    "your kernel is too old to support this, your Linux distribution vendor might have a more recent version you should upgrade to.\n " \
+                    "Note that either having an up to date microcode OR an up to date kernel is enough to mitigate this issue.\n " \
+                    "To manually mitigate the issue right now, you may use the following command: \`wrmsr -a 0xc0011029 \$((\$(rdmsr -c 0xc0011029) | (1<<9)))\`,\n " \
+                    "however note that this manual mitigation will only be active until the next reboot."
+            fi
         fi
         unset zenbleed_print_vuln
     else
@@ -12969,12 +13220,7 @@ exit 0                          # ok
 
 # >>>>>> db/100_inteldb.sh <<<<<<
 
-# %%% ENDOFINTELDB
 # vim: set ts=4 sw=4 sts=4 et:
-# Merged INTELDB: HTML (authoritative) + CSV history (supplementary) + XLSX (legacy/stale)
-# HTML source: https://www.intel.com/content/www/us/en/developer/topic-technology/software-security-guidance/processors-affected-consolidated-product-cpu-model.html
-# CSV source: https://github.com/intel/Intel-affected-processor-list
-# XSLX source: https://software.intel.com/content/dam/www/public/us/en/documents/affected-processors-transient-execution-attacks-by-cpu-aug02.xlsx
 #
 # N: Not affected
 # S: Affected, software fix
@@ -12992,10 +13238,10 @@ exit 0                          # ok
 #   0xCPUID,H=0,...   matches only non-hybrid CPUs (CPUID.0x7.EDX[15]=0)
 #   0xCPUID,...        matches any CPU (no qualifier = fallback)
 #
+# Merged Intel CSV history through 3bc9bd4f7c0286eb2c20dca719742ca0fbde88c5 (newest CPUID data wins)
+# Source: https://github.com/intel/Intel-affected-processor-list
+#
 # %%% INTELDB
-#
-# XSLX
-#
 # 0x000206A7,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
 # 0x000206D6,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
 # 0x000206D7,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
@@ -13007,6 +13253,8 @@ exit 0                          # ok
 # 0x000306D4,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=Y,2020-0543=Y,
 # 0x000306E4,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
 # 0x000306E7,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=N,
+# 0x000306F2,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000306F4,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
 # 0x00040651,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=Y,
 # 0x00040661,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=N,2020-0543=Y,
 # 0x00040671,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=Y,2020-0543=Y,
@@ -13015,112 +13263,109 @@ exit 0                          # ok
 # 0x000406C4,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000406D8,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000406E3,2017-5715=MS,2017-5753=S,2017-5754=S,2018-12126=MS,2018-12127=MS,2018-12130=MS,2018-12207=S,2018-3615=MS,2018-3620=MS,2018-3639=MS,2018-3640=M,2018-3646=MS,2019-11135=MS,2020-0543=MS,
+# 0x000406F1,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050653,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050654,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050656,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00050657,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x0005065A,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
+# 0x0005065B,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=M,2024-36242=N,2024-23984=M,2024-25939=M,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x00050662,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=Y,2018-12130=Y,2018-12207=Y,2018-3615=Y,2018-3620=Y,2018-3639=Y,2018-3640=Y,2018-3646=Y,2019-11135=Y,2020-0543=N,
+# 0x00050663,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=X,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050664,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x00050665,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
 # 0x000506A0,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000506C9,2017-5715=MS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
+# 0x000506CA,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
 # 0x000506D0,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
+# 0x000506E3,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=MS,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000506F1,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
 # 0x00060650,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000606A0,2017-5715=Y,2017-5753=Y,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=Y,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x000606A4,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000606A5,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
+# 0x000606A6,2026-20917=M,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=MS,2022-38090=MS,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000606C1,2026-20917=M,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=MS,2022-38090=MS,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x000606E1,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x0007065A,2017-5715=Y,2017-5753=Y,2017-5754=Y,2018-12126=Y,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=N,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
+# 0x000706A1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MBS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000706A8,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MBS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000706E5,2026-20917=M,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=HM,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=HM,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x00080660,2017-5715=Y,2017-5753=Y,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=Y,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,
 # 0x00080664,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
+# 0x00080665,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=X,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00080667,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x000806A0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=HM,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000806A1,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=HM,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000806C0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
+# 0x000806C1,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MB,2022-21125=MB,2022-21123=MB,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806C2,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=N,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x000806D0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
+# 0x000806D1,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MB,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806E9,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=M,2022-21127=M,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000806EA,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000806EB,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=M,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000806EC,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F5,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-38090=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F6,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-38090=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F7,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-38090=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000806F8,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-38090=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090660,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090661,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x00090670,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x00090671,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
+# 0x00090672,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x00090673,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x00090674,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
+# 0x00090675,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x00090675,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x000906A0,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
 # 0x000906A2,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=MS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=N,
+# 0x000906A3,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906A4,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906A4,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906C0,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000906E9,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000906EA,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000906EB,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
+# 0x000906EC,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=MS,2017-5753=S,
+# 0x000906ED,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x000A0650,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
 # 0x000A0651,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=S,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=M,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
+# 0x000A0652,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0653,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0655,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0660,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A0661,2026-20917=N,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x000A0670,2017-5715=HS,2017-5753=S,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=N,2018-3615=N,2018-3620=N,2018-3639=HS,2018-3640=N,2018-3646=N,2019-11135=N,2020-0543=N,2022-40982=M,
+# 0x000A0671,2026-20917=M,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # 0x000A0680,2017-5715=Y,2017-5753=Y,2017-5754=N,2018-12126=N,2018-12127=N,2018-12130=N,2018-12207=Y,2018-3615=N,2018-3620=N,2018-3639=Y,2018-3640=Y,2018-3646=N,2019-11135=N,2020-0543=N,
-#
-# HTML/CSV
-#
-# 0x000306F2,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000306F4,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000406F1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x00050653,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x00050654,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x00050656,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00050657,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=X,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x0005065B,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=M,2024-36242=N,2024-23984=M,2024-25939=M,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=X,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00050663,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=X,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x00050664,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x00050665,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=X,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=X,2020-0551_zero=X,2020-0551_stale=X,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000506CA,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
-# 0x000506E3,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=MS,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000506F1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=N,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
-# 0x000606A6,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=MS,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000606C1,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=MS,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000706A1,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MBS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000706A8,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MBS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=MS,2017-5753=S,
-# 0x000706E5,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=HM,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=HM,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00080665,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=X,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00080667,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806C1,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MB,2022-21125=MB,2022-21123=MB,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806C2,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=N,2020-8698=M,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806D1,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MB,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806E9,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=M,2022-21127=M,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000806EA,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000806EB,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=M,2017-5754=N,2017-5715=MS,2017-5753=S,
-# 0x000806EC,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806F5,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806F6,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806F7,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000806F8,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=MB,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00090660,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00090661,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00090672,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=MS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00090675,H=0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x00090675,H=1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000906A3,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000906A4,H=0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000906A4,H=1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=MS,2022-0002=MS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=MS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000906C0,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=M,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000906E9,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000906EA,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000906EB,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-2118=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=MS,2018-3620=MS,2018-3646=MS,2018-3639=MS,2018-3640=M,2017-5754=S,2017-5715=MS,2017-5753=S,
-# 0x000906EC,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=S,2022-28693=N,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=N,2022-0002=N,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=MS,2018-12126=MS,2018-12130=MS,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=MS,2017-5753=S,
-# 0x000906ED,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=MS,2022-21127=MS,2020-0550=N,2020-0551_zero=S,2020-0551_stale=S,2020-0549=M,2020-8696=MS,2020-0548=MS,2018-12207=S,2019-11135=MS,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A0652,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A0653,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A0655,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A0660,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A0661,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=S,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=M,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=S,2022-21166=MS,2022-21125=MS,2022-21123=MS,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=M,2020-24512=M,2020-24513=N,2020-8695=M,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=S,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=M,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A0671,2024-45332=M,2024-28956_IBPB=M,2024-28956_GH=N,2024-28956_cBPF=S,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=M,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=N,2022-21166=MS,2022-21125=N,2022-21123=N,2022-21180=S,2022-0001=S,2022-0002=S,2021-0145=M,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=S,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A06A4,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A06D0,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A06D1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A06E1,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A06F2,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000A06F3,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B0650,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B0664,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B0671,H=0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B0671,H=1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B06A2,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B06A3,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B06A8,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B06D1,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B06E0,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=M,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B06F2,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000B06F5,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000C0652,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000C0662,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000C0664,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-2118=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000C06C2,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000C06C3,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-# 0x000C06F2,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
-#
+# 0x000A06A4,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06D0,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06D1,H=0,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06E1,H=0,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06F2,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000A06F3,H=0,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0650,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0664,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0671,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B0671,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06A2,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06A3,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06A8,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06D1,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06E0,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=N,2023-39368=M,2023-23583=N,2022-40982=N,2022-26373=N,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=N,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06F2,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000B06F5,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=MS,2023-22655=N,2023-38575=M,2023-39368=M,2023-23583=M,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C0652,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C0662,H=1,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C0664,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=N,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=S,2022-38090=S,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C06C2,H=1,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C06C3,H=1,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000C06F2,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=H,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=HS,2022-38090=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000D0651,H=1,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000D0670,H=0,2026-20917=N,2024-45332=M,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=M,2024-36242=S,2024-23984=M,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=H,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=HS,2022-38090=HS,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
+# 0x000D06D1,H=0,2026-20917=N,2024-45332=N,2024-28956_IBPB=N,2024-28956_GH=N,2024-28956_cBPF=N,2024-31068=N,2024-36242=S,2024-23984=N,2024-25939=N,2023-28746=N,2023-22655=N,2023-38575=N,2023-39368=N,2023-23583=N,2022-40982=N,2022-26373=S,2022-21233=N,2022-38090=N,2022-29901=N,2022-28693=HS,2022-21166=N,2022-21125=N,2022-21123=N,2022-21180=N,2022-0001=HS,2022-0002=HS,2021-0145=N,2021-33120=N,2021-0089=S,2021-0086=S,2020-24511=N,2020-24512=N,2020-24513=N,2020-8695=N,2020-8698=N,2020-0543=N,2022-21127=N,2020-0550=N,2020-0551_zero=N,2020-0551_stale=N,2020-0549=N,2020-8696=N,2020-0548=N,2018-12207=N,2019-11135=N,2019-1125=S,2018-12127=N,2018-12126=N,2018-12130=N,2018-3615=N,2018-3620=N,2018-3646=N,2018-3639=HS,2018-3640=N,2017-5754=N,2017-5715=HS,2017-5753=S,
 # %%% ENDOFINTELDB
 
 # >>>>>> db/200_mcedb.sh <<<<<<
@@ -13135,7 +13380,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v351+i20260512+16e5
+# %%% MCEDB v352+i20260812+16e5
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
@@ -13473,9 +13718,9 @@ exit 0                          # ok
 # I,0x000606A0,0xFF,0x80000031,20200308
 # I,0x000606A4,0xFF,0x0B000280,20200817
 # I,0x000606A5,0x87,0x0C0002F0,20210308
-# I,0x000606A6,0x87,0x0D000421,20250819
+# I,0x000606A6,0x87,0x0D000433,20260309
 # I,0x000606C0,0xFF,0xFD000220,20210629
-# I,0x000606C1,0x10,0x010002F1,20250819
+# I,0x000606C1,0x10,0x01000301,20260309
 # I,0x000606E0,0xFF,0x0000000B,20161104
 # I,0x000606E1,0xFF,0x00000108,20190423
 # I,0x000606E4,0xFF,0x0000000C,20190124
@@ -13487,7 +13732,7 @@ exit 0                          # ok
 # I,0x000706E2,0xFF,0x00000042,20190420
 # I,0x000706E3,0xFF,0x81000008,20181002
 # I,0x000706E4,0xFF,0x00000046,20190905
-# I,0x000706E5,0x80,0x000000CC,20250724
+# I,0x000706E5,0x80,0x000000CE,20260212
 # I,0x00080650,0xFF,0x00000018,20180108
 # I,0x00080664,0xFF,0x4C000025,20230926
 # I,0x00080665,0xFF,0x4C000026,20240228
@@ -13507,15 +13752,15 @@ exit 0                          # ok
 # I,0x000806F1,0xFF,0x800003C0,20220327
 # I,0x000806F2,0xFF,0x8C0004E0,20211112
 # I,0x000806F3,0xFF,0x8D000520,20220812
-# I,0x000806F4,0x10,0x2C000421,20250825
-# I,0x000806F4,0x87,0x2B000670,20251217
-# I,0x000806F5,0x10,0x2C000421,20250825
-# I,0x000806F5,0x87,0x2B000670,20251217
-# I,0x000806F6,0x10,0x2C000421,20250825
-# I,0x000806F6,0x87,0x2B000670,20251217
-# I,0x000806F7,0x87,0x2B000670,20251217
-# I,0x000806F8,0x10,0x2C000421,20250825
-# I,0x000806F8,0x87,0x2B000670,20251217
+# I,0x000806F4,0x10,0x2C000435,20260302
+# I,0x000806F4,0x87,0x2B000685,20260302
+# I,0x000806F5,0x10,0x2C000435,20260302
+# I,0x000806F5,0x87,0x2B000685,20260302
+# I,0x000806F6,0x10,0x2C000435,20260302
+# I,0x000806F6,0x87,0x2B000685,20260302
+# I,0x000806F7,0x87,0x2B000685,20260302
+# I,0x000806F8,0x10,0x2C000435,20260302
+# I,0x000806F8,0x87,0x2B000685,20260302
 # I,0x00090660,0xFF,0x00000009,20200617
 # I,0x00090661,0x01,0x0000001A,20240405
 # I,0x00090670,0xFF,0x00000019,20201111
@@ -13544,7 +13789,7 @@ exit 0                          # ok
 # I,0x000A0660,0x80,0x00000102,20241114
 # I,0x000A0661,0x80,0x00000100,20241114
 # I,0x000A0670,0xFF,0x0000002C,20201124
-# I,0x000A0671,0x02,0x00000065,20250724
+# I,0x000A0671,0x02,0x00000066,20260212
 # I,0x000A0680,0xFF,0x80000002,20200121
 # I,0x000A06A1,0xFF,0x00000017,20230518
 # I,0x000A06A2,0xFF,0x00000011,20230627
@@ -13552,43 +13797,44 @@ exit 0                          # ok
 # I,0x000A06C0,0xFF,0x00000013,20230901
 # I,0x000A06C1,0xFF,0x00000005,20231201
 # I,0x000A06D0,0xFF,0x10000680,20240818
-# I,0x000A06D1,0x20,0x0A000142,20260129
-# I,0x000A06D1,0x95,0x01000423,20260129
+# I,0x000A06D1,0x20,0x0A000151,20260324
+# I,0x000A06D1,0x95,0x01000434,20260427
 # I,0x000A06E0,0xFF,0x80000953,20240902
-# I,0x000A06E1,0x97,0x01000307,20260226
+# I,0x000A06E1,0x97,0x01000309,20260415
 # I,0x000A06F0,0xFF,0x80000360,20240130
-# I,0x000A06F3,0x01,0x030003A3,20260130
-# I,0x000B0650,0x80,0x0000000D,20250925
+# I,0x000A06F3,0x01,0x030003B2,20260316
+# I,0x000B0650,0x80,0x0000000E,20260115
 # I,0x000B0664,0xFF,0x00000030,20250529
 # I,0x000B0670,0xFF,0x0000000E,20220220
-# I,0x000B0671,0x32,0x00000133,20251008
-# I,0x000B0674,0x32,0x00000133,20251008
+# I,0x000B0671,0x36,0x00000137,20260218
+# I,0x000B0674,0x36,0x00000137,20260218
 # I,0x000B06A2,0xE0,0x00006134,20251008
 # I,0x000B06A3,0xE0,0x00006134,20251008
 # I,0x000B06A8,0xE0,0x00006134,20251008
 # I,0x000B06D0,0xFF,0x0000001A,20240610
-# I,0x000B06D1,0x80,0x00000126,20251210
+# I,0x000B06D1,0x80,0x00000128,20260219
 # I,0x000B06E0,0x19,0x00000021,20250912
 # I,0x000B06F2,0x07,0x0000003E,20251012
 # I,0x000B06F5,0x07,0x0000003E,20251012
 # I,0x000B06F6,0x07,0x0000003E,20251012
 # I,0x000B06F7,0x07,0x0000003E,20251012
-# I,0x000C0652,0x82,0x00000121,20251215
+# I,0x000C0652,0x82,0x00000122,20260218
 # I,0x000C0660,0xFF,0x00000018,20240516
-# I,0x000C0662,0x82,0x00000121,20251215
-# I,0x000C0664,0x82,0x00000121,20251215
-# I,0x000C06A2,0x82,0x00000121,20251215
+# I,0x000C0662,0x82,0x00000122,20260218
+# I,0x000C0664,0x82,0x00000122,20260218
+# I,0x000C06A2,0x82,0x00000122,20260218
 # I,0x000C06C0,0xFF,0x00000012,20250325
-# I,0x000C06C1,0x90,0x0000011B,20260324
-# I,0x000C06C2,0x90,0x0000011B,20260324
-# I,0x000C06C3,0x90,0x0000011B,20260324
-# I,0x000C06F1,0x87,0x210002E0,20251217
-# I,0x000C06F2,0x87,0x210002E0,20251217
-# I,0x000D0650,0xFF,0x00000009,20260309
-# I,0x000D0651,0xFF,0x00000009,20260309
-# I,0x000D0670,0xFF,0x00000137,20260218
-# I,0x000D06D0,0xFF,0x80000370,20250917
-# I,0x000D06D1,0xFF,0x01000120,20260325
+# I,0x000C06C1,0x94,0x0000011C,20260420
+# I,0x000C06C2,0x94,0x0000011C,20260420
+# I,0x000C06C3,0x94,0x0000011C,20260420
+# I,0x000C06F1,0x87,0x210002F4,20260302
+# I,0x000C06F2,0x87,0x210002F4,20260302
+# I,0x000D0650,0xC0,0x0000000C,20260520
+# I,0x000D0651,0xC0,0x0000000C,20260520
+# I,0x000D0670,0x36,0x00000137,20260218
+# I,0x000D06D0,0xFF,0x10000401,20260212
+# I,0x000D06D1,0xFF,0x01000151,20260630
+# I,0x000E0652,0x94,0x0000011C,20260420
 # I,0x00FF0671,0xFF,0x0000010E,20220907
 # I,0x00FF0672,0xFF,0x0000000D,20210816
 # I,0x00FF0675,0xFF,0x0000000D,20210816
@@ -13730,15 +13976,15 @@ exit 0                          # ok
 # A,0x00B00F00,0xFF,0x0B00004D,20240318
 # A,0x00B00F10,0xFF,0x0B001016,20240318
 # A,0x00B00F20,0xFF,0x0B002032,20241003
-# A,0x00B00F21,0xFF,0x0B002162,20251105
+# A,0x00B00F21,0xFF,0x0B002175,20260528
 # A,0x00B00F80,0xFF,0x0B008011,20241211
-# A,0x00B00F81,0xFF,0x0B008121,20251020
+# A,0x00B00F81,0xFF,0x0B008124,20260408
 # A,0x00B10F00,0xFF,0x0B10000F,20240320
-# A,0x00B10F10,0xFF,0x0B101059,20251105
-# A,0x00B20F40,0xFF,0x0B204037,20251019
+# A,0x00B10F10,0xFF,0x0B101066,20260528
+# A,0x00B20F40,0xFF,0x0B20403C,20260330
 # A,0x00B40F00,0xFF,0x0B400034,20240318
-# A,0x00B40F40,0xFF,0x0B404038,20260408
-# A,0x00B40F41,0xFF,0x0B40410B,20260408
+# A,0x00B40F40,0xFF,0x0B40403B,20260620
+# A,0x00B40F41,0xFF,0x0B40410E,20260620
 # A,0x00B60F00,0xFF,0x0B60003C,20260401
-# A,0x00B60F80,0xFF,0x0B60803C,20260401
+# A,0x00B60F80,0xFF,0x0B608040,20260703
 # A,0x00B70F00,0xFF,0x0B700037,20251019
