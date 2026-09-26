@@ -13,7 +13,7 @@
 #
 # Stephane Lesimple
 #
-VERSION='26.36.0913490'
+VERSION='26.36.0926588'
 
 # --- Common paths and basedirs ---
 readonly VULN_SYSFS_BASE="/sys/devices/system/cpu/vulnerabilities"
@@ -13380,7 +13380,7 @@ exit 0                          # ok
 # with X being either I for Intel, or A for AMD
 # When the date is unknown it defaults to 20000101
 
-# %%% MCEDB v352+i20260812+16e5
+# %%% MCEDB v352+i20260925+3c73
 # I,0x00000611,0xFF,0x00000B27,19961218
 # I,0x00000612,0xFF,0x000000C6,19961210
 # I,0x00000616,0xFF,0x000000C6,19961210
@@ -13793,7 +13793,7 @@ exit 0                          # ok
 # I,0x000A0680,0xFF,0x80000002,20200121
 # I,0x000A06A1,0xFF,0x00000017,20230518
 # I,0x000A06A2,0xFF,0x00000011,20230627
-# I,0x000A06A4,0xE6,0x00000028,20250924
+# I,0x000A06A4,0xE6,0x0000002B,20260903
 # I,0x000A06C0,0xFF,0x00000013,20230901
 # I,0x000A06C1,0xFF,0x00000005,20231201
 # I,0x000A06D0,0xFF,0x10000680,20240818
